@@ -20,7 +20,7 @@ export type CatalogueRow = {
 	escalation: string;
 };
 
-// rows arrive in P4; until then every repair is uncatalogued
+// no rows yet, so every repair is uncatalogued
 export const CATALOGUE: ReadonlyMap<string, CatalogueRow> = new Map<string, CatalogueRow>();
 
 export class UncataloguedRepairError extends Error {

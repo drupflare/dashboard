@@ -11,7 +11,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const API_ROOT = resolve(here, '../src/server/api');
 export const OUTPUT = resolve(here, '../contracts/openapi.json');
 
-// the sessions lane owns the real cookie name
+// mirrors the cookie name in the sessions service
 const SESSION_COOKIE_NAME = '__Host-drupflare_session';
 
 const METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const;
