@@ -1,4 +1,5 @@
 import tailwindcss from '@tailwindcss/vite';
+import { fileURLToPath } from 'node:url';
 import { defineOrganization } from 'nuxt-schema-org/schema';
 import { defineNuxtConfig } from 'nuxt/config';
 export default defineNuxtConfig({
@@ -28,6 +29,9 @@ export default defineNuxtConfig({
 	ssr: true,
 	compatibilityDate: '2026-08-01',
 	devtools: { enabled: process.env.NODE_ENV !== 'production' },
+	alias: {
+		'@contracts': fileURLToPath(new URL('./contracts/src', import.meta.url))
+	},
 	srcDir: 'src',
 	serverDir: 'src/server',
 	dir: {
@@ -48,6 +52,13 @@ export default defineNuxtConfig({
 	},
 	nitro: {
 		preset: 'cloudflare_module',
+		publicAssets: [
+			{
+				dir: fileURLToPath(new URL('./node_modules/swagger-ui-dist', import.meta.url)),
+				baseURL: '/api/swagger-ui',
+				maxAge: 31536000
+			}
+		],
 		storage: {
 			shield: { driver: 'cloudflare-kv-binding', binding: 'CACHE' }
 		},

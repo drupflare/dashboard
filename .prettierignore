@@ -14,3 +14,4 @@ build/lanes/
 .nuxt/
 .vscode/
 tsconfig.json
+src/shared/corpus.json

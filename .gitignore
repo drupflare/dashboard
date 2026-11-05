@@ -17,6 +17,7 @@ package-lock.json
 .wrangler
 lib
 *.tsbuildinfo
+.vitest
 
 # wrangler local state; `wrangler.test.jsonc` is the vitest harness
 .wrangler
