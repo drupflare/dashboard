@@ -12,6 +12,7 @@
 		"noEmit": true,
 		"types": ["node", "@playwright/test", "@nuxt/test-utils"],
 		"paths": {
+			"@contracts/*": ["../contracts/src/*"],
 			"~~/*": ["./*"],
 			"@@/*": ["./*"],
 			"~/*": ["./src/*"],

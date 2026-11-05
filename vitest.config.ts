@@ -3,7 +3,7 @@ import { defineVitestConfig } from '@nuxt/test-utils/config';
 export default defineVitestConfig({
 	test: {
 		environment: 'nuxt',
-		include: ['tests/unit/**/*.spec.ts'],
+		include: ['tests/unit/{app,components,composables,pages,stores}/**/*.spec.ts'],
 		setupFiles: ['tests/unit/setup.ts'],
 		globals: true,
 		hookTimeout: 120_000,
