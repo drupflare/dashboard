@@ -1,0 +1,75 @@
+name: Check Test Coverage
+
+on:
+  push:
+    branches: [master, ver/*, feat/*]
+  pull_request:
+    branches: [master, ver/*, feat/*]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Unit and Binding Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      packages: read
+
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 'latest'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Cache the Bun Install Cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Node Unit Coverage
+        run: ./node_modules/.bin/vitest run -c vitest.node.config.ts tests/unit --coverage.enabled --coverage.reporter=lcov --coverage.reportsDirectory=coverage/unit-node
+      - name: Nuxt Unit Coverage
+        run: ./node_modules/.bin/vitest run -c vitest.config.ts --coverage.enabled --coverage.reporter=lcov --coverage.reportsDirectory=coverage/unit-nuxt
+      - name: Binding Coverage
+        run: ./node_modules/.bin/vitest run -c vitest.node.config.ts tests/bindings --coverage.enabled --coverage.reporter=lcov --coverage.reportsDirectory=coverage/bindings
+      - name: Upload Unit Coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+          report_type: coverage
+          flags: unit
+          disable_search: true
+          files: coverage/unit-node/lcov.info,coverage/unit-nuxt/lcov.info
+      - name: Upload Binding Coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+          report_type: coverage
+          flags: bindings
+          disable_search: true
+          files: coverage/bindings/lcov.info
+      - name: Archive Coverage
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14

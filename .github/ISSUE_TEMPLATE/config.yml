@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/drupflare/dashboard/security/advisories/new
+    about: Report vulnerabilities privately through GitHub. Do not open a public issue for them.
+  - name: Security policy
+    url: https://github.com/drupflare/dashboard/blob/master/SECURITY.md
+    about: Supported versions, the private reporting route and what is in scope.
+  - name: Documentation
+    url: https://github.com/drupflare/dashboard/tree/master/docs
+    about: Read the docs before you report a problem with a setting or a step.

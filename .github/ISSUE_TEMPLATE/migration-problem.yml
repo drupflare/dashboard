@@ -1,0 +1,65 @@
+name: Migration Problem
+description: A site import, assessment or cutover did not go as expected.
+title: '[migrate] '
+labels: ['migration']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Include finding codes and the operation ID. Do not paste site content, database rows, file contents or
+        credentials. Finding codes are enough to start.
+  - type: input
+    id: source-stack
+    attributes:
+      label: Source stack
+      description: The source site's platform and versions, for example Drupal 10.3 on Apache 2.4 with PHP 8.3.
+    validations:
+      required: true
+  - type: dropdown
+    id: target-plane
+    attributes:
+      label: Target plane
+      options:
+        - Managed
+        - Self-managed
+        - Self-hosted
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: operation-id
+    attributes:
+      label: Operation ID
+      description: The ID from the migration operation page.
+    validations:
+      required: false
+  - type: textarea
+    id: finding-codes
+    attributes:
+      label: Dossier finding codes
+      description: The finding codes from the dossier, one per line. Codes only, no site content.
+      placeholder: |
+        Ex: finding-code-1
+        Ex: finding-code-2
+    validations:
+      required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The step that failed, and the error text shown.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Redaction
+      options:
+        - label: I removed credentials, connection strings, hostnames I do not want public, personal data and site content from this report.
+          required: true

@@ -1,0 +1,97 @@
+name: Bug report
+description: Something in the dashboard does not work as documented.
+title: '[bug] '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this. Before you submit, remove credentials, API keys, tokens, cookies, database
+        contents and site content from anything you paste. A short description is enough when in doubt.
+  - type: dropdown
+    id: plane
+    attributes:
+      label: Plane
+      description: Which plane the affected site runs on.
+      options:
+        - Managed
+        - Self-managed
+        - Self-hosted
+        - Not sure
+        - Not applicable
+    validations:
+      required: true
+  - type: dropdown
+    id: template-kind
+    attributes:
+      label: Template kind
+      description: The template the affected site was created from.
+      options:
+        - Drupal
+        - Static site
+        - nuxtpress
+        - smoke
+        - MyLoRA
+        - Not sure
+        - Not applicable
+    validations:
+      required: true
+  - type: input
+    id: site-id
+    attributes:
+      label: Site ID
+      description: The site ID from the site's settings page. Leave blank if the bug is not tied to a site.
+    validations:
+      required: false
+  - type: input
+    id: operation-id
+    attributes:
+      label: Operation ID
+      description: The ID from the operation page, if the bug happened during an operation.
+    validations:
+      required: false
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      placeholder: 'Ex: Firefox 140 on macOS 15'
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Go to ...
+        2. Click ...
+        3. See the error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should happen.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happens instead, including any error text shown on screen.
+    validations:
+      required: true
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional information
+      description: Screenshots, a request ID or anything else that helps. Redact before you attach.
+    validations:
+      required: false
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Redaction
+      options:
+        - label: I removed credentials, API keys, tokens, cookies, personal data and site content from this report.
+          required: true

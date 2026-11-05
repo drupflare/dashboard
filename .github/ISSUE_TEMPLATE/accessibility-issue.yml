@@ -1,0 +1,59 @@
+name: Accessibility Issue
+description: A part of the dashboard is hard to use with a keyboard, a screen reader, low vision or another assistive setup.
+title: '[a11y] '
+labels: ['accessibility']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The dashboard is working toward a WCAG 2.2 AA conformance report. Naming the success criterion helps us
+        track the issue against it. If you are not sure which one applies, leave that field blank.
+  - type: input
+    id: location
+    attributes:
+      label: Screen or component
+      description: The page, screen or component, for example the site access settings page.
+    validations:
+      required: true
+  - type: input
+    id: criterion
+    attributes:
+      label: WCAG success criterion
+      description: The number and name, for example 2.4.7 Focus Visible.
+    validations:
+      required: false
+  - type: dropdown
+    id: how-used
+    attributes:
+      label: How you were using the page
+      multiple: true
+      options:
+        - Keyboard only
+        - Screen reader
+        - Screen magnification or zoom
+        - Voice control
+        - Colour or contrast settings
+        - Reduced motion
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Browser, operating system and assistive technology
+      placeholder: 'Ex: Safari 18 on macOS 15 with VoiceOver'
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happens
+      description: What you did and what the page did.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
