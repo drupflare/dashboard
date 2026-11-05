@@ -1,0 +1,9 @@
+{
+	"name": "drupflare-dashboard-shards",
+	"compatibility_date": "2026-08-01",
+	"d1_databases": [
+		{ "binding": "DB", "database_name": "shard-one" },
+		{ "binding": "DB_2", "database_name": "shard-two" }
+	],
+	"kv_namespaces": [{ "binding": "KV" }]
+}
