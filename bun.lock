@@ -174,11 +174,11 @@
 
     "@drizzle-team/brocli": ["@drizzle-team/brocli@0.10.2", "", {}, "sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w=="],
 
-    "@drupflare/spool": ["@drupflare/spool@0.2.0", "https://npm.pkg.github.com/@drupflare/spool/-/spool-0.2.0.tgz", {}, "sha512-WqG00FGMw1LdT5cvywHZFfQGajtc3Qy1oB3oBxTtwTt2a5lRBHj//zQzNe4oonxq73RzZwjtnMna7BRCwFhKug=="],
+    "@drupflare/spool": ["@drupflare/spool@0.2.0", "", {}, "sha512-WqG00FGMw1LdT5cvywHZFfQGajtc3Qy1oB3oBxTtwTt2a5lRBHj//zQzNe4oonxq73RzZwjtnMna7BRCwFhKug=="],
 
-    "@drupflare/untarl": ["@drupflare/untarl@0.1.0", "https://npm.pkg.github.com/@drupflare/untarl/-/untarl-0.1.0.tgz", {}, "sha512-FMabw/DeeM1WGmeF7kV0liY4N1nD0Itc/wIST8VMR3yQZpfyJCG94rB/Jchb42DTKAMs+7asN04085CH8ke7YQ=="],
+    "@drupflare/untarl": ["@drupflare/untarl@0.1.0", "", {}, "sha512-FMabw/DeeM1WGmeF7kV0liY4N1nD0Itc/wIST8VMR3yQZpfyJCG94rB/Jchb42DTKAMs+7asN04085CH8ke7YQ=="],
 
-    "@drupflare/workforce": ["@drupflare/workforce@0.2.0", "https://npm.pkg.github.com/@drupflare/workforce/-/workforce-0.2.0.tgz", { "dependencies": { "node-diff3": "^3.2.1" }, "peerDependencies": { "edgeport": "^1.0.6" }, "optionalPeers": ["edgeport"] }, "sha512-NMnmcSldR3WI1eVJ2+4OcL1sTd1FyYvZ11E5ERQ+Dp761hQrXEnXonEZ0tTWaL9CL7jCgP0djOVrfX42s0As6Q=="],
+    "@drupflare/workforce": ["@drupflare/workforce@0.2.0", "", { "dependencies": { "node-diff3": "^3.2.1" }, "peerDependencies": { "edgeport": "^1.0.6" }, "optionalPeers": ["edgeport"] }, "sha512-NMnmcSldR3WI1eVJ2+4OcL1sTd1FyYvZ11E5ERQ+Dp761hQrXEnXonEZ0tTWaL9CL7jCgP0djOVrfX42s0As6Q=="],
 
     "@dxup/nuxt": ["@dxup/nuxt@0.5.10", "", { "dependencies": { "@dxup/unimport": "^0.1.2", "@nuxt/kit": "^4.5.2", "@vue/compiler-dom": "^3.5.41", "chokidar": "^5.0.0", "knitwork": "^1.3.0", "magic-string": "^1.2.2", "pathe": "^2.0.3", "tinyglobby": "^0.2.17", "unplugin": "^3.3.0" } }, "sha512-54Vehb7LmR7qYpC6KFwjDTSm6CB1CayBu+JXdHrPLrIjjr5xAgb43jvgOU+mnB+tsRh414fSsEy0QjBMKILQ8g=="],
 

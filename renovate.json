@@ -12,12 +12,5 @@
 			"matchUpdateTypes": ["major"],
 			"enabled": false
 		}
-	],
-	"hostRules": [
-		{
-			"matchHost": "https://npm.pkg.github.com",
-			"token": "{{ secrets.GITHUB_TOKEN }}"
-		}
-	],
-	"npmrc": "@drupflare:registry=https://npm.pkg.github.com"
+	]
 }
