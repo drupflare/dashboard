@@ -1,0 +1,432 @@
+import { describe, expect, it } from 'vitest';
+import { fromBase64Url, toBase64Url } from '../../../../contracts/src/common';
+import type { Principal } from '../../../../src/server/domain/authorize';
+import type { AuditInput } from '../../../../src/server/services/audit';
+import {
+	CryptoError,
+	decryptRecordText,
+	loadKeyRing,
+	type KeyRing
+} from '../../../../src/server/services/crypto';
+import {
+	principalActor,
+	revealOwnerToken,
+	rewrapOwnerToken,
+	rotateOwnerToken,
+	storeOwnerToken,
+	withOwnerToken,
+	type CustodyDeps,
+	type OwnerTokenStore,
+	type SessionCall,
+	type StoredOwnerToken
+} from '../../../../src/server/services/owner-tokens';
+import { ApiError } from '../../../../src/shared/errors';
+
+const kek = (fill: number) => toBase64Url(new Uint8Array(32).fill(fill));
+const SECRET = 'worker-owner-token-0123456789';
+const user: Principal = { kind: 'user', userId: 'user_1' };
+const key: Principal = { kind: 'key', keyId: 'key_1', issuerId: 'user_1' };
+
+class MemoryStore implements OwnerTokenStore {
+	rows = new Map<string, StoredOwnerToken>();
+	reads = 0;
+
+	async get(siteId: string) {
+		this.reads++;
+		return this.rows.get(siteId) ?? null;
+	}
+
+	async put(siteId: string, value: StoredOwnerToken) {
+		this.rows.set(siteId, structuredClone(value));
+	}
+}
+
+async function setup(ring?: KeyRing) {
+	const store = new MemoryStore();
+	const rows: AuditInput[] = [];
+	const deps: CustodyDeps = {
+		store,
+		audit: {
+			async append(input) {
+				rows.push(input);
+			}
+		},
+		ring: ring ?? (await loadKeyRing({ KEK_V1: kek(1) }))
+	};
+	return { store, rows, deps };
+}
+
+const session = (overrides: Partial<SessionCall> = {}): SessionCall => ({
+	siteId: 'site_1',
+	principal: user,
+	stepUp: true,
+	...overrides
+});
+
+async function refusal(promise: Promise<unknown>): Promise<ApiError> {
+	try {
+		await promise;
+	} catch (error) {
+		expect(error).toBeInstanceOf(ApiError);
+		return error as ApiError;
+	}
+	throw new Error('expected an ApiError');
+}
+
+describe('storeOwnerToken', () => {
+	it('stores an envelope, not the token, and writes one audit row', async () => {
+		const { store, rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		const stored = store.rows.get('site_1');
+		expect(stored?.previous).toBeNull();
+		expect(JSON.stringify(stored)).not.toContain(SECRET);
+		expect(rows).toEqual([
+			{
+				actor: 'system:create',
+				action: 'site.owner-token.store',
+				target: 'site_1',
+				detail: { keyVersion: 1 }
+			}
+		]);
+	});
+
+	it('binds the stored record to its site', async () => {
+		const { store, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		const moved = store.rows.get('site_1')!;
+		store.rows.set('site_2', moved);
+		await expect(revealOwnerToken(deps, session({ siteId: 'site_2' }))).rejects.toMatchObject({
+			code: 'decrypt_failed'
+		});
+	});
+});
+
+describe('revealOwnerToken', () => {
+	it('returns the token and writes one audit row naming the actor, site and key version', async () => {
+		const { rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		rows.length = 0;
+		expect(await revealOwnerToken(deps, session())).toBe(SECRET);
+		expect(rows).toEqual([
+			{
+				actor: 'user:user_1',
+				action: 'site.owner-token.reveal',
+				target: 'site_1',
+				detail: { keyVersion: 1 }
+			}
+		]);
+	});
+
+	it('refuses without step-up, before reading the store or auditing', async () => {
+		const { store, rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		rows.length = 0;
+		store.reads = 0;
+		const error = await refusal(revealOwnerToken(deps, session({ stepUp: false })));
+		expect(error.code).toBe('forbidden');
+		expect(error.details).toEqual({ reason: 'step_up_required' });
+		expect(rows).toEqual([]);
+		expect(store.reads).toBe(0);
+	});
+
+	it('refuses an api key principal even with step-up set', async () => {
+		const { store, rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		rows.length = 0;
+		store.reads = 0;
+		const error = await refusal(revealOwnerToken(deps, session({ principal: key })));
+		expect(error.code).toBe('forbidden');
+		expect(error.details).toEqual({ reason: 'session_only' });
+		expect(rows).toEqual([]);
+		expect(store.reads).toBe(0);
+	});
+
+	it('gives not_found when no token is stored', async () => {
+		const { rows, deps } = await setup();
+		expect((await refusal(revealOwnerToken(deps, session()))).code).toBe('not_found');
+		expect(rows).toEqual([]);
+	});
+
+	it('writes the audit row before the secret is decrypted', async () => {
+		const { store, rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		rows.length = 0;
+		const stored = store.rows.get('site_1')!;
+		const bytes = fromBase64Url(stored.current.ct);
+		bytes[0] = bytes[0]! ^ 1;
+		store.rows.set('site_1', {
+			...stored,
+			current: { ...stored.current, ct: toBase64Url(bytes) }
+		});
+		await expect(revealOwnerToken(deps, session())).rejects.toBeInstanceOf(CryptoError);
+		expect(rows).toHaveLength(1);
+		expect(rows[0]!.action).toBe('site.owner-token.reveal');
+	});
+
+	it('stops when the audit write fails, so no secret is returned', async () => {
+		const { deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		const failing: CustodyDeps = {
+			...deps,
+			audit: {
+				async append() {
+					throw new Error('audit down');
+				}
+			}
+		};
+		await expect(revealOwnerToken(failing, session())).rejects.toThrow('audit down');
+	});
+});
+
+describe('withOwnerToken', () => {
+	it('hands the token to the callback, returns its result and audits the use', async () => {
+		const { rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		rows.length = 0;
+		const seen: string[] = [];
+		const result = await withOwnerToken(
+			deps,
+			{ siteId: 'site_1', actor: 'system:op_1', operation: 'config.apply' },
+			async (token) => {
+				seen.push(token);
+				return 42;
+			}
+		);
+		expect(result).toBe(42);
+		expect(seen).toEqual([SECRET]);
+		expect(rows).toEqual([
+			{
+				actor: 'system:op_1',
+				action: 'site.owner-token.use',
+				target: 'site_1',
+				detail: { keyVersion: 1, operation: 'config.apply' }
+			}
+		]);
+	});
+
+	it('gives not_found without calling the callback', async () => {
+		const { deps } = await setup();
+		let called = false;
+		const error = await refusal(
+			withOwnerToken(deps, { siteId: 'site_9', actor: 'a', operation: 'o' }, async () => {
+				called = true;
+			})
+		);
+		expect(error.code).toBe('not_found');
+		expect(called).toBe(false);
+	});
+
+	it('does not need a step-up or a session, since the platform acts on its own', async () => {
+		const { deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		await expect(
+			withOwnerToken(
+				deps,
+				{ siteId: 'site_1', actor: 'system:op', operation: 'x' },
+				async (t) => t
+			)
+		).resolves.toBe(SECRET);
+	});
+});
+
+describe('rotateOwnerToken', () => {
+	it('replaces the token, pushes the new one with the old, and writes one audit row', async () => {
+		const { store, rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		rows.length = 0;
+		const pushed: [string, string][] = [];
+		await rotateOwnerToken(deps, session(), async (next, old) => {
+			pushed.push([next, old]);
+		});
+		const fresh = await revealOwnerToken(deps, session());
+		expect(pushed).toEqual([[fresh, SECRET]]);
+		expect(fresh).not.toBe(SECRET);
+		expect(store.rows.get('site_1')?.previous).toBeNull();
+		const rotateRows = rows.filter((r) => r.action === 'site.owner-token.rotate');
+		expect(rotateRows).toEqual([
+			{
+				actor: 'user:user_1',
+				action: 'site.owner-token.rotate',
+				target: 'site_1',
+				detail: { fromKeyVersion: 1, keyVersion: 1 }
+			}
+		]);
+		expect(rows.some((r) => r.action === 'site.owner-token.rotate-failed')).toBe(false);
+	});
+
+	it('keeps the old record in previous while push runs', async () => {
+		const { store, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		const before = store.rows.get('site_1')!;
+		let during: StoredOwnerToken | undefined;
+		await rotateOwnerToken(deps, session(), async () => {
+			during = store.rows.get('site_1');
+		});
+		expect(during?.previous).toEqual(before.current);
+		expect(during?.current).not.toEqual(before.current);
+	});
+
+	it('restores the old token and records the failure when push throws', async () => {
+		const { store, rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		const before = structuredClone(store.rows.get('site_1'));
+		rows.length = 0;
+		await expect(
+			rotateOwnerToken(deps, session(), async () => {
+				throw new Error('worker unreachable');
+			})
+		).rejects.toThrow('worker unreachable');
+		expect(store.rows.get('site_1')).toEqual(before);
+		expect(rows.map((r) => r.action)).toEqual([
+			'site.owner-token.rotate',
+			'site.owner-token.rotate-failed'
+		]);
+		expect(await revealOwnerToken(deps, session())).toBe(SECRET);
+	});
+
+	it('refuses without step-up and for an api key, touching nothing', async () => {
+		const { store, rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		rows.length = 0;
+		const before = structuredClone(store.rows.get('site_1'));
+		const push = async () => {
+			throw new Error('push must not run');
+		};
+		expect(
+			(await refusal(rotateOwnerToken(deps, session({ stepUp: false }), push))).details
+		).toEqual({
+			reason: 'step_up_required'
+		});
+		expect(
+			(await refusal(rotateOwnerToken(deps, session({ principal: key }), push))).details
+		).toEqual({
+			reason: 'session_only'
+		});
+		expect(rows).toEqual([]);
+		expect(store.rows.get('site_1')).toEqual(before);
+	});
+
+	it('gives not_found when no token is stored', async () => {
+		const { deps } = await setup();
+		expect((await refusal(rotateOwnerToken(deps, session(), async () => {}))).code).toBe(
+			'not_found'
+		);
+	});
+
+	it('writes the new record under the newest key version', async () => {
+		const { store, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		const grown: CustodyDeps = {
+			...deps,
+			ring: await loadKeyRing({ KEK_V1: kek(1), KEK_V2: kek(2) })
+		};
+		await rotateOwnerToken(grown, session(), async () => {});
+		expect(store.rows.get('site_1')?.current.kv).toBe(2);
+	});
+});
+
+describe('rewrapOwnerToken', () => {
+	it('moves the record to the newest key version and keeps the token', async () => {
+		const { store, rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		const before = store.rows.get('site_1')!;
+		const grown: CustodyDeps = {
+			...deps,
+			ring: await loadKeyRing({ KEK_V1: kek(1), KEK_V2: kek(2) })
+		};
+		rows.length = 0;
+		expect(await rewrapOwnerToken(grown, { siteId: 'site_1', actor: 'system:rewrap' })).toBe(
+			true
+		);
+		const after = store.rows.get('site_1')!;
+		expect(after.current.kv).toBe(2);
+		expect(after.current.ct).toBe(before.current.ct);
+		expect(rows).toEqual([
+			{
+				actor: 'system:rewrap',
+				action: 'site.owner-token.rewrap',
+				target: 'site_1',
+				detail: { fromKeyVersion: 1, keyVersion: 2 }
+			}
+		]);
+		const retired: CustodyDeps = { ...deps, ring: await loadKeyRing({ KEK_V2: kek(2) }) };
+		expect(await revealOwnerToken(retired, session())).toBe(SECRET);
+	});
+
+	it('does nothing and writes no audit row when the record is current', async () => {
+		const { rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		rows.length = 0;
+		expect(await rewrapOwnerToken(deps, { siteId: 'site_1', actor: 'system:rewrap' })).toBe(
+			false
+		);
+		expect(rows).toEqual([]);
+	});
+
+	it('moves a leftover previous record too', async () => {
+		const { store, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		const ring2 = await loadKeyRing({ KEK_V1: kek(1), KEK_V2: kek(2) });
+		const grown: CustodyDeps = { ...deps, ring: ring2 };
+		const stored = store.rows.get('site_1')!;
+		await rewrapOwnerToken(grown, { siteId: 'site_1', actor: 'a' });
+		const current = store.rows.get('site_1')!.current;
+		store.rows.set('site_1', { current, previous: stored.current });
+		expect(await rewrapOwnerToken(grown, { siteId: 'site_1', actor: 'a' })).toBe(true);
+		const after = store.rows.get('site_1')!;
+		expect(after.previous?.kv).toBe(2);
+		expect(
+			await decryptRecordText(
+				after.previous,
+				{ siteId: 'site_1', purpose: 'owner-token' },
+				ring2
+			)
+		).toBe(SECRET);
+	});
+
+	it('gives not_found when no token is stored', async () => {
+		const { deps } = await setup();
+		expect((await refusal(rewrapOwnerToken(deps, { siteId: 'x', actor: 'a' }))).code).toBe(
+			'not_found'
+		);
+	});
+});
+
+describe('audit rows never carry a secret', () => {
+	it('holds across store, use, reveal, rotate, a failed rotate and rewrap', async () => {
+		const { rows, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		await withOwnerToken(
+			deps,
+			{ siteId: 'site_1', actor: 's', operation: 'o' },
+			async () => {}
+		);
+		await revealOwnerToken(deps, session());
+		let pushedNew = '';
+		await rotateOwnerToken(deps, session(), async (next) => {
+			pushedNew = next;
+		});
+		const revealed = await revealOwnerToken(deps, session());
+		await rotateOwnerToken(deps, session(), async () => {
+			throw new Error('nope');
+		}).catch(() => {});
+		const grown: CustodyDeps = {
+			...deps,
+			ring: await loadKeyRing({ KEK_V1: kek(1), KEK_V2: kek(2) })
+		};
+		await rewrapOwnerToken(grown, { siteId: 'site_1', actor: 's' });
+		expect(rows.length).toBeGreaterThanOrEqual(8);
+		const serialized = JSON.stringify(rows);
+		for (const secret of [SECRET, pushedNew, revealed]) {
+			expect(secret.length).toBeGreaterThan(20);
+			expect(serialized).not.toContain(secret);
+		}
+	});
+});
+
+describe('principalActor', () => {
+	it('names a user and a key', () => {
+		expect(principalActor(user)).toBe('user:user_1');
+		expect(principalActor(key)).toBe('key:key_1');
+	});
+});
