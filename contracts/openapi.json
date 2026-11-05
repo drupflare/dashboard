@@ -1,0 +1,1638 @@
+{
+	"openapi": "3.1.0",
+	"info": {
+		"title": "Drupflare Dashboard API",
+		"version": "1.0.0",
+		"description": "The HTTP API behind the Drupflare dashboard. Every operation names the permission it checks in x-action and its rate class in x-rate-class."
+	},
+	"tags": [
+		{ "name": "auth", "description": "Sign-in, sign-out and passkey and provider flows." },
+		{ "name": "me", "description": "The signed-in account, its sessions and devices." },
+		{ "name": "orgs", "description": "Organisations and departments." },
+		{ "name": "members", "description": "Organisation members and their roles." },
+		{ "name": "invites", "description": "Invitations to join an organisation." },
+		{ "name": "delegations", "description": "Agency access to a client organisation." },
+		{ "name": "api-keys", "description": "API keys for scripts and integrations." },
+		{ "name": "sites", "description": "Sites and everything that belongs to one." },
+		{ "name": "operations", "description": "Long-running operations and their steps." },
+		{ "name": "planes", "description": "Planes a site can run on." },
+		{ "name": "nodes", "description": "Bastion nodes and fleet links." },
+		{ "name": "imports", "description": "Imports from existing hosting." },
+		{ "name": "cutovers", "description": "Migration cutovers." },
+		{ "name": "assessments", "description": "Estate assessments." },
+		{ "name": "repos", "description": "Repository connections." },
+		{ "name": "modules", "description": "Modules and the module census." },
+		{ "name": "releases", "description": "Releases and upgrades." },
+		{ "name": "rings", "description": "Release rings and cohorts." },
+		{ "name": "billing", "description": "Plans, invoices and the billing portal." },
+		{ "name": "usage", "description": "Usage reports and accounting." },
+		{ "name": "notifications", "description": "Notification settings and the inbox." },
+		{ "name": "audit", "description": "The organisation audit log." },
+		{ "name": "templates", "description": "Site templates." },
+		{ "name": "clients", "description": "Client organisations managed by an agency." },
+		{ "name": "transfers", "description": "Site transfers between organisations." },
+		{ "name": "pilots", "description": "Pilot workspaces." },
+		{ "name": "cost-centers", "description": "Cost centers." },
+		{ "name": "procurement", "description": "Procurement records." },
+		{ "name": "trust", "description": "Trust center content." },
+		{ "name": "demo", "description": "The read-only demo dashboard." },
+		{ "name": "gate", "description": "Visitor access to private sites and environments." },
+		{ "name": "admin", "description": "Platform administration." },
+		{ "name": "system", "description": "Liveness and API documentation." }
+	],
+	"paths": {
+		"/api/v1/auth/code/request": {
+			"post": {
+				"operationId": "postApiV1AuthCodeRequest",
+				"summary": "Request a sign-in code",
+				"description": "Sends a six-digit code to the address. A new address creates an account when the code is verified. The same answer comes back for every address.",
+				"tags": ["auth"],
+				"x-action": "auth.code.request",
+				"x-rate-class": "auth-code",
+				"security": [],
+				"parameters": [
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"email": {
+										"type": "string",
+										"maxLength": 254,
+										"format": "email",
+										"pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+									},
+									"turnstileToken": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2048
+									}
+								},
+								"required": ["email"]
+							}
+						}
+					}
+				},
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": { "sent": { "type": "boolean", "const": true } },
+									"required": ["sent"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/auth/code/verify": {
+			"post": {
+				"operationId": "postApiV1AuthCodeVerify",
+				"summary": "Verify a sign-in code",
+				"description": "Signs in with the code and sets the session cookie. The body never carries the session token.",
+				"tags": ["auth"],
+				"x-action": "auth.code.verify",
+				"x-rate-class": "auth-code",
+				"security": [],
+				"parameters": [
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"email": {
+										"type": "string",
+										"maxLength": 254,
+										"format": "email",
+										"pattern": "^(?:[A-Za-z0-9_'+\\-]+\\.)*[A-Za-z0-9_'+\\-]*[A-Za-z0-9_+-]@(?:[A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+									},
+									"code": { "type": "string", "pattern": "^\\d{6}$" }
+								},
+								"required": ["email", "code"]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"user": {
+											"type": "object",
+											"properties": {
+												"id": { "type": "string" },
+												"email": { "type": "string" },
+												"displayName": { "type": ["string", "null"] }
+											},
+											"required": ["id", "email", "displayName"]
+										},
+										"isNew": { "type": "boolean" }
+									},
+									"required": ["user", "isNew"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/auth/logout": {
+			"post": {
+				"operationId": "postApiV1AuthLogout",
+				"summary": "Sign out",
+				"description": "Ends the session named by the cookie and clears it. A missing session still succeeds.",
+				"tags": ["auth"],
+				"x-action": "auth.logout",
+				"x-rate-class": "write",
+				"security": [],
+				"parameters": [
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"204": {
+						"description": "Done. The response has no body.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/auth/oauth/{provider}/callback": {
+			"get": {
+				"operationId": "getApiV1AuthOauthProviderCallback",
+				"summary": "Finish a provider sign-in",
+				"description": "Checks the state against the cookie, exchanges the code and signs in. A provider email that matches an existing account never signs in or merges: the answer is link_required, and the person confirms the link from that account in settings.",
+				"tags": ["auth"],
+				"x-action": "auth.oauth.callback",
+				"x-rate-class": "write",
+				"security": [],
+				"parameters": [
+					{
+						"name": "provider",
+						"in": "path",
+						"required": true,
+						"schema": {
+							"type": "string",
+							"enum": ["github", "gitlab", "google", "microsoft"]
+						}
+					},
+					{
+						"name": "code",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "maxLength": 2048 }
+					},
+					{
+						"name": "state",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "maxLength": 256 }
+					},
+					{
+						"name": "error",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "maxLength": 256 }
+					},
+					{
+						"name": "error_description",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "maxLength": 1024 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"oneOf": [
+										{
+											"type": "object",
+											"properties": {
+												"status": {
+													"type": "string",
+													"const": "signed_in"
+												},
+												"user": {
+													"type": "object",
+													"properties": {
+														"id": { "type": "string" },
+														"email": { "type": "string" },
+														"displayName": {
+															"type": ["string", "null"]
+														}
+													},
+													"required": ["id", "email", "displayName"]
+												},
+												"isNew": { "type": "boolean" }
+											},
+											"required": ["status", "user", "isNew"]
+										},
+										{
+											"type": "object",
+											"properties": {
+												"status": {
+													"type": "string",
+													"const": "link_required"
+												},
+												"provider": {
+													"type": "string",
+													"enum": [
+														"github",
+														"gitlab",
+														"google",
+														"microsoft"
+													]
+												},
+												"email": { "type": "string" }
+											},
+											"required": ["status", "provider", "email"]
+										}
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/auth/oauth/{provider}/start": {
+			"get": {
+				"operationId": "getApiV1AuthOauthProviderStart",
+				"summary": "Start a provider sign-in",
+				"description": "Returns the provider address to send the browser to, and sets a short-lived cookie that ties the callback to this browser. The request carries state and a PKCE challenge, and asks for name and email only.",
+				"tags": ["auth"],
+				"x-action": "auth.oauth.start",
+				"x-rate-class": "write",
+				"security": [],
+				"parameters": [
+					{
+						"name": "provider",
+						"in": "path",
+						"required": true,
+						"schema": {
+							"type": "string",
+							"enum": ["github", "gitlab", "google", "microsoft"]
+						}
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"url": { "type": "string", "format": "uri" },
+										"consent": { "type": "string" }
+									},
+									"required": ["url", "consent"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/auth/passkey/options": {
+			"post": {
+				"operationId": "postApiV1AuthPasskeyOptions",
+				"summary": "Start a passkey sign-in",
+				"description": "Returns the options to pass to navigator.credentials.get. The challenge works once and expires after five minutes.",
+				"tags": ["auth"],
+				"x-action": "auth.passkey.options",
+				"x-rate-class": "write",
+				"security": [],
+				"parameters": [
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"challenge": { "type": "string" },
+										"timeout": { "type": "number" },
+										"rpId": { "type": "string" },
+										"allowCredentials": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"type": { "type": "string" },
+													"transports": {
+														"type": "array",
+														"items": { "type": "string" }
+													}
+												},
+												"required": ["id", "type"]
+											}
+										},
+										"userVerification": {
+											"type": "string",
+											"enum": ["required", "preferred", "discouraged"]
+										}
+									},
+									"required": ["challenge"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/auth/passkey/verify": {
+			"post": {
+				"operationId": "postApiV1AuthPasskeyVerify",
+				"summary": "Finish a passkey sign-in",
+				"description": "Verifies the signed challenge and sets the session cookie. Every failure answers the same way.",
+				"tags": ["auth"],
+				"x-action": "auth.passkey.verify",
+				"x-rate-class": "write",
+				"security": [],
+				"parameters": [
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"id": { "type": "string", "minLength": 1, "maxLength": 8192 },
+									"rawId": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 8192
+									},
+									"type": { "type": "string", "const": "public-key" },
+									"authenticatorAttachment": {
+										"type": "string",
+										"enum": ["platform", "cross-platform"]
+									},
+									"clientExtensionResults": {
+										"type": "object",
+										"propertyNames": { "type": "string" },
+										"additionalProperties": {}
+									},
+									"response": {
+										"type": "object",
+										"properties": {
+											"clientDataJSON": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 8192
+											},
+											"authenticatorData": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 8192
+											},
+											"signature": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 8192
+											},
+											"userHandle": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 8192
+											}
+										},
+										"required": [
+											"clientDataJSON",
+											"authenticatorData",
+											"signature"
+										]
+									}
+								},
+								"required": [
+									"id",
+									"rawId",
+									"type",
+									"clientExtensionResults",
+									"response"
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"user": {
+											"type": "object",
+											"properties": {
+												"id": { "type": "string" },
+												"email": { "type": "string" },
+												"displayName": { "type": ["string", "null"] }
+											},
+											"required": ["id", "email", "displayName"]
+										},
+										"isNew": { "type": "boolean" }
+									},
+									"required": ["user", "isNew"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/auth/step-up": {
+			"post": {
+				"operationId": "postApiV1AuthStepUp",
+				"summary": "Prove a fresh authentication",
+				"description": "Takes a fresh sign-in code for the signed-in address, marks the session as recently authenticated and rotates the session cookie.",
+				"tags": ["auth"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "auth-code",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"code": { "type": "string", "pattern": "^\\d{6}$" }
+								},
+								"required": ["code"]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"stepUpUntil": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": ["stepUpUntil"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/me": {
+			"get": {
+				"operationId": "getApiV1Me",
+				"summary": "Read the signed-in account",
+				"description": "Returns the account behind the session or, for an API key, the account that issued it.",
+				"tags": ["me"],
+				"x-action": "account.read",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }, { "apiKey": [] }],
+				"parameters": [{ "$ref": "#/components/parameters/ContractHeader" }],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": { "type": "string" },
+										"email": { "type": "string" },
+										"displayName": { "type": ["string", "null"] },
+										"via": { "type": "string", "enum": ["session", "key"] },
+										"stepUpUntil": {
+											"anyOf": [
+												{
+													"type": "string",
+													"format": "date-time",
+													"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+												},
+												{ "type": "null" }
+											]
+										}
+									},
+									"required": ["id", "email", "displayName", "via", "stepUpUntil"]
+								}
+							}
+						}
+					},
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/me/identities": {
+			"get": {
+				"operationId": "getApiV1MeIdentities",
+				"summary": "List linked providers",
+				"description": "Lists the provider identities linked to your account. The email code is always available and is not listed.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }],
+				"parameters": [{ "$ref": "#/components/parameters/ContractHeader" }],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"provider": { "type": "string" },
+													"email": { "type": ["string", "null"] },
+													"verified": { "type": "boolean" },
+													"createdAt": {
+														"type": "string",
+														"format": "date-time",
+														"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+													}
+												},
+												"required": [
+													"id",
+													"provider",
+													"email",
+													"verified",
+													"createdAt"
+												]
+											}
+										},
+										"nextCursor": { "type": "null" }
+									},
+									"required": ["items", "nextCursor"]
+								}
+							}
+						}
+					},
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/me/identities/{id}": {
+			"delete": {
+				"operationId": "deleteApiV1MeIdentitiesId",
+				"summary": "Unlink a provider",
+				"description": "Removes a linked provider identity. It needs a fresh authentication and refuses to remove your last sign-in method.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": {
+							"type": "string",
+							"format": "uuid",
+							"pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+						}
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"204": {
+						"description": "Done. The response has no body.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/me/identities/link": {
+			"post": {
+				"operationId": "postApiV1MeIdentitiesLink",
+				"summary": "Confirm a provider link",
+				"description": "Links the provider identity from the last provider sign-in in this browser to your account. It needs a fresh authentication, and the provider email must match your account email.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"201": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"identity": {
+											"type": "object",
+											"properties": {
+												"id": { "type": "string" },
+												"provider": { "type": "string" },
+												"email": { "type": ["string", "null"] },
+												"verified": { "type": "boolean" },
+												"createdAt": {
+													"type": "string",
+													"format": "date-time",
+													"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+												}
+											},
+											"required": [
+												"id",
+												"provider",
+												"email",
+												"verified",
+												"createdAt"
+											]
+										}
+									},
+									"required": ["identity"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/me/passkeys": {
+			"get": {
+				"operationId": "getApiV1MePasskeys",
+				"summary": "List passkeys",
+				"description": "Lists your registered passkeys, newest first. Keys and counters are never returned.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }],
+				"parameters": [{ "$ref": "#/components/parameters/ContractHeader" }],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"name": { "type": "string" },
+													"deviceType": {
+														"type": "string",
+														"enum": ["singleDevice", "multiDevice"]
+													},
+													"backedUp": { "type": "boolean" },
+													"createdAt": {
+														"type": "string",
+														"format": "date-time",
+														"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+													},
+													"lastUsedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													}
+												},
+												"required": [
+													"id",
+													"name",
+													"deviceType",
+													"backedUp",
+													"createdAt",
+													"lastUsedAt"
+												]
+											}
+										},
+										"nextCursor": { "type": "null" }
+									},
+									"required": ["items", "nextCursor"]
+								}
+							}
+						}
+					},
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/me/passkeys/{id}": {
+			"patch": {
+				"operationId": "patchApiV1MePasskeysId",
+				"summary": "Rename a passkey",
+				"description": "Changes the label of one of your passkeys. It does not need a fresh authentication.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1, "maxLength": 512 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": { "type": "string", "minLength": 1, "maxLength": 64 }
+								},
+								"required": ["name"]
+							}
+						}
+					}
+				},
+				"responses": {
+					"204": {
+						"description": "Done. The response has no body.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			},
+			"delete": {
+				"operationId": "deleteApiV1MePasskeysId",
+				"summary": "Remove a passkey",
+				"description": "Removes one of your passkeys. It needs a fresh authentication and refuses to remove your last sign-in method.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1, "maxLength": 512 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"204": {
+						"description": "Done. The response has no body.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/me/passkeys/register": {
+			"post": {
+				"operationId": "postApiV1MePasskeysRegister",
+				"summary": "Register a passkey",
+				"description": "Two calls, both needing a fresh authentication. Phase options returns the creation options. Phase verify checks the new credential against that challenge and stores it.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"phase": { "type": "string", "const": "options" }
+										},
+										"required": ["phase"]
+									},
+									{
+										"type": "object",
+										"properties": {
+											"phase": { "type": "string", "const": "verify" },
+											"response": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 8192
+													},
+													"rawId": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 8192
+													},
+													"type": {
+														"type": "string",
+														"const": "public-key"
+													},
+													"authenticatorAttachment": {
+														"type": "string",
+														"enum": ["platform", "cross-platform"]
+													},
+													"clientExtensionResults": {
+														"type": "object",
+														"propertyNames": { "type": "string" },
+														"additionalProperties": {}
+													},
+													"response": {
+														"type": "object",
+														"properties": {
+															"clientDataJSON": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 8192
+															},
+															"attestationObject": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 8192
+															},
+															"transports": {
+																"maxItems": 8,
+																"type": "array",
+																"items": {
+																	"type": "string",
+																	"maxLength": 32
+																}
+															}
+														},
+														"required": [
+															"clientDataJSON",
+															"attestationObject"
+														]
+													}
+												},
+												"required": [
+													"id",
+													"rawId",
+													"type",
+													"clientExtensionResults",
+													"response"
+												]
+											},
+											"name": { "type": "string", "maxLength": 64 }
+										},
+										"required": ["phase", "response"]
+									}
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"anyOf": [
+										{
+											"type": "object",
+											"properties": {
+												"options": {
+													"type": "object",
+													"properties": {
+														"rp": {
+															"type": "object",
+															"properties": {
+																"name": { "type": "string" },
+																"id": { "type": "string" }
+															},
+															"required": ["name"]
+														},
+														"user": {
+															"type": "object",
+															"properties": {
+																"id": { "type": "string" },
+																"name": { "type": "string" },
+																"displayName": { "type": "string" }
+															},
+															"required": [
+																"id",
+																"name",
+																"displayName"
+															]
+														},
+														"challenge": { "type": "string" },
+														"pubKeyCredParams": {
+															"type": "array",
+															"items": {
+																"type": "object",
+																"properties": {
+																	"type": { "type": "string" },
+																	"alg": { "type": "number" }
+																},
+																"required": ["type", "alg"]
+															}
+														},
+														"timeout": { "type": "number" },
+														"excludeCredentials": {
+															"type": "array",
+															"items": {
+																"type": "object",
+																"properties": {
+																	"id": { "type": "string" },
+																	"type": { "type": "string" },
+																	"transports": {
+																		"type": "array",
+																		"items": {
+																			"type": "string"
+																		}
+																	}
+																},
+																"required": ["id", "type"]
+															}
+														},
+														"authenticatorSelection": {
+															"type": "object",
+															"properties": {
+																"residentKey": {
+																	"type": "string",
+																	"enum": [
+																		"discouraged",
+																		"preferred",
+																		"required"
+																	]
+																},
+																"userVerification": {
+																	"type": "string",
+																	"enum": [
+																		"required",
+																		"preferred",
+																		"discouraged"
+																	]
+																}
+															}
+														},
+														"attestation": {
+															"type": "string",
+															"enum": [
+																"none",
+																"indirect",
+																"direct",
+																"enterprise"
+															]
+														}
+													},
+													"required": [
+														"rp",
+														"user",
+														"challenge",
+														"pubKeyCredParams"
+													]
+												}
+											},
+											"required": ["options"]
+										},
+										{
+											"type": "object",
+											"properties": {
+												"passkey": {
+													"type": "object",
+													"properties": {
+														"id": { "type": "string" },
+														"name": { "type": "string" },
+														"deviceType": {
+															"type": "string",
+															"enum": ["singleDevice", "multiDevice"]
+														},
+														"backedUp": { "type": "boolean" },
+														"createdAt": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														}
+													},
+													"required": [
+														"id",
+														"name",
+														"deviceType",
+														"backedUp",
+														"createdAt"
+													]
+												}
+											},
+											"required": ["passkey"]
+										}
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/me/sessions": {
+			"get": {
+				"operationId": "getApiV1MeSessions",
+				"summary": "List sessions",
+				"description": "Lists the signed-in devices, newest first. A person holds only a handful of sessions, so the list is never paged.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }],
+				"parameters": [{ "$ref": "#/components/parameters/ContractHeader" }],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"device": { "type": "string" },
+													"ip": { "type": ["string", "null"] },
+													"createdAt": {
+														"type": "string",
+														"format": "date-time",
+														"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+													},
+													"lastSeenAt": {
+														"type": "string",
+														"format": "date-time",
+														"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+													},
+													"current": { "type": "boolean" }
+												},
+												"required": [
+													"id",
+													"device",
+													"ip",
+													"createdAt",
+													"lastSeenAt",
+													"current"
+												]
+											}
+										},
+										"nextCursor": { "type": "null" }
+									},
+									"required": ["items", "nextCursor"]
+								}
+							}
+						}
+					},
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			},
+			"delete": {
+				"operationId": "deleteApiV1MeSessions",
+				"summary": "Sign out other devices",
+				"description": "Ends every session except the one making this request.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"204": {
+						"description": "Done. The response has no body.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/me/sessions/{id}": {
+			"delete": {
+				"operationId": "deleteApiV1MeSessionsId",
+				"summary": "Revoke a session",
+				"description": "Ends one of your sessions. Revoking the session you are using also clears its cookie.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^ses_[0-9A-HJKMNP-TV-Z]{26}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"204": {
+						"description": "Done. The response has no body.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		}
+	},
+	"components": {
+		"securitySchemes": {
+			"session": {
+				"type": "apiKey",
+				"in": "cookie",
+				"name": "__Host-drupflare_session",
+				"description": "The session cookie set at sign-in."
+			},
+			"apiKey": {
+				"type": "http",
+				"scheme": "bearer",
+				"bearerFormat": "dfk_",
+				"description": "An API key that starts with dfk_. Session-only actions refuse keys."
+			}
+		},
+		"schemas": {
+			"Error": {
+				"type": "object",
+				"properties": {
+					"code": { "type": "string", "minLength": 1 },
+					"message": { "type": "string" },
+					"details": {
+						"type": "object",
+						"propertyNames": { "type": "string" },
+						"additionalProperties": {}
+					},
+					"requestId": { "type": "string" }
+				},
+				"required": ["code", "message", "details", "requestId"],
+				"additionalProperties": false
+			}
+		},
+		"parameters": {
+			"ContractHeader": {
+				"name": "Drupflare-Contract",
+				"in": "header",
+				"required": false,
+				"description": "The contract versions the client understands, as common=<min>-<max>. A server that cannot serve the range answers 426.",
+				"schema": { "type": "string", "pattern": "^[^=]+=\\d+\\.\\d+(-\\d+\\.\\d+)?$" }
+			},
+			"IdempotencyKey": {
+				"name": "Idempotency-Key",
+				"in": "header",
+				"required": false,
+				"description": "Repeat a write safely. The same key with the same request returns the first result.",
+				"schema": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,128}$" }
+			}
+		},
+		"headers": {
+			"RequestId": {
+				"description": "The id of this request. Quote it when you contact support.",
+				"schema": { "type": "string" }
+			},
+			"Contract": {
+				"description": "The contract versions this server supports, as common=<min>-<max>.",
+				"schema": { "type": "string" }
+			},
+			"RateLimitLimit": {
+				"description": "Requests allowed in the current window.",
+				"schema": { "type": "integer" }
+			},
+			"RateLimitRemaining": {
+				"description": "Requests left in the current window.",
+				"schema": { "type": "integer" }
+			},
+			"RateLimitReset": {
+				"description": "Seconds until the window frees a slot.",
+				"schema": { "type": "integer" }
+			},
+			"RetryAfter": {
+				"description": "Seconds to wait before the next request.",
+				"schema": { "type": "integer" }
+			}
+		},
+		"responses": {
+			"BadRequest": {
+				"description": "The request is invalid. details.issues lists each field path.",
+				"headers": {
+					"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+					"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+					"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+					"RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+					"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+				},
+				"content": {
+					"application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+				}
+			},
+			"Unauthenticated": {
+				"description": "The request has no valid session or API key.",
+				"headers": {
+					"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+					"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+					"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+					"RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+					"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+				},
+				"content": {
+					"application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+				}
+			},
+			"Forbidden": {
+				"description": "The caller may not do this.",
+				"headers": {
+					"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+					"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+					"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+					"RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+					"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+				},
+				"content": {
+					"application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+				}
+			},
+			"NotFound": {
+				"description": "The resource does not exist.",
+				"headers": {
+					"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+					"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+					"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+					"RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+					"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+				},
+				"content": {
+					"application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+				}
+			},
+			"Unprocessable": {
+				"description": "The Idempotency-Key was used for a different request.",
+				"headers": {
+					"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+					"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+					"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+					"RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+					"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+				},
+				"content": {
+					"application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+				}
+			},
+			"ContractUnsupported": {
+				"description": "The server does not support the requested contract range. details.supported names the range it does.",
+				"headers": {
+					"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+					"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+					"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+					"RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+					"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+				},
+				"content": {
+					"application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+				}
+			},
+			"RateLimited": {
+				"description": "Too many requests.",
+				"headers": {
+					"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+					"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+					"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+					"RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+					"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" },
+					"Retry-After": { "$ref": "#/components/headers/RetryAfter" }
+				},
+				"content": {
+					"application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+				}
+			},
+			"InternalError": {
+				"description": "The server failed. Quote the requestId when you report it.",
+				"headers": {
+					"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+					"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+					"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+					"RateLimit-Remaining": { "$ref": "#/components/headers/RateLimitRemaining" },
+					"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+				},
+				"content": {
+					"application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+				}
+			}
+		}
+	}
+}
