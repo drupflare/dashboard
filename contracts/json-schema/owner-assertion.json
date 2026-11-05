@@ -1,0 +1,40 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"contract": "owner-assertion",
+	"version": "1.0",
+	"schemas": {
+		"assertionScope": {
+			"type": "object",
+			"properties": {
+				"siteId": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" },
+				"opId": { "type": "string", "pattern": "^op_[0-9a-z]{8,40}$" },
+				"action": { "type": "string", "minLength": 1, "maxLength": 64 }
+			},
+			"required": ["siteId", "opId", "action"],
+			"additionalProperties": false
+		},
+		"assertion": {
+			"type": "object",
+			"properties": {
+				"v": { "type": "number", "const": 1 },
+				"id": { "type": "string", "minLength": 16, "maxLength": 64 },
+				"kid": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+				"scope": {
+					"type": "object",
+					"properties": {
+						"siteId": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" },
+						"opId": { "type": "string", "pattern": "^op_[0-9a-z]{8,40}$" },
+						"action": { "type": "string", "minLength": 1, "maxLength": 64 }
+					},
+					"required": ["siteId", "opId", "action"],
+					"additionalProperties": false
+				},
+				"iat": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+				"exp": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+				"sig": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
+			},
+			"required": ["v", "id", "kid", "scope", "iat", "exp", "sig"],
+			"additionalProperties": false
+		}
+	}
+}

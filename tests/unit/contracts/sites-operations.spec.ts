@@ -1,0 +1,170 @@
+import { describe, expect, it } from 'vitest';
+import { newId } from '../../../contracts/src/common';
+import {
+	DEFAULT_CHANGE_BUDGET,
+	OPERATION_TYPES,
+	changeBudgetSchema,
+	computePlanDigest,
+	operationSchema,
+	planSchema,
+	stepSchema,
+	type Plan
+} from '../../../contracts/src/operations';
+import { hostname, scriptName, siteSchema } from '../../../contracts/src/sites';
+
+const at = '2026-11-05T12:00:00Z';
+
+describe('sites', () => {
+	const site = {
+		id: newId('site'),
+		orgId: newId('org'),
+		name: 'Campus Site',
+		kind: 'drupal',
+		plane: 'managed',
+		state: 'active',
+		ring: 'R3',
+		primaryHostname: 'campus.drupflare.app',
+		hostnames: ['campus.drupflare.app', 'www.example.edu'],
+		createdAt: at,
+		updatedAt: at
+	};
+
+	it('round-trips a site, with and without a primary hostname', () => {
+		expect(siteSchema.parse(site)).toEqual(site);
+		const bare = { ...site, primaryHostname: null, hostnames: [] };
+		expect(siteSchema.parse(bare)).toEqual(bare);
+	});
+
+	it('rejects an unknown state, a bad ring, a bad id and a bad hostname', () => {
+		expect(siteSchema.safeParse({ ...site, state: 'gone' }).success).toBe(false);
+		expect(siteSchema.safeParse({ ...site, ring: 'R6' }).success).toBe(false);
+		expect(siteSchema.safeParse({ ...site, id: 'nope' }).success).toBe(false);
+		expect(siteSchema.safeParse({ ...site, hostnames: ['Not A Host'] }).success).toBe(false);
+		expect(siteSchema.safeParse({ ...site, createdAt: 'yesterday' }).success).toBe(false);
+	});
+
+	it('accepts the lifecycle states the plan lists and no others', () => {
+		for (const state of ['active', 'suspended', 'tombstoned', 'purge-eligible', 'deleted']) {
+			expect(siteSchema.safeParse({ ...site, state }).success).toBe(true);
+		}
+	});
+
+	it('validates hostnames', () => {
+		for (const good of ['a.co', 'x-y.example.edu', 'a.b.c.d.example.com']) {
+			expect(hostname.safeParse(good).success, good).toBe(true);
+		}
+		for (const bad of [
+			'localhost',
+			'-a.com',
+			'a-.com',
+			'a..com',
+			'a.c',
+			'UPPER.com',
+			'a b.com'
+		]) {
+			expect(hostname.safeParse(bad).success, bad).toBe(false);
+		}
+	});
+
+	it('names a script s-<siteId>', () => {
+		expect(scriptName(site.id)).toBe(`s-${site.id}`);
+	});
+});
+
+describe('operations', () => {
+	const plan: Plan = {
+		type: 'site.upgrade',
+		targetIds: ['site_aaaaaaaa'],
+		preconditions: ['lease held'],
+		steps: [
+			{ id: 'snapshot', name: 'Take a snapshot' },
+			{ id: 'deploy', name: 'Deploy' }
+		],
+		blastRadius: { sites: 1, destructiveSites: 0, productionDeploys: 1 },
+		rollbackPoint: 'bookmark-1'
+	};
+
+	it('lists the 33 operation types of the plan', () => {
+		expect(OPERATION_TYPES).toHaveLength(33);
+		expect(new Set(OPERATION_TYPES).size).toBe(33);
+	});
+
+	it('round-trips a plan and a step, and rejects an empty plan', () => {
+		expect(planSchema.parse(plan)).toEqual(plan);
+		expect(planSchema.safeParse({ ...plan, steps: [] }).success).toBe(false);
+		expect(planSchema.safeParse({ ...plan, type: 'site.explode' }).success).toBe(false);
+		const step = {
+			id: 'deploy',
+			name: 'Deploy',
+			state: 'running',
+			attempt: 1,
+			startedAt: at,
+			finishedAt: null,
+			error: null
+		};
+		expect(stepSchema.parse(step)).toEqual(step);
+		expect(stepSchema.safeParse({ ...step, attempt: -1 }).success).toBe(false);
+		expect(stepSchema.safeParse({ ...step, state: 'maybe' }).success).toBe(false);
+	});
+
+	it('gives the same digest for the same plan and a different one for any change', async () => {
+		const digest = await computePlanDigest(plan);
+		expect(digest).toMatch(/^sha256:[0-9a-f]{64}$/);
+		expect(await computePlanDigest(structuredClone(plan))).toBe(digest);
+		expect(await computePlanDigest({ ...plan, rollbackPoint: null })).not.toBe(digest);
+		expect(await computePlanDigest({ ...plan, steps: [...plan.steps].reverse() })).not.toBe(
+			digest
+		);
+	});
+
+	it('does not depend on key order when digesting', async () => {
+		const reordered = JSON.parse(
+			JSON.stringify(Object.fromEntries(Object.entries(plan).reverse()))
+		) as Plan;
+		expect(await computePlanDigest(reordered)).toBe(await computePlanDigest(plan));
+	});
+
+	it('refuses to digest an invalid plan', async () => {
+		await expect(computePlanDigest({ ...plan, steps: [] })).rejects.toThrow();
+	});
+
+	it('carries the plan change budget by default and validates overrides', () => {
+		expect(changeBudgetSchema.parse(DEFAULT_CHANGE_BUDGET)).toEqual(DEFAULT_CHANGE_BUDGET);
+		expect(DEFAULT_CHANGE_BUDGET.maxDestructiveSites).toBe(5);
+		expect(DEFAULT_CHANGE_BUDGET.maxConcurrentProductionDeploys).toBe(10);
+		expect(
+			changeBudgetSchema.safeParse({ ...DEFAULT_CHANGE_BUDGET, maxDestructiveSites: 0 })
+				.success
+		).toBe(false);
+	});
+
+	it('round-trips an operation and rejects a bad digest, epoch and idempotency key', async () => {
+		const operation = {
+			id: newId('op'),
+			orgId: newId('org'),
+			type: 'site.upgrade',
+			status: 'running',
+			idempotencyKey: 'idem-1',
+			targetIds: plan.targetIds,
+			preconditions: plan.preconditions,
+			planDigest: await computePlanDigest(plan),
+			fencingEpoch: 4,
+			blastRadius: plan.blastRadius,
+			rollbackPoint: plan.rollbackPoint,
+			cursor: 'deploy',
+			steps: [],
+			verification: 'pending',
+			finalObservation: null,
+			budget: DEFAULT_CHANGE_BUDGET,
+			createdAt: at,
+			updatedAt: at
+		};
+		expect(operationSchema.parse(operation)).toEqual(operation);
+		expect(operationSchema.safeParse({ ...operation, planDigest: 'abc' }).success).toBe(false);
+		expect(operationSchema.safeParse({ ...operation, fencingEpoch: -1 }).success).toBe(false);
+		expect(operationSchema.safeParse({ ...operation, idempotencyKey: '' }).success).toBe(false);
+		expect(operationSchema.safeParse({ ...operation, status: 'lost' }).success).toBe(false);
+		const done = { ...operation, finalObservation: { at, summary: 'all healthy' } };
+		expect(operationSchema.parse(done)).toEqual(done);
+	});
+});

@@ -1,0 +1,110 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"contract": "migration-cutover",
+	"version": "1.0",
+	"schemas": {
+		"cutover": {
+			"type": "object",
+			"properties": {
+				"siteId": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" },
+				"policy": { "type": "string", "enum": ["freeze", "read-only", "delta"] },
+				"state": {
+					"type": "string",
+					"enum": [
+						"planned",
+						"running",
+						"awaiting-approval",
+						"promoted",
+						"observing",
+						"completed",
+						"rolled-back",
+						"failed"
+					]
+				},
+				"step": {
+					"anyOf": [
+						{
+							"type": "string",
+							"enum": [
+								"lower-ttl",
+								"snapshot",
+								"capture-delta",
+								"validate",
+								"owner-approval",
+								"apply-write-policy",
+								"final-delta",
+								"promote",
+								"route",
+								"observe"
+							]
+						},
+						{ "type": "null" }
+					]
+				},
+				"expectedWindowSeconds": {
+					"anyOf": [
+						{ "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+						{ "type": "null" }
+					]
+				},
+				"snapshotMarker": {
+					"anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+				},
+				"deltaMarker": {
+					"anyOf": [{ "type": "string", "minLength": 1 }, { "type": "null" }]
+				},
+				"destinationWrites": {
+					"type": "integer",
+					"minimum": 0,
+					"maximum": 9007199254740991
+				},
+				"choice": {
+					"anyOf": [
+						{
+							"type": "object",
+							"properties": {
+								"value": {
+									"type": "string",
+									"enum": ["keep-new", "abandon-new-data", "export-changes"]
+								},
+								"writesAtChoice": {
+									"type": "integer",
+									"exclusiveMinimum": 0,
+									"maximum": 9007199254740991
+								},
+								"recordedAt": {
+									"type": "string",
+									"format": "date-time",
+									"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+								}
+							},
+							"required": ["value", "writesAtChoice", "recordedAt"],
+							"additionalProperties": false
+						},
+						{ "type": "null" }
+					]
+				},
+				"sourceDestroyed": { "type": "boolean", "const": false },
+				"updatedAt": {
+					"type": "string",
+					"format": "date-time",
+					"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+				}
+			},
+			"required": [
+				"siteId",
+				"policy",
+				"state",
+				"step",
+				"expectedWindowSeconds",
+				"snapshotMarker",
+				"deltaMarker",
+				"destinationWrites",
+				"choice",
+				"sourceDestroyed",
+				"updatedAt"
+			],
+			"additionalProperties": false
+		}
+	}
+}

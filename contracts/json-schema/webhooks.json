@@ -1,0 +1,257 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"contract": "webhooks",
+	"version": "1.0",
+	"schemas": {
+		"webhookEvent": {
+			"oneOf": [
+				{
+					"type": "object",
+					"properties": {
+						"v": { "type": "number", "const": 1 },
+						"id": { "type": "string", "minLength": 8, "maxLength": 64 },
+						"type": { "type": "string", "const": "operation.succeeded" },
+						"createdAt": {
+							"type": "string",
+							"format": "date-time",
+							"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+						},
+						"orgId": { "type": "string", "pattern": "^org_[0-9a-z]{8,40}$" },
+						"data": {
+							"type": "object",
+							"properties": {
+								"opId": { "type": "string", "pattern": "^op_[0-9a-z]{8,40}$" },
+								"operationType": {
+									"type": "string",
+									"enum": [
+										"site.create",
+										"site.adopt",
+										"site.import",
+										"migration.cutover",
+										"estate.assess",
+										"site.upgrade",
+										"site.rollback",
+										"site.delete",
+										"site.restore",
+										"site.purge",
+										"site.transfer",
+										"config.apply",
+										"git.pull",
+										"git.preview",
+										"modify.apply",
+										"module.install",
+										"module.enable",
+										"domain.attach",
+										"backup.create",
+										"backup.verify",
+										"backup.restore",
+										"backup.export",
+										"env.create",
+										"env.fork",
+										"env.promote",
+										"env.delete",
+										"preview.create",
+										"preview.delete",
+										"repair.run",
+										"node.pair",
+										"node.command",
+										"fleet.upgrade",
+										"repo.install"
+									]
+								},
+								"status": {
+									"type": "string",
+									"enum": [
+										"planned",
+										"awaiting-approval",
+										"running",
+										"verifying",
+										"succeeded",
+										"failed",
+										"cancelled",
+										"rolled-back"
+									]
+								}
+							},
+							"required": ["opId", "operationType", "status"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["v", "id", "type", "createdAt", "orgId", "data"],
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"properties": {
+						"v": { "type": "number", "const": 1 },
+						"id": { "type": "string", "minLength": 8, "maxLength": 64 },
+						"type": { "type": "string", "const": "operation.failed" },
+						"createdAt": {
+							"type": "string",
+							"format": "date-time",
+							"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+						},
+						"orgId": { "type": "string", "pattern": "^org_[0-9a-z]{8,40}$" },
+						"data": {
+							"type": "object",
+							"properties": {
+								"opId": { "type": "string", "pattern": "^op_[0-9a-z]{8,40}$" },
+								"operationType": {
+									"type": "string",
+									"enum": [
+										"site.create",
+										"site.adopt",
+										"site.import",
+										"migration.cutover",
+										"estate.assess",
+										"site.upgrade",
+										"site.rollback",
+										"site.delete",
+										"site.restore",
+										"site.purge",
+										"site.transfer",
+										"config.apply",
+										"git.pull",
+										"git.preview",
+										"modify.apply",
+										"module.install",
+										"module.enable",
+										"domain.attach",
+										"backup.create",
+										"backup.verify",
+										"backup.restore",
+										"backup.export",
+										"env.create",
+										"env.fork",
+										"env.promote",
+										"env.delete",
+										"preview.create",
+										"preview.delete",
+										"repair.run",
+										"node.pair",
+										"node.command",
+										"fleet.upgrade",
+										"repo.install"
+									]
+								},
+								"status": {
+									"type": "string",
+									"enum": [
+										"planned",
+										"awaiting-approval",
+										"running",
+										"verifying",
+										"succeeded",
+										"failed",
+										"cancelled",
+										"rolled-back"
+									]
+								},
+								"reason": { "type": "string" }
+							},
+							"required": ["opId", "operationType", "status", "reason"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["v", "id", "type", "createdAt", "orgId", "data"],
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"properties": {
+						"v": { "type": "number", "const": 1 },
+						"id": { "type": "string", "minLength": 8, "maxLength": 64 },
+						"type": { "type": "string", "const": "site.state.changed" },
+						"createdAt": {
+							"type": "string",
+							"format": "date-time",
+							"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+						},
+						"orgId": { "type": "string", "pattern": "^org_[0-9a-z]{8,40}$" },
+						"data": {
+							"type": "object",
+							"properties": {
+								"siteId": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" },
+								"from": {
+									"type": "string",
+									"enum": [
+										"active",
+										"suspended",
+										"tombstoned",
+										"purge-eligible",
+										"deleted"
+									]
+								},
+								"to": {
+									"type": "string",
+									"enum": [
+										"active",
+										"suspended",
+										"tombstoned",
+										"purge-eligible",
+										"deleted"
+									]
+								}
+							},
+							"required": ["siteId", "from", "to"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["v", "id", "type", "createdAt", "orgId", "data"],
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"properties": {
+						"v": { "type": "number", "const": 1 },
+						"id": { "type": "string", "minLength": 8, "maxLength": 64 },
+						"type": { "type": "string", "const": "backup.verified" },
+						"createdAt": {
+							"type": "string",
+							"format": "date-time",
+							"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+						},
+						"orgId": { "type": "string", "pattern": "^org_[0-9a-z]{8,40}$" },
+						"data": {
+							"type": "object",
+							"properties": {
+								"siteId": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" },
+								"backupId": { "type": "string", "minLength": 1 },
+								"verified": { "type": "boolean" }
+							},
+							"required": ["siteId", "backupId", "verified"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["v", "id", "type", "createdAt", "orgId", "data"],
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"properties": {
+						"v": { "type": "number", "const": 1 },
+						"id": { "type": "string", "minLength": 8, "maxLength": 64 },
+						"type": { "type": "string", "const": "release.published" },
+						"createdAt": {
+							"type": "string",
+							"format": "date-time",
+							"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+						},
+						"orgId": { "type": "string", "pattern": "^org_[0-9a-z]{8,40}$" },
+						"data": {
+							"type": "object",
+							"properties": {
+								"releaseId": { "type": "string", "minLength": 1 },
+								"version": { "type": "string", "minLength": 1 }
+							},
+							"required": ["releaseId", "version"],
+							"additionalProperties": false
+						}
+					},
+					"required": ["v", "id", "type", "createdAt", "orgId", "data"],
+					"additionalProperties": false
+				}
+			]
+		}
+	}
+}

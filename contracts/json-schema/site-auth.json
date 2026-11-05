@@ -1,0 +1,167 @@
+{
+	"$schema": "https://json-schema.org/draft/2020-12/schema",
+	"contract": "site-auth",
+	"version": "1.0",
+	"schemas": {
+		"authorityState": {
+			"type": "object",
+			"properties": {
+				"siteId": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" },
+				"epoch": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+				"generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+				"state": {
+					"type": "string",
+					"enum": ["active", "plan-grace", "suspended", "revoked"]
+				},
+				"risk": {
+					"type": "string",
+					"enum": ["established", "new-free", "abuse-watch", "escalated"]
+				},
+				"limits": {
+					"type": "object",
+					"propertyNames": { "type": "string" },
+					"additionalProperties": { "type": "number", "minimum": 0 }
+				},
+				"accessRuleHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+			},
+			"required": [
+				"siteId",
+				"epoch",
+				"generation",
+				"state",
+				"risk",
+				"limits",
+				"accessRuleHash"
+			],
+			"additionalProperties": false
+		},
+		"lease": {
+			"type": "object",
+			"properties": {
+				"v": { "type": "number", "const": 1 },
+				"siteId": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" },
+				"epoch": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+				"generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+				"state": {
+					"type": "string",
+					"enum": ["active", "plan-grace", "suspended", "revoked"]
+				},
+				"mode": { "type": "string", "enum": ["lease", "strict"] },
+				"limits": {
+					"type": "object",
+					"propertyNames": { "type": "string" },
+					"additionalProperties": { "type": "number", "minimum": 0 }
+				},
+				"accessRuleHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+				"iat": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+				"exp": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+				"sig": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
+			},
+			"required": [
+				"v",
+				"siteId",
+				"epoch",
+				"generation",
+				"state",
+				"mode",
+				"limits",
+				"accessRuleHash",
+				"iat",
+				"exp",
+				"sig"
+			],
+			"additionalProperties": false
+		},
+		"renewalRequest": {
+			"type": "object",
+			"properties": {
+				"v": { "type": "number", "const": 1 },
+				"siteId": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" },
+				"epoch": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+				"generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
+			},
+			"required": ["v", "siteId", "epoch", "generation"],
+			"additionalProperties": false
+		},
+		"renewalResponse": {
+			"anyOf": [
+				{
+					"type": "object",
+					"properties": {
+						"ok": { "type": "boolean", "const": true },
+						"lease": {
+							"type": "object",
+							"properties": {
+								"v": { "type": "number", "const": 1 },
+								"siteId": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" },
+								"epoch": {
+									"type": "integer",
+									"minimum": 0,
+									"maximum": 9007199254740991
+								},
+								"generation": {
+									"type": "integer",
+									"minimum": 0,
+									"maximum": 9007199254740991
+								},
+								"state": {
+									"type": "string",
+									"enum": ["active", "plan-grace", "suspended", "revoked"]
+								},
+								"mode": { "type": "string", "enum": ["lease", "strict"] },
+								"limits": {
+									"type": "object",
+									"propertyNames": { "type": "string" },
+									"additionalProperties": { "type": "number", "minimum": 0 }
+								},
+								"accessRuleHash": {
+									"type": "string",
+									"pattern": "^sha256:[0-9a-f]{64}$"
+								},
+								"iat": {
+									"type": "integer",
+									"minimum": 0,
+									"maximum": 9007199254740991
+								},
+								"exp": {
+									"type": "integer",
+									"minimum": 0,
+									"maximum": 9007199254740991
+								},
+								"sig": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
+							},
+							"required": [
+								"v",
+								"siteId",
+								"epoch",
+								"generation",
+								"state",
+								"mode",
+								"limits",
+								"accessRuleHash",
+								"iat",
+								"exp",
+								"sig"
+							],
+							"additionalProperties": false
+						}
+					},
+					"required": ["ok", "lease"],
+					"additionalProperties": false
+				},
+				{
+					"type": "object",
+					"properties": {
+						"ok": { "type": "boolean", "const": false },
+						"code": {
+							"type": "string",
+							"enum": ["wrong_site", "wrong_epoch", "revoked"]
+						}
+					},
+					"required": ["ok", "code"],
+					"additionalProperties": false
+				}
+			]
+		}
+	}
+}
