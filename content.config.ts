@@ -24,7 +24,6 @@ export default defineContentConfig({
 				title: z.string(),
 				description: z.string(),
 				audience: z.array(z.enum(audiences)),
-				phase: z.enum(['P1', 'P2', 'P3', 'P4', 'P5']),
 				type: z.enum(['written', 'generated', 'screenshot']),
 				draft: z.boolean()
 			})

@@ -12,7 +12,6 @@ audience:
     security-reviewer,
     self-hosting-operator
   ]
-phase: P5
 type: written
 draft: false
 ---
