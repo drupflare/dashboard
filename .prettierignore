@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+.wrangler/
+bun.lock
+.husky/
+typedoc/
+playwright-report/
+playwright-results/
+test-results/
+.remember/
+build/lanes/
+.output/
+.nuxt/
+.vscode/
+tsconfig.json

@@ -1,0 +1,46 @@
+# bun
+node_modules/
+package-lock.json
+
+# build output
+dist/
+.output
+.output.*
+.output-e2e
+.data
+.data.*
+.nuxt
+.nitro
+.cache
+dist
+package-lock.json
+.wrangler
+lib
+*.tsbuildinfo
+
+# wrangler local state; `wrangler.test.jsonc` is the vitest harness
+.wrangler
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+
+# agent spec files
+build/lanes/
+
+# test and coverage output
+coverage/
+*.lcov
+.vitest-cache/
+playwright-report/
+playwright-results/
+test-results/
+
+# logs and scratch
+*.log
+/tmp-*
+.remember/
+
+# editor and OS
+.idea/
+.DS_Store
+.claude
