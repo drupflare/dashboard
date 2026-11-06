@@ -29,7 +29,20 @@ const PLAN_KINDS = [
 	'compute'
 ] as const;
 
+export const SUPPORT_LEVELS = ['community', 'core', 'business', 'critical'] as const;
+export type SupportLevel = (typeof SUPPORT_LEVELS)[number];
+
 const planSchema = z.object({
+	unreviewed: z.boolean(),
+	disabled: z.boolean(),
+	dashboard: z.boolean(),
+	supportLevel: z.enum(SUPPORT_LEVELS),
+	nodes: figureSchema,
+	privateSites: z.boolean().nullable(),
+	rollback: z.boolean().nullable(),
+	upgrade: z.boolean().nullable(),
+	customCode: z.boolean().nullable(),
+	strata: z.boolean().nullable(),
 	id: z.string().min(1),
 	name: z.string().min(1),
 	kind: z.enum(PLAN_KINDS),
@@ -48,14 +61,14 @@ const planSchema = z.object({
 	source: z.string().min(1)
 });
 
-type Plan = z.infer<typeof planSchema>;
+export type Plan = z.infer<typeof planSchema>;
 
 const derived = (value: number, source: string) => ({ value, label: 'derived', source });
 const assumed = (value: number, source: string) => ({ value, label: 'assumption', source });
 const unknown = (source: string) => ({ value: null, source });
 
 // lookup keys are chosen here, not read from stripe; stripe:sync creates the prices
-export const PLANS: readonly Plan[] = z.array(planSchema).parse([
+const ROWS = [
 	{
 		id: 'self-hosted',
 		name: 'Self-hosted (bastion)',
@@ -91,6 +104,24 @@ export const PLANS: readonly Plan[] = z.array(planSchema).parse([
 		staging: null,
 		ssoSaml: null,
 		source: 'roadmap:258'
+	},
+	{
+		id: 'self-managed-dashboard',
+		name: 'Self-managed with the dashboard',
+		kind: 'self-managed',
+		lookupKey: 'drupflare_self_managed_dashboard',
+		monthly: unknown('roadmap:274 records no price; it stays below one Workers Paid plan'),
+		annual: unknown('roadmap:274 records no price'),
+		sites: unknown('roadmap:274 gives no site count'),
+		views: unknown('roadmap:258 says views sit on the customer plan'),
+		viewsPooled: null,
+		support: 'Community',
+		supportHours: unknown('roadmap:274 lists no hours'),
+		customDomains: unknown('roadmap:274 gives no custom domain count'),
+		backupDays: unknown('not stated for this plan'),
+		staging: null,
+		ssoSaml: null,
+		source: 'roadmap:274'
 	},
 	{
 		id: 'managed-free',
@@ -254,4 +285,100 @@ export const PLANS: readonly Plan[] = z.array(planSchema).parse([
 		ssoSaml: null,
 		source: 'roadmap:267'
 	}
-]);
+];
+
+const DEFAULTS = {
+	unreviewed: true,
+	disabled: false,
+	dashboard: true,
+	supportLevel: 'community',
+	nodes: unknown('the roadmap states instances only for the hosted dashboard link'),
+	privateSites: null,
+	rollback: null,
+	upgrade: null,
+	customCode: null,
+	strata: null
+};
+
+// a flag the roadmap does not state stays null, and null denies
+const MANAGED_PAID = { privateSites: true, customCode: true, supportLevel: 'core' };
+
+const OVERRIDES: Record<string, Record<string, unknown>> = {
+	'self-hosted': { dashboard: false },
+	'self-managed': { dashboard: false },
+	'managed-free': { privateSites: true, customCode: false, strata: false },
+	'managed-site': MANAGED_PAID,
+	'managed-studio': MANAGED_PAID,
+	'managed-agency': MANAGED_PAID,
+	'institution-starter': { supportLevel: 'business', customCode: true },
+	'institution-standard': { supportLevel: 'business', customCode: true },
+	assurance: { supportLevel: 'business' },
+	enterprise: { supportLevel: 'critical', customCode: true },
+	'gmux-compute': { disabled: true, dashboard: false }
+};
+
+export const PLANS: readonly Plan[] = z
+	.array(planSchema)
+	.parse(ROWS.map((row) => ({ ...DEFAULTS, ...row, ...OVERRIDES[row.id] })));
+
+export interface PlanViewer {
+	admin: boolean;
+}
+
+export function planPricesVisible(
+	plan: Plan,
+	viewer: PlanViewer,
+	review: z.infer<typeof reviewSchema> = PLAN_REVIEW
+): boolean {
+	return viewer.admin || (priceVisible(review) && !plan.unreviewed && !plan.disabled);
+}
+
+// the price keys are absent, never null, while a price is hidden
+export function describePlan(
+	plan: Plan,
+	viewer: PlanViewer,
+	review: z.infer<typeof reviewSchema> = PLAN_REVIEW
+) {
+	const shown = {
+		id: plan.id,
+		name: plan.name,
+		kind: plan.kind,
+		lookupKey: plan.lookupKey,
+		sites: plan.sites.value,
+		views: plan.views.value,
+		support: plan.support,
+		disabled: plan.disabled
+	};
+	if (!planPricesVisible(plan, viewer, review)) return shown;
+	return {
+		...shown,
+		monthly: plan.monthly.value,
+		annual: plan.annual.value,
+		unreviewed: plan.unreviewed
+	};
+}
+
+export function findPlan(id: string): Plan | undefined {
+	return PLANS.find((plan) => plan.id === id);
+}
+
+export const INTERVALS = ['month', 'year'] as const;
+export type Interval = (typeof INTERVALS)[number];
+
+// the stripe price lookup key: one product per plan, one price per interval
+export function priceLookupKey(plan: Plan, interval: Interval): string {
+	return `${plan.lookupKey}_${interval === 'month' ? 'monthly' : 'annual'}`;
+}
+
+export function planFromPriceKey(key: string): { plan: Plan; interval: Interval } | undefined {
+	for (const plan of PLANS) {
+		for (const interval of INTERVALS) {
+			if (priceLookupKey(plan, interval) === key) return { plan, interval };
+		}
+	}
+	return undefined;
+}
+
+export function intervalPrice(plan: Plan, interval: Interval): number | null {
+	return (interval === 'month' ? plan.monthly : plan.annual).value;
+}
