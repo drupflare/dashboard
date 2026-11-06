@@ -1,0 +1,40 @@
+<script setup lang="ts">
+import { STEP_TITLES, type OnboardingStep } from '~/composables/useOnboarding';
+
+defineProps<{ step: OnboardingStep }>();
+
+const steps: readonly OnboardingStep[] = [1, 2, 3];
+</script>
+
+<template>
+	<div class="flex flex-col gap-2">
+		<ol class="flex flex-wrap gap-x-5 gap-y-2 text-sm">
+			<li
+				v-for="n in steps"
+				:key="n"
+				class="inline-flex items-center gap-1.5"
+				:aria-current="n === step ? 'step' : undefined"
+				:class="
+					n === step
+						? 'font-semibold text-highlighted'
+						: n < step
+							? 'text-leaf-700 dark:text-leaf-300'
+							: 'text-muted'
+				"
+			>
+				<UIcon
+					:name="n < step ? 'i-lucide-circle-check' : 'i-lucide-circle-dashed'"
+					class="size-4 shrink-0"
+					aria-hidden="true"
+				/>
+				<span>{{ n }}. {{ STEP_TITLES[n] }}</span>
+			</li>
+		</ol>
+		<p
+			role="status"
+			class="text-sm text-muted"
+		>
+			Step {{ step }} of 3: {{ STEP_TITLES[step] }}
+		</p>
+	</div>
+</template>

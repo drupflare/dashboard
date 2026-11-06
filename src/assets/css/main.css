@@ -1,2 +1,43 @@
 @import 'tailwindcss';
 @import '@nuxt/ui';
+
+@theme static {
+	--color-brand-50: #fff7ed;
+	--color-brand-100: #ffedd5;
+	--color-brand-200: #fed7aa;
+	--color-brand-300: #fdba74;
+	--color-brand-400: #fb923c;
+	--color-brand-500: #fc7c1e;
+	--color-brand-600: #ea580c;
+	--color-brand-700: #c2410c;
+	--color-brand-800: #9a3412;
+	--color-brand-900: #7c2d12;
+	--color-brand-950: #431407;
+
+	--color-leaf-50: #f3faf0;
+	--color-leaf-100: #e2f4da;
+	--color-leaf-200: #c6e8b8;
+	--color-leaf-300: #9fd886;
+	--color-leaf-400: #74c15a;
+	--color-leaf-500: #4f9f34;
+	--color-leaf-600: #3d8027;
+	--color-leaf-700: #2f6420;
+	--color-leaf-800: #264f1d;
+	--color-leaf-900: #1f4019;
+	--color-leaf-950: #0e220b;
+
+	--color-ink: #0a0300;
+}
+
+@layer theme {
+	@media (prefers-reduced-motion: reduce) {
+		*,
+		*::before,
+		*::after {
+			animation-duration: 0.01ms !important;
+			animation-iteration-count: 1 !important;
+			transition-duration: 0.01ms !important;
+			scroll-behavior: auto !important;
+		}
+	}
+}
