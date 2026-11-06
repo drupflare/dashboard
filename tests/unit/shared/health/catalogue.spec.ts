@@ -3,6 +3,7 @@ import {
 	CATALOGUE,
 	CATALOGUE_AUTOMATION,
 	CATALOGUE_CLASSES,
+	CATALOGUE_ROWS,
 	UncataloguedRepairError,
 	assertCatalogued,
 	type CatalogueRow
@@ -18,14 +19,15 @@ const row: CatalogueRow = {
 	preconditions: ['no open transaction'],
 	attemptBound: 3,
 	cooldownMs: 60_000,
-	successPredicate: () => true,
-	undo: null,
+	successPredicate: 'fixture.observe',
+	undo: { none: 'the fixture changes nothing' },
 	escalation: 'page a developer'
 };
 
 describe('repair catalogue', () => {
-	it('ships empty until the rows arrive', () => {
-		expect(CATALOGUE.size).toBe(0);
+	it('registers every row once', () => {
+		expect(CATALOGUE_ROWS.length).toBeGreaterThan(0);
+		expect(CATALOGUE.size).toBe(CATALOGUE_ROWS.length);
 	});
 
 	it('uses the plan classes and automation levels', () => {

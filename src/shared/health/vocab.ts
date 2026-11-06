@@ -16,6 +16,28 @@ export const RUNGS = [
 	'rollback'
 ] as const;
 
+export type Rung = (typeof RUNGS)[number];
+
+// worker/src/ops/repair.ts QUARANTINE_STRIKES
+export const QUARANTINE_STRIKES = 3;
+
+// worker/src/ops/repair.ts ROLLBACK_DWELL_MS
+export const ROLLBACK_DWELL_MS = 30 * 60_000;
+
+// worker/docs/architecture/index.md states ten; shouldRollback in worker/src/ops/repair.ts does not count it
+export const ROLLBACK_FAILURES = 10;
+
+// drupflare/src/Health/CircuitBreaker.php default window
+export const BREAKER_WINDOW_MS = 60_000;
+
+export const CATALOGUE_CLASSES = ['safe', 'rebuild', 'stateful'] as const;
+
+export type RepairClass = (typeof CATALOGUE_CLASSES)[number];
+
+export const CATALOGUE_AUTOMATION = ['auto', 'auto-with-guard', 'approval', 'manual'] as const;
+
+export type AutomationLevel = (typeof CATALOGUE_AUTOMATION)[number];
+
 // worker/src/ops/reconcile.ts:58-64
 export const STEP_VERDICT_STATES = ['satisfied', 'owed', 'deferred'] as const;
 
