@@ -98,3 +98,40 @@ export function suffixOwner(name: string): 'nobody' | 'paid-managed' | null {
 export function isReserved(name: string): boolean {
 	return suffixOwner(name) !== null;
 }
+
+// changing this re-homes every name, so it only grows with a migration
+export const NAME_SHARDS = 16;
+
+// fnv-1a over utf-16 code units; names are ascii so this is stable across runtimes
+export function hashName(name: string): number {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < name.length; i++) {
+		hash ^= name.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return hash >>> 0;
+}
+
+export function shardOf(name: string, shards: number = NAME_SHARDS): number {
+	return hashName(name) % shards;
+}
+
+// the Durable Object name of the shard that owns a name
+export function shardKey(name: string, shards: number = NAME_SHARDS): string {
+	return `shard-${shardOf(name, shards)}`;
+}
+
+function seededSource(seed: string | number): RandomSource {
+	let state = hashName(String(seed));
+	return () => {
+		state = (state + 0x6d2b79f5) | 0;
+		let t = Math.imul(state ^ (state >>> 15), 1 | state);
+		t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+		return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+	};
+}
+
+// the same seed always gives the same name, so a retried create proposes the same suggestion
+export function suggest(seed: string | number): string {
+	return generateUniqueName(seededSource(seed), new Set());
+}

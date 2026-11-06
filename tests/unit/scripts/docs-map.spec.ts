@@ -234,7 +234,7 @@ const pages = Object.entries(TREE).flatMap(([dir, names]) =>
 	names.map((name) => (dir ? `${dir}/${name}` : name))
 );
 
-const NOT_DRAFT = new Set(['index', 'changelog']);
+const NOT_DRAFT = new Set(['index', 'changelog', 'security/threat-model']);
 
 const fileOf = (page: string) => join(docsDir, `${page}.md`);
 

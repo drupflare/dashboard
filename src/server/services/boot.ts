@@ -1,0 +1,340 @@
+import type { R2Bucket } from '@cloudflare/workers-types';
+import type { CollegeDBClient } from '@earth-app/collegedb';
+import { CryptoError, loadKeyRing, type KeyRing } from '../../shared/custody/envelope';
+import { ApiError } from '../../shared/errors';
+import { ensureCollegeDB, type CollegeDBEnv } from '../db/collegedb';
+import { personalOrganizationId } from '../db/repos/accounts';
+import { withAtomicBatch } from '../db/repos/atomic-shards';
+import { findSiteHome } from '../db/repos/site-lookup';
+import type { Principal } from '../domain/authorize';
+import { entitlementKeys } from '../domain/entitlements';
+import { engineConfigOf, engineStarter } from '../integrations/engine';
+import { OAUTH_PROVIDERS, oauthClients, type OAuthConfig } from '../integrations/oauth';
+import type { WebAuthnConfig } from '../integrations/webauthn';
+import {
+	collegeKeyIndex,
+	createPrincipalResolver,
+	setAuthServices,
+	siteverifyTurnstile,
+	type AuthServices
+} from '../utils/auth';
+import { resetApiDeps, setApiDeps, type ApiDeps } from '../utils/define-api';
+import { collegeIdempotencyStore } from '../utils/idempotency';
+import { append, appendBoth, r2HeadStore, type HeadStore } from './audit';
+import { collegeDirectory } from './auth';
+import {
+	backupServicesOf,
+	resetBackupServices,
+	setBackupServices,
+	type BackupServices
+} from './backups';
+import { collegeBillingStore, entitlementOf } from './billing';
+import { collegeAttemptStore, consoleMailSender, type MailSender } from './email-codes';
+import { collegeFactsStore, factsLoader, type FactsDeps } from './facts';
+import { collegeIdentityStore, setIdentityServices, type IdentityServices } from './identities';
+import { setOrganizationServices, type OrganizationServices } from './organizations';
+import {
+	collegeOwnerTokenStore,
+	collegePendingSecretStore,
+	principalActor,
+	resetPendingSecretDeps,
+	setPendingSecretDeps,
+	type AuditSink,
+	type OwnerTokenStore,
+	type PendingSecretDeps
+} from './owner-tokens';
+import { collegeOnceStore } from './single-use';
+import { siteInputConfigOf } from './site-input';
+import {
+	collegeBudgets,
+	collegeSiteEntitlements,
+	resetSiteServices,
+	setSiteServices,
+	type SiteServices
+} from './sites';
+
+export interface BootEnv extends CollegeDBEnv {
+	BLOB?: R2Bucket;
+	EMAIL?: unknown;
+	ENGINE?: unknown;
+}
+
+export interface BootOptions {
+	// the console mail sender prints sign-in codes, so only a development server may ask for it
+	dev?: boolean;
+	baseUrl?: string;
+	// the entitlement, budget, policy, suspension and support ports; each defaults to empty
+	facts?: Omit<FactsDeps, 'store'>;
+}
+
+export class BootError extends Error {
+	readonly code = 'BOOT';
+
+	constructor(message: string) {
+		super(message);
+		this.name = 'BootError';
+	}
+}
+
+// #region configuration
+
+const text = (env: BootEnv, name: string): string | undefined => {
+	const value = env[name];
+	return typeof value === 'string' && value !== '' ? value : undefined;
+};
+
+export function webauthnConfig(env: BootEnv, baseUrl: string): WebAuthnConfig {
+	const url = new URL(baseUrl);
+	return {
+		rpId: text(env, 'WEBAUTHN_RP_ID') ?? url.hostname,
+		rpName: text(env, 'WEBAUTHN_RP_NAME') ?? 'Drupflare',
+		origin: text(env, 'WEBAUTHN_ORIGIN') ?? url.origin
+	};
+}
+
+// a provider with any of the three missing is left out and answers 501
+export function oauthConfig(env: BootEnv): OAuthConfig {
+	const config: OAuthConfig = {};
+	for (const provider of OAUTH_PROVIDERS) {
+		const prefix = `OAUTH_${provider.toUpperCase()}`;
+		const clientId = text(env, `${prefix}_CLIENT_ID`);
+		const clientSecret = text(env, `${prefix}_CLIENT_SECRET`);
+		const redirectUri = text(env, `${prefix}_REDIRECT_URI`);
+		if (!clientId || !clientSecret || !redirectUri) continue;
+		const baseUrl = provider === 'gitlab' ? text(env, `${prefix}_BASE_URL`) : undefined;
+		const tenant = provider === 'microsoft' ? text(env, `${prefix}_TENANT`) : undefined;
+		config[provider] = {
+			clientId,
+			clientSecret,
+			redirectUri,
+			...(baseUrl ? { baseUrl } : {}),
+			...(tenant ? { tenant } : {})
+		};
+	}
+	return config;
+}
+
+// the sender for this environment: the cloudflare adapter is not built, so a bound EMAIL still
+// answers 501, and only a development server may print codes
+export function mailFor(env: BootEnv, options: BootOptions): MailSender {
+	const closed: MailSender = {
+		async send() {
+			throw new ApiError('not_built', 'Mail is not available yet');
+		}
+	};
+	if (env.EMAIL !== undefined) return closed;
+	return options.dev === true ? consoleMailSender() : closed;
+}
+
+// #endregion
+
+// #region audit
+
+// an account-level refusal has no organisation, so it goes to the person's own chain
+function denialChain(principal: Principal, orgId: string | undefined): string {
+	if (orgId !== undefined) return orgId;
+	return personalOrganizationId(
+		principal.kind === 'user' ? principal.userId : principal.issuerId
+	);
+}
+
+export function auditWriters(
+	getDb: () => Promise<CollegeDBClient>,
+	heads: HeadStore
+): Pick<ApiDeps, 'audit' | 'auditDenied'> {
+	return {
+		async audit(record) {
+			const db = await getDb();
+			const input = {
+				actor: principalActor(record.principal),
+				action: record.action,
+				target: record.resource.siteId ?? record.resource.orgId ?? record.action,
+				detail: {
+					via: record.via,
+					method: record.method,
+					path: record.path,
+					requestId: record.requestId
+				}
+			};
+			const ids = [...new Set(record.orgIds)];
+			const [first, second] = ids;
+			if (ids.length === 2 && first && second) {
+				await appendBoth(db, first, second, input, heads);
+				return;
+			}
+			for (const id of ids) await append(db, id, input, heads);
+		},
+		async auditDenied(record) {
+			const chain = denialChain(record.principal, record.resource.orgId);
+			await append(
+				await getDb(),
+				chain,
+				{
+					actor: principalActor(record.principal),
+					action: `${record.action}.denied`,
+					target: record.resource.siteId ?? record.resource.orgId ?? record.action,
+					detail: {
+						reason: record.reason,
+						...(record.detail ? { rule: record.detail } : {}),
+						method: record.method,
+						path: record.path,
+						requestId: record.requestId
+					}
+				},
+				heads
+			);
+		}
+	};
+}
+
+// #endregion
+
+// #region shards
+
+// the engine writes owner tokens, pending secrets, operations and sites to its one DB binding, and
+// the dashboard reads them by hashing the id over every shard. They meet only while one shard is bound
+export function assertSingleShard(env: CollegeDBEnv): void {
+	const bound = Object.keys(env).filter((name) => /^DB(_\d+)?$/.test(name));
+	if (bound.length > 1) {
+		throw new BootError(
+			`${bound.length} D1 shards are bound (${bound.join(', ')}) but the engine writes to DB only; bind one shard`
+		);
+	}
+}
+
+// the audit row of a secret reveal goes to the chain of the organisation that owns the site
+function siteAuditSink(getDb: () => Promise<CollegeDBClient>, heads: HeadStore): AuditSink {
+	return {
+		async append(input) {
+			const db = await getDb();
+			const home = await findSiteHome(db, input.target);
+			if (!home) throw new ApiError('not_found', 'Not found');
+			return append(db, home.organizationId, input, heads);
+		}
+	};
+}
+
+// #endregion
+
+// #region build
+
+export interface BuiltServices {
+	auth: AuthServices;
+	identity: IdentityServices;
+	organizations: OrganizationServices;
+	api: Partial<ApiDeps>;
+	ownerTokens: OwnerTokenStore;
+	sites: SiteServices;
+	backups: BackupServices;
+	pendingSecrets: () => Promise<PendingSecretDeps>;
+	heads: HeadStore;
+}
+
+// every store comes from a binding: sessions from KV, the rest from D1, and the audit chain heads
+// from R2. A missing binding stops the build, so nothing falls back to memory
+export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltServices {
+	if (!env.KV) throw new BootError('the KV binding is missing');
+	if (!env.BLOB) throw new BootError('the BLOB binding is missing');
+	assertSingleShard(env);
+	const getDb = () => ensureCollegeDB(withAtomicBatch(env));
+	const heads = r2HeadStore(env.BLOB);
+	const baseUrl = options.baseUrl ?? 'https://app.drupflare.com';
+	const billing = collegeBillingStore(getDb);
+	const planOf = async (orgId: string) => entitlementOf(await billing.getAccount(orgId));
+	const startOperation = engineStarter({ ...engineConfigOf(env), now: Date.now });
+	let ring: Promise<KeyRing> | undefined;
+	// the key ring loads on first use, and a missing KEK_V<n> answers 501 until one is set
+	const pendingSecrets = async (): Promise<PendingSecretDeps> => {
+		ring ??= loadKeyRing(env as Record<string, string | undefined>);
+		try {
+			return {
+				store: collegePendingSecretStore(getDb),
+				audit: siteAuditSink(getDb, heads),
+				ring: await ring,
+				now: Date.now
+			};
+		} catch (error) {
+			ring = undefined;
+			if (error instanceof CryptoError && error.code === 'no_keys') {
+				throw new ApiError('not_built', 'Secret custody is not available yet');
+			}
+			throw error;
+		}
+	};
+	return {
+		auth: {
+			kv: env.KV,
+			once: collegeOnceStore(getDb),
+			attempts: collegeAttemptStore(getDb),
+			directory: collegeDirectory(getDb, heads),
+			mail: mailFor(env, options),
+			turnstile: siteverifyTurnstile(text(env, 'TURNSTILE_SECRET_KEY')),
+			codeSecret: text(env, 'AUTH_CODE_SECRET') ?? '',
+			keys: collegeKeyIndex(getDb)
+		},
+		identity: {
+			store: collegeIdentityStore(getDb),
+			webauthn: webauthnConfig(env, baseUrl),
+			clients: oauthClients(oauthConfig(env)),
+			fetch: (input, init) => fetch(input, init)
+		},
+		organizations: { getDb },
+		api: {
+			resolvePrincipal: createPrincipalResolver(),
+			idempotency: collegeIdempotencyStore(getDb),
+			load: factsLoader({
+				entitlements: async (orgId) => entitlementKeys(await planOf(orgId)),
+				budgets: collegeBudgets(getDb),
+				...options.facts,
+				store: collegeFactsStore(getDb)
+			}),
+			...auditWriters(getDb, heads)
+		},
+		ownerTokens: collegeOwnerTokenStore(getDb),
+		sites: {
+			getDb,
+			entitlements: collegeSiteEntitlements(getDb, billing),
+			planOf,
+			startOperation,
+			config: siteInputConfigOf(env)
+		},
+		backups: backupServicesOf({ BLOB: env.BLOB }, { getDb, startOperation }, heads),
+		pendingSecrets,
+		heads
+	};
+}
+
+let booted: BuiltServices | null = null;
+
+// installs the services once per isolate; a second call, whatever its env, changes nothing
+export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices {
+	if (booted) return booted;
+	const built = buildServices(env, options);
+	setAuthServices(built.auth);
+	setIdentityServices(built.identity);
+	setOrganizationServices(built.organizations);
+	setApiDeps(built.api);
+	setSiteServices(built.sites);
+	setBackupServices(built.backups);
+	setPendingSecretDeps(built.pendingSecrets);
+	booted = built;
+	return built;
+}
+
+export function bootedServices(): BuiltServices {
+	if (!booted) throw new ApiError('not_built', 'The services are not installed yet');
+	return booted;
+}
+
+export function resetBoot(): void {
+	booted = null;
+	setAuthServices(null);
+	setIdentityServices(null);
+	setOrganizationServices(null);
+	resetApiDeps();
+	resetSiteServices();
+	resetBackupServices();
+	resetPendingSecretDeps();
+}
+
+// #endregion

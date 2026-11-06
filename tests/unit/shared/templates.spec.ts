@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	E2E_APPROVED_TEMPLATE_IDS,
+	TEMPLATE_CATEGORIES,
 	TEMPLATE_CLASSES,
 	TEMPLATES
 } from '../../../src/shared/templates';
@@ -36,9 +37,28 @@ describe('templates', () => {
 		expect(template('bring-your-own').enabled).toBe(true);
 	});
 
-	it('lists Import From a Server with no stated gate', () => {
-		expect(template('import-from-server').enabled).toBe(true);
-		expect(template('import-from-server').planGate).toBe(null);
+	it('gives every enabled entry a category', () => {
+		for (const item of TEMPLATES.filter((entry) => entry.enabled)) {
+			expect(TEMPLATE_CATEGORIES, item.id).toContain(item.category);
+		}
+	});
+
+	it('puts Drupal, WordPress and Joomla in cms and the Workers templates in workers', () => {
+		for (const id of ['drupal', 'wordpress', 'joomla'])
+			expect(template(id).category).toBe('cms');
+		for (const id of ['nuxtpress', 'smoke', 'mylora', 'static-site', 'bring-your-own']) {
+			expect(template(id).category).toBe('workers');
+		}
+	});
+
+	it('marks the first-party entries free and the custom Worker paid', () => {
+		for (const id of ['drupal', 'nuxtpress', 'smoke', 'mylora', 'static-site']) {
+			expect(template(id).free).toBe(true);
+		}
+		expect(template('bring-your-own').free).toBe(false);
+		for (const item of TEMPLATES.filter((entry) => entry.planGate === 'free')) {
+			expect(item.free, item.id).toBe(true);
+		}
 	});
 
 	it('assigns the roadmap classes and leaves unclassed kinds null', () => {
@@ -48,7 +68,7 @@ describe('templates', () => {
 			expect(template(id).class).toBe('second');
 		}
 		for (const id of ['smoke', 'mylora']) expect(template(id).class).toBe('third');
-		for (const id of ['static-site', 'gmux', 'bring-your-own', 'import-from-server']) {
+		for (const id of ['static-site', 'gmux', 'bring-your-own']) {
 			expect(template(id).class).toBe(null);
 		}
 	});

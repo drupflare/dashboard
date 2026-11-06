@@ -107,6 +107,9 @@ Organisation roles are `owner`, `admin`, `developer`, `billing`, `viewer`. Site 
 | `site.backup.create`             | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.backup.restore`            | site       | x         | x         |               |             |            | x               |                 |             |                                   |
 | `site.backup.download`           | site       | x         | x         |               |             |            | x               |                 |             | site content                      |
+| `site.backup`                    | department | x         | x         | x             |             |            |                 |                 |             |                                   |
+| `site.restore`                   | department | x         | x         |               |             |            |                 |                 |             | budget destructive-sites          |
+| `site.backup.export`             | department | x         | x         |               |             |            |                 |                 |             | session only, site content        |
 | `site.environment.manage`        | site       | x         | x         | x             |             |            | x               |                 |             | plan feature environments         |
 | `site.preview.manage`            | site       | x         | x         | x             |             |            | x               | x               |             | plan feature previews             |
 | `site.access.manage`             | site       | x         | x         |               |             |            | x               |                 |             |                                   |
@@ -152,6 +155,7 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `billing.portal`
 - `site.owner-token.reveal`
 - `site.owner-token.rotate`
+- `site.backup.export`
 
 ## Step-up actions
 

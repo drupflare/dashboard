@@ -185,6 +185,9 @@ export const ACTION_DEFS = {
 	'site.backup.create': { scope: 'site', org: DEV, site: SM },
 	'site.backup.restore': { scope: 'site', org: ADM, site: SA },
 	'site.backup.download': { scope: 'site', org: ADM, site: SA, content: true },
+	'site.backup': { scope: 'department', org: DEV },
+	'site.restore': { scope: 'department', org: ADM, budget: 'destructive-sites' },
+	'site.backup.export': { scope: 'department', org: ADM, sessionOnly: true, content: true },
 	'site.environment.manage': {
 		scope: 'site',
 		org: DEV,

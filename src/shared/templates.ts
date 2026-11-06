@@ -1,11 +1,14 @@
 import { z } from 'zod';
 
 export const TEMPLATE_CLASSES = ['first', 'second', 'third'] as const;
+export const TEMPLATE_CATEGORIES = ['cms', 'workers'] as const;
 
 const templateSchema = z.object({
 	id: z.string().min(1),
 	name: z.string().min(1),
 	class: z.enum(TEMPLATE_CLASSES).nullable(),
+	category: z.enum(TEMPLATE_CATEGORIES).nullable(),
+	free: z.boolean(),
 	enabled: z.boolean(),
 	comingSoon: z.string().nullable(),
 	planGate: z.enum(['free', 'paid-managed-or-self-managed']).nullable(),
@@ -19,6 +22,8 @@ export const TEMPLATES: readonly Template[] = z.array(templateSchema).parse([
 		id: 'drupal',
 		name: 'Drupal',
 		class: 'first',
+		category: 'cms',
+		free: true,
 		enabled: true,
 		comingSoon: null,
 		planGate: 'free',
@@ -28,6 +33,8 @@ export const TEMPLATES: readonly Template[] = z.array(templateSchema).parse([
 		id: 'static-site',
 		name: 'Static Site',
 		class: null,
+		category: 'workers',
+		free: true,
 		enabled: true,
 		comingSoon: null,
 		planGate: 'free',
@@ -37,6 +44,8 @@ export const TEMPLATES: readonly Template[] = z.array(templateSchema).parse([
 		id: 'nuxtpress',
 		name: 'Nuxtpress',
 		class: 'second',
+		category: 'workers',
+		free: true,
 		enabled: true,
 		comingSoon: null,
 		planGate: 'free',
@@ -46,6 +55,8 @@ export const TEMPLATES: readonly Template[] = z.array(templateSchema).parse([
 		id: 'smoke',
 		name: 'Smoke',
 		class: 'third',
+		category: 'workers',
+		free: true,
 		enabled: true,
 		comingSoon: null,
 		planGate: 'free',
@@ -55,6 +66,8 @@ export const TEMPLATES: readonly Template[] = z.array(templateSchema).parse([
 		id: 'mylora',
 		name: 'MyLoRA',
 		class: 'third',
+		category: 'workers',
+		free: true,
 		enabled: true,
 		comingSoon: null,
 		planGate: 'free',
@@ -64,6 +77,8 @@ export const TEMPLATES: readonly Template[] = z.array(templateSchema).parse([
 		id: 'wordpress',
 		name: 'WordPress',
 		class: 'second',
+		category: 'cms',
+		free: true,
 		enabled: false,
 		comingSoon: 'Coming Soon',
 		planGate: null,
@@ -73,6 +88,8 @@ export const TEMPLATES: readonly Template[] = z.array(templateSchema).parse([
 		id: 'joomla',
 		name: 'Joomla',
 		class: 'second',
+		category: 'cms',
+		free: true,
 		enabled: false,
 		comingSoon: 'Coming Soon',
 		planGate: null,
@@ -82,6 +99,8 @@ export const TEMPLATES: readonly Template[] = z.array(templateSchema).parse([
 		id: 'gmux',
 		name: 'gmux',
 		class: null,
+		category: null,
+		free: false,
 		enabled: false,
 		comingSoon: 'Coming Soon',
 		planGate: null,
@@ -91,19 +110,12 @@ export const TEMPLATES: readonly Template[] = z.array(templateSchema).parse([
 		id: 'bring-your-own',
 		name: 'Bring Your Own',
 		class: null,
+		category: 'workers',
+		free: false,
 		enabled: true,
 		comingSoon: null,
 		planGate: 'paid-managed-or-self-managed',
 		source: 'plan:448 list; plan:27 arbitrary templates paid only'
-	},
-	{
-		id: 'import-from-server',
-		name: 'Import From a Server',
-		class: null,
-		enabled: true,
-		comingSoon: null,
-		planGate: null,
-		source: 'plan:448 list; plan states no gate'
 	}
 ]);
 

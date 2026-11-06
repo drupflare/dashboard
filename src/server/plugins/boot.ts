@@ -1,0 +1,25 @@
+import { defineNitroPlugin, useRuntimeConfig } from 'nitropack/runtime';
+import { bootOnce, type BootEnv } from '../services/boot';
+
+let warned = false;
+
+export default defineNitroPlugin((nitroApp) => {
+	nitroApp.hooks.hook('request', (event) => {
+		const env = event.context.cloudflare?.env as BootEnv | undefined;
+		if (!env) {
+			if (!warned) {
+				warned = true;
+				console.warn('boot skipped: the request carries no cloudflare env');
+			}
+			return;
+		}
+		try {
+			bootOnce(env, {
+				dev: import.meta.dev,
+				baseUrl: useRuntimeConfig(event).baseUrl as string
+			});
+		} catch (error) {
+			console.error('boot failed; sign-in stays closed', error);
+		}
+	});
+});
