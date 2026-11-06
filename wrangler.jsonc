@@ -5,5 +5,8 @@
 	"observability": { "enabled": true, "head_sampling_rate": 1.0 },
 	"d1_databases": [{ "binding": "DB", "database_name": "drupflare-dashboard-db" }],
 	"kv_namespaces": [{ "binding": "KV" }, { "binding": "CACHE" }, { "binding": "HOSTS_KV" }],
-	"r2_buckets": [{ "binding": "BLOB", "bucket_name": "drupflare-dashboard-blob" }]
+	"r2_buckets": [{ "binding": "BLOB", "bucket_name": "drupflare-dashboard-blob" }],
+	"services": [{ "binding": "ENGINE", "service": "drupflare-engine" }],
+	"triggers": { "crons": ["*/15 * * * *"] },
+	"secrets": { "required": ["START_SECRET", "KEK_V1"] }
 }

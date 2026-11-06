@@ -16,7 +16,7 @@ export default defineConfig({
 	test: {
 		environment: 'node',
 		include: [
-			'tests/unit/{contracts,domain,scripts,security,server,shared}/**/*.spec.ts',
+			'tests/unit/{contracts,dispatch,domain,engine,scripts,security,server,shared}/**/*.spec.ts',
 			'tests/bindings/**/*.spec.ts'
 		],
 		globals: true,

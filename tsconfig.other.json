@@ -1,5 +1,10 @@
 {
 	"extends": "./.nuxt/tsconfig.node.json",
+	"compilerOptions": {
+		"paths": {
+			"@contracts/*": ["./contracts/src/*"]
+		}
+	},
 	"include": [
 		"contracts/**/*.ts",
 		"scripts/**/*.ts",

@@ -52,6 +52,8 @@ export default defineNuxtConfig({
 	},
 	nitro: {
 		preset: 'cloudflare_module',
+		experimental: { tasks: true },
+		scheduledTasks: { '*/15 * * * *': ['pending-secrets-purge'] },
 		publicAssets: [
 			{
 				dir: fileURLToPath(new URL('./node_modules/swagger-ui-dist', import.meta.url)),

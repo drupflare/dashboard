@@ -15,6 +15,7 @@ bun run dev
 | ------------------------ | ---------------------------------------------------------- |
 | `bun run typecheck`      | Type check with `vue-tsc`                                  |
 | `bun run test:unit`      | Unit tests with Vitest                                     |
+| `bun run test:bindings`  | Repository and service tests against local D1, KV and R2   |
 | `bun run build`          | Production build for Cloudflare Workers                    |
 | `bun run check:wrangler` | Confirms every binding in `wrangler.jsonc` is in the build |
 
