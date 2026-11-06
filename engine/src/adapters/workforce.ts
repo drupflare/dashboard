@@ -60,7 +60,16 @@ export function workforceCloudflare(plane: DispatchPlane, resources: Resources):
 
 		// workforce's dispatch get tests the error's name, which the bundle renamed, so it throws
 		// instead of returning null
+		// the namespace answers 200 with a null script for a name that is not there, so a missing script
+		// never reaches workforce's 404 handling
 		async getScript(name) {
+			const probe = await paced(() =>
+				plane.http.send(`${plane.base}/scripts/${encodeURIComponent(name)}`)
+			);
+			if (probe.status === 404) return null;
+			if (!probe.ok) throw new Error(`GET a script answered ${probe.status}`);
+			const body = (await probe.json()) as { result?: { script?: unknown } | null };
+			if (body.result?.script == null) return null;
 			try {
 				const found = await paced(() => plane.get(name));
 				return found === null ? null : { tags: found.tags, version: found.modifiedOn };

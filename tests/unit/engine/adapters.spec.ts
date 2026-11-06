@@ -219,7 +219,12 @@ describe('the workforce adapter reads and the ownership calls', () => {
 		const { cloudflare } = cloudflareWith((seen) => {
 			if (seen.path.includes('/tags')) return { body: page([`s:${SITE}`, 'team:web']) };
 			if (seen.path.includes(name)) {
-				return { body: { success: true, result: { modified_on: '2026-11-05T00:00:00Z' } } };
+				return {
+					body: {
+						success: true,
+						result: { modified_on: '2026-11-05T00:00:00Z', script: { id: name } }
+					}
+				};
 			}
 			return {
 				status: 404,
@@ -231,6 +236,21 @@ describe('the workforce adapter reads and the ownership calls', () => {
 			version: '2026-11-05T00:00:00Z'
 		});
 		expect(await cloudflare.getScript('s-nothereatall')).toBeNull();
+	});
+
+	it('reads the live answer for a script that is not there, a 200 with a null script, as absent', async () => {
+		const { calls, cloudflare } = cloudflareWith(() => ({
+			body: {
+				success: true,
+				result: {
+					dispatch_namespace: 'ns',
+					modified_on: '2026-11-05T00:00:00Z',
+					script: null
+				}
+			}
+		}));
+		expect(await cloudflare.getScript('s-nothereatall')).toBeNull();
+		expect(calls.filter((call) => call.path.includes('/tags'))).toHaveLength(0);
 	});
 
 	it('lists, adds and removes a route on a zone, and reads the status of the remove', async () => {
