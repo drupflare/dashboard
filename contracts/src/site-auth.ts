@@ -16,6 +16,7 @@ export const LEASE_CONTEXT = 'drupflare.site-auth.lease.v1';
 
 export const DEFAULT_LEASE_MS = 30_000;
 export const STRICT_LEASE_MS = 5_000;
+export const MAX_LEASE_MS = 5 * 60_000;
 export const DEFAULT_STALE_GRACE_MS = 300_000;
 export const DEFAULT_CLOCK_SKEW_MS = 5_000;
 export const RENEW_WHEN_REMAINING = 1 / 3;
@@ -183,6 +184,8 @@ export async function checkLease(
 		opts.publicKey
 	);
 	if (!valid) return { ok: false, code: 'bad_signature' };
+	// a signed lease that outlives the ceiling is a platform fault, so no verifier honours it
+	if (lease.exp - lease.iat > MAX_LEASE_MS) return { ok: false, code: 'malformed' };
 	if (lease.siteId !== opts.siteId) return { ok: false, code: 'wrong_site' };
 	if (lease.epoch !== opts.epoch) return { ok: false, code: 'wrong_epoch' };
 	if (lease.state === 'revoked') return { ok: false, code: 'revoked' };

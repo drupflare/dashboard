@@ -436,6 +436,7 @@
 				"body": {
 					"type": "object",
 					"properties": {
+						"nodeId": { "type": "string", "pattern": "^nod_[0-9a-z]{8,40}$" },
 						"opId": { "type": "string", "pattern": "^op_[0-9a-z]{8,40}$" },
 						"stepId": { "type": "string", "minLength": 1, "maxLength": 64 },
 						"idempotencyKey": { "type": "string", "minLength": 1, "maxLength": 128 },
@@ -457,6 +458,7 @@
 						}
 					},
 					"required": [
+						"nodeId",
 						"opId",
 						"stepId",
 						"idempotencyKey",

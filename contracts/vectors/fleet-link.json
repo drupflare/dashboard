@@ -219,6 +219,7 @@
 				"type": "command",
 				"seq": 1,
 				"body": {
+					"nodeId": "nod_testnode0001",
 					"opId": "op_testop000001",
 					"stepId": "step-1",
 					"idempotencyKey": "idem-0001",
@@ -228,16 +229,17 @@
 					"action": "health.observe",
 					"params": {}
 				},
-				"sig": "g14wDlRii-kbWa_gWdWCsTs_dNNNijVMac-EVybtRZ2tQB3Pky_jHplj2TELzv8RoPyVQqUJBGuOTkvmFaZlCQ"
+				"sig": "XtcwzJql0FLko17eE7IT0nkiMJ3AeolhuqFLCO-S-5KeaghhGMr2Vw361e87LV6r3sq5Lx7nkmYPU5jbYI4KBQ"
 			},
 			"context": {
 				"publicKey": "r2EXtK8adXShcS1LcXu6-pg-dlzFrrSaWFSUBElQY2s",
 				"direction": "server",
 				"now": 1790000000000,
-				"seen": []
+				"seen": [],
+				"nodeId": "nod_testnode0001"
 			},
 			"expect": "ok",
-			"signingInput": "drupflare.fleet-link.envelope.v1\n{\"ack\":0,\"body\":{\"action\":\"health.observe\",\"approval\":\"local\",\"class\":\"safe\",\"expiresAt\":1790000060000,\"idempotencyKey\":\"idem-0001\",\"opId\":\"op_testop000001\",\"params\":{},\"stepId\":\"step-1\"},\"id\":\"msg_command_0001\",\"seq\":1,\"ts\":1790000000000,\"type\":\"command\",\"v\":1}"
+			"signingInput": "drupflare.fleet-link.envelope.v1\n{\"ack\":0,\"body\":{\"action\":\"health.observe\",\"approval\":\"local\",\"class\":\"safe\",\"expiresAt\":1790000060000,\"idempotencyKey\":\"idem-0001\",\"nodeId\":\"nod_testnode0001\",\"opId\":\"op_testop000001\",\"params\":{},\"stepId\":\"step-1\"},\"id\":\"msg_command_0001\",\"seq\":1,\"ts\":1790000000000,\"type\":\"command\",\"v\":1}"
 		},
 		{
 			"name": "reordered-fields-verify",
@@ -545,6 +547,7 @@
 				"type": "command",
 				"seq": 1,
 				"body": {
+					"nodeId": "nod_testnode0001",
 					"opId": "op_testop000001",
 					"stepId": "step-1",
 					"idempotencyKey": "idem-0001",
@@ -554,7 +557,7 @@
 					"action": "health.observe",
 					"params": {}
 				},
-				"sig": "g14wDlRii-kbWa_gWdWCsTs_dNNNijVMac-EVybtRZ2tQB3Pky_jHplj2TELzv8RoPyVQqUJBGuOTkvmFaZlCQ"
+				"sig": "XtcwzJql0FLko17eE7IT0nkiMJ3AeolhuqFLCO-S-5KeaghhGMr2Vw361e87LV6r3sq5Lx7nkmYPU5jbYI4KBQ"
 			},
 			"context": {
 				"publicKey": "hztXXEZAVRH7LmkuWsGCsg4VxQfoHbqO1YfDLZLs0w0",
@@ -576,6 +579,7 @@
 				"type": "command",
 				"seq": 1,
 				"body": {
+					"nodeId": "nod_testnode0001",
 					"opId": "op_testop000001",
 					"stepId": "step-1",
 					"idempotencyKey": "idem-0001",
@@ -585,7 +589,73 @@
 					"action": "health.observe",
 					"params": {}
 				},
-				"sig": "LpCEO2AksngqIIyDp3CZBPTj-5cRarZGpUzfUMqt-XqLb5-mOs2zBtDYJoFIrcUCOg3SVMQBEuD_z-FiZFbFCw"
+				"sig": "TY0S090vWOrw1N_QzVOMM-SzPF1TNUpnOAMm6zFTv8JU4toiOCwhzLYc8RJeZNfAKFA_EDk_8ZVPQI_FHd1DBw"
+			},
+			"context": {
+				"publicKey": "r2EXtK8adXShcS1LcXu6-pg-dlzFrrSaWFSUBElQY2s",
+				"direction": "server",
+				"now": 1790000000000,
+				"seen": [],
+				"nodeId": "nod_testnode0001"
+			},
+			"expect": "command_expired"
+		},
+		{
+			"name": "command-for-another-node",
+			"kind": "envelope",
+			"description": "A correctly signed command that names a different node than the receiver.",
+			"input": {
+				"v": 1,
+				"ack": 0,
+				"ts": 1790000000000,
+				"id": "msg_command_0001",
+				"type": "command",
+				"seq": 1,
+				"body": {
+					"nodeId": "nod_testnode0002",
+					"opId": "op_testop000001",
+					"stepId": "step-1",
+					"idempotencyKey": "idem-0001",
+					"expiresAt": 1790000060000,
+					"class": "safe",
+					"approval": "local",
+					"action": "health.observe",
+					"params": {}
+				},
+				"sig": "NnpW1A7l-wtr7JIRRLy0hPgH96UUPs0xskOzmYJxzq0uh1avCYZkCDmCi_Ug4iurPxkhtQY3W6HAR_oYgUXoCw"
+			},
+			"context": {
+				"publicKey": "r2EXtK8adXShcS1LcXu6-pg-dlzFrrSaWFSUBElQY2s",
+				"direction": "server",
+				"now": 1790000000000,
+				"seen": [],
+				"nodeId": "nod_testnode0001"
+			},
+			"expect": "wrong_node"
+		},
+		{
+			"name": "command-with-no-receiver-id",
+			"kind": "envelope",
+			"description": "A command is refused when the receiver does not say which node it is.",
+			"input": {
+				"v": 1,
+				"ack": 0,
+				"ts": 1790000000000,
+				"id": "msg_command_0001",
+				"type": "command",
+				"seq": 1,
+				"body": {
+					"nodeId": "nod_testnode0001",
+					"opId": "op_testop000001",
+					"stepId": "step-1",
+					"idempotencyKey": "idem-0001",
+					"expiresAt": 1790000060000,
+					"class": "safe",
+					"approval": "local",
+					"action": "health.observe",
+					"params": {}
+				},
+				"sig": "XtcwzJql0FLko17eE7IT0nkiMJ3AeolhuqFLCO-S-5KeaghhGMr2Vw361e87LV6r3sq5Lx7nkmYPU5jbYI4KBQ"
 			},
 			"context": {
 				"publicKey": "r2EXtK8adXShcS1LcXu6-pg-dlzFrrSaWFSUBElQY2s",
@@ -593,7 +663,7 @@
 				"now": 1790000000000,
 				"seen": []
 			},
-			"expect": "command_expired"
+			"expect": "wrong_node"
 		},
 		{
 			"name": "challenge-wrong-nonce",

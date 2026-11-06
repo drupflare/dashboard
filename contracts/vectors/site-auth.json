@@ -71,6 +71,32 @@
 			"signingInput": "drupflare.site-auth.lease.v1\n{\"accessRuleHash\":\"sha256:3544a255b7749c1898c97ea4167d190b4889845bb2832ed1defe308a58355e97\",\"epoch\":3,\"exp\":1790000005000,\"generation\":7,\"iat\":1790000000000,\"limits\":{\"requestsPerSecond\":50,\"viewsPerMonth\":100000},\"mode\":\"strict\",\"siteId\":\"site_testsite0001\",\"state\":\"active\",\"v\":1}"
 		},
 		{
+			"name": "lease-at-maximum-life",
+			"kind": "lease",
+			"description": "A lease that lives exactly as long as the contract maximum still serves.",
+			"input": {
+				"v": 1,
+				"siteId": "site_testsite0001",
+				"epoch": 3,
+				"generation": 7,
+				"state": "active",
+				"mode": "lease",
+				"limits": { "viewsPerMonth": 100000, "requestsPerSecond": 50 },
+				"accessRuleHash": "sha256:3544a255b7749c1898c97ea4167d190b4889845bb2832ed1defe308a58355e97",
+				"iat": 1790000000000,
+				"exp": 1790000300000,
+				"sig": "rFqNj0jEemiIpvlBHgrEKYU8FDEnZk0FpJGV0QVcvcY4bGrXrzRsuRED8jWPuFNa1wLq9EfwfpDZlpB_UP-fCA"
+			},
+			"context": {
+				"publicKey": "KgKJfJwKS2ewt6AjfhKNCYw3Ic8Uhl7EiuzyChGU_Qc",
+				"now": 1790000001000,
+				"siteId": "site_testsite0001",
+				"epoch": 3
+			},
+			"expectServing": "lease",
+			"expect": "ok"
+		},
+		{
 			"name": "plan-grace-state",
 			"kind": "lease",
 			"description": "A plan grace period is a non-security state and still serves.",
@@ -225,6 +251,31 @@
 				"epoch": 3
 			},
 			"expect": "expired"
+		},
+		{
+			"name": "lease-longer-than-maximum",
+			"kind": "lease",
+			"description": "A correctly signed lease that lives longer than the contract maximum.",
+			"input": {
+				"v": 1,
+				"siteId": "site_testsite0001",
+				"epoch": 3,
+				"generation": 7,
+				"state": "active",
+				"mode": "lease",
+				"limits": { "viewsPerMonth": 100000, "requestsPerSecond": 50 },
+				"accessRuleHash": "sha256:3544a255b7749c1898c97ea4167d190b4889845bb2832ed1defe308a58355e97",
+				"iat": 1790000000000,
+				"exp": 1790000300001,
+				"sig": "Xazb0uNLsclcnyJtAUXVSWM9lhUAbyucY5krY6xm0kbaZ5Mvz6ZOFAvMUWRcErWlXMKpXqtOOqP3hO6IfYpwAA"
+			},
+			"context": {
+				"publicKey": "KgKJfJwKS2ewt6AjfhKNCYw3Ic8Uhl7EiuzyChGU_Qc",
+				"now": 1790000001000,
+				"siteId": "site_testsite0001",
+				"epoch": 3
+			},
+			"expect": "malformed"
 		},
 		{
 			"name": "grace-exhausted",

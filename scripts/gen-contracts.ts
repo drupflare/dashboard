@@ -39,6 +39,7 @@ import * as siteAuth from '../contracts/src/site-auth';
 import {
 	DEFAULT_STALE_GRACE_MS,
 	LEASE_CONTEXT,
+	MAX_LEASE_MS,
 	issueLease,
 	type AuthorityState
 } from '../contracts/src/site-auth';
@@ -112,6 +113,7 @@ const SITE = 'site_testsite0001';
 const OTHER_SITE = 'site_testsite0002';
 const OP = 'op_testop000001';
 const NODE = 'nod_testnode0001';
+const OTHER_NODE = 'nod_testnode0002';
 const HOUR = '2026-11-05T12:00:00Z';
 
 type Json = Record<string, unknown>;
@@ -217,7 +219,12 @@ async function fleetLinkVectors(keys: Record<KeyLabel, SigningKey & { seed: stri
 		now: VECTOR_NOW,
 		seen: []
 	};
-	const serverCtx = { ...nodeCtx, publicKey: keys.dashboard.publicKey, direction: 'server' };
+	const serverCtx = {
+		...nodeCtx,
+		publicKey: keys.dashboard.publicKey,
+		direction: 'server',
+		nodeId: NODE
+	};
 	const auditHash = await sha256Digest('audit-head-test');
 
 	const base = { v: FLEET_LINK_VERSION.major, ack: 0, ts: VECTOR_NOW };
@@ -316,6 +323,7 @@ async function fleetLinkVectors(keys: Record<KeyLabel, SigningKey & { seed: stri
 		type: 'command',
 		seq: 1,
 		body: {
+			nodeId: NODE,
 			opId: OP,
 			stepId: 'step-1',
 			idempotencyKey: 'idem-0001',
@@ -440,6 +448,25 @@ async function fleetLinkVectors(keys: Record<KeyLabel, SigningKey & { seed: stri
 		context: serverCtx,
 		expect: 'command_expired'
 	});
+	negative(cases, {
+		name: 'command-for-another-node',
+		kind: 'envelope',
+		description: 'A correctly signed command that names a different node than the receiver.',
+		input: await sign(
+			{ ...command, body: { ...(command.body as Json), nodeId: OTHER_NODE } },
+			keys.dashboard
+		),
+		context: serverCtx,
+		expect: 'wrong_node'
+	});
+	negative(cases, {
+		name: 'command-with-no-receiver-id',
+		kind: 'envelope',
+		description: 'A command is refused when the receiver does not say which node it is.',
+		input: signedCommand,
+		context: { ...serverCtx, nodeId: undefined },
+		expect: 'wrong_node'
+	});
 
 	const challenge = createChallenge(VECTOR_NOW, new Uint8Array(16).fill(7));
 	const range = { min: { major: 1, minor: 0 }, max: { major: 1, minor: 2 } };
@@ -551,6 +578,17 @@ async function siteAuthVectors(keys: Record<KeyLabel, SigningKey & { seed: strin
 		expectServing: 'strict',
 		signing: signingInput(LEASE_CONTEXT, omitSig(strict))
 	});
+	const longest = await issueLease({ ...authority }, VECTOR_NOW, keys.siteAuth.privateKey, {
+		leaseMs: MAX_LEASE_MS
+	});
+	positive(cases, {
+		name: 'lease-at-maximum-life',
+		kind: 'lease',
+		description: 'A lease that lives exactly as long as the contract maximum still serves.',
+		input: longest,
+		context: ctx,
+		expectServing: 'lease'
+	});
 	positive(cases, {
 		name: 'plan-grace-state',
 		kind: 'lease',
@@ -601,6 +639,16 @@ async function siteAuthVectors(keys: Record<KeyLabel, SigningKey & { seed: strin
 		input: lease,
 		context: { ...ctx, now: lease.exp + 60_000 },
 		expect: 'expired'
+	});
+	negative(cases, {
+		name: 'lease-longer-than-maximum',
+		kind: 'lease',
+		description: 'A correctly signed lease that lives longer than the contract maximum.',
+		input: await issueLease({ ...authority }, VECTOR_NOW, keys.siteAuth.privateKey, {
+			leaseMs: MAX_LEASE_MS + 1
+		}),
+		context: ctx,
+		expect: 'malformed'
 	});
 	negative(cases, {
 		name: 'grace-exhausted',

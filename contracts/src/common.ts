@@ -106,7 +106,7 @@ function throwUndefined(): never {
 const encoder = new TextEncoder();
 
 export function utf8(text: string): Uint8Array<ArrayBuffer> {
-	return encoder.encode(text);
+	return new Uint8Array(encoder.encode(text));
 }
 
 export function toBase64Url(bytes: Uint8Array): string {
@@ -156,7 +156,7 @@ export async function signingKeyFromSeed(seed: Uint8Array): Promise<SigningKey> 
 	pkcs8.set(PKCS8_ED25519_PREFIX);
 	pkcs8.set(seed, PKCS8_ED25519_PREFIX.length);
 	const privateKey = await crypto.subtle.importKey('pkcs8', pkcs8, 'Ed25519', true, ['sign']);
-	const jwk = await crypto.subtle.exportKey('jwk', privateKey);
+	const jwk = (await crypto.subtle.exportKey('jwk', privateKey)) as JsonWebKey;
 	if (!jwk.x) throw new Error('ed25519 export returned no public key');
 	return { privateKey, publicKey: jwk.x };
 }

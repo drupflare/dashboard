@@ -10,9 +10,21 @@ import {
 	stepSchema,
 	type Plan
 } from '../../../contracts/src/operations';
-import { hostname, scriptName, siteSchema } from '../../../contracts/src/sites';
+import {
+	SITES_VERSION,
+	SITE_CATEGORIES,
+	SITE_CONFIGS,
+	SITE_KINDS,
+	categoryOfKind,
+	cloudflareAccountId,
+	hostname,
+	scriptName,
+	siteIdFromScript,
+	siteSchema
+} from '../../../contracts/src/sites';
 
 const at = '2026-11-05T12:00:00Z';
+const account = '0123456789abcdef0123456789abcdef';
 
 describe('sites', () => {
 	const site = {
@@ -20,7 +32,10 @@ describe('sites', () => {
 		orgId: newId('org'),
 		name: 'Campus Site',
 		kind: 'drupal',
+		category: 'cms',
 		plane: 'managed',
+		config: 'managed',
+		accountId: account,
 		state: 'active',
 		ring: 'R3',
 		primaryHostname: 'campus.drupflare.app',
@@ -66,8 +81,67 @@ describe('sites', () => {
 		}
 	});
 
-	it('names a script s-<siteId>', () => {
-		expect(scriptName(site.id)).toBe(`s-${site.id}`);
+	it('names a script from the id body, in a form a Worker name allows', () => {
+		const name = scriptName(site.id);
+		expect(name).toBe(`s-${site.id.slice('site_'.length)}`);
+		expect(name).toMatch(/^[a-z0-9][a-z0-9-]{0,62}$/);
+	});
+
+	it('maps a script name back to its site id and refuses anything else', () => {
+		expect(siteIdFromScript(scriptName(site.id))).toBe(site.id);
+		expect(siteIdFromScript('s-short')).toBeNull();
+		expect(siteIdFromScript('x-abcdefgh')).toBeNull();
+		expect(siteIdFromScript(`s-${site.id}`)).toBeNull();
+	});
+
+	it('is version 1.1 and lists the two categories and the two configs', () => {
+		expect(SITES_VERSION).toEqual({ major: 1, minor: 1 });
+		expect(SITE_CATEGORIES).toEqual(['cms', 'workers']);
+		expect(SITE_CONFIGS).toEqual(['managed', 'canonical']);
+	});
+
+	it('puts Drupal in the cms category and every other kind in workers', () => {
+		expect(categoryOfKind('drupal')).toBe('cms');
+		for (const kind of SITE_KINDS.filter((item) => item !== 'drupal')) {
+			expect(categoryOfKind(kind)).toBe('workers');
+		}
+	});
+
+	it('parses a 1.0 document by giving it the category of its kind, the canonical config and no account', () => {
+		const { category: _c, config: _f, accountId: _a, ...old } = site;
+		expect(siteSchema.parse(old)).toEqual({
+			...old,
+			category: 'cms',
+			config: 'canonical',
+			accountId: null
+		});
+		const worker = siteSchema.parse({ ...old, kind: 'nuxtpress' });
+		expect(worker).toMatchObject({ kind: 'nuxtpress', category: 'workers' });
+	});
+
+	it('keeps a stated category, config and account over the defaults', () => {
+		const stated = { ...site, kind: 'smoke', category: 'workers', config: 'canonical' };
+		expect(siteSchema.parse(stated)).toEqual(stated);
+		expect(siteSchema.parse({ ...site, accountId: null }).accountId).toBeNull();
+	});
+
+	it('refuses a category that does not match the kind, an unknown config and a bad account id', () => {
+		expect(siteSchema.safeParse({ ...site, category: 'workers' }).success).toBe(false);
+		expect(siteSchema.safeParse({ ...site, kind: 'smoke' }).success).toBe(false);
+		expect(siteSchema.safeParse({ ...site, config: 'free' }).success).toBe(false);
+		expect(siteSchema.safeParse({ ...site, accountId: 'acct-1' }).success).toBe(false);
+		expect(siteSchema.safeParse({ ...site, accountId: account.toUpperCase() }).success).toBe(
+			false
+		);
+		expect(siteSchema.safeParse('not an object').success).toBe(false);
+		expect(siteSchema.safeParse({ ...site, kind: 'wordpress' }).success).toBe(false);
+	});
+
+	it('accepts a 32 character lowercase hex account id and nothing else', () => {
+		expect(cloudflareAccountId.safeParse(account).success).toBe(true);
+		for (const bad of ['', account.slice(1), `${account}0`, 'g'.repeat(32)]) {
+			expect(cloudflareAccountId.safeParse(bad).success, bad).toBe(false);
+		}
 	});
 });
 

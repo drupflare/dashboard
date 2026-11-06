@@ -156,6 +156,7 @@ describe('body schemas', () => {
 			[
 				commandBodySchema,
 				{
+					nodeId: nodeIdValue,
 					opId: newId('op'),
 					stepId: 's1',
 					idempotencyKey: 'k',
@@ -166,6 +167,7 @@ describe('body schemas', () => {
 					params: {}
 				},
 				{
+					nodeId: nodeIdValue,
 					opId: newId('op'),
 					stepId: 's1',
 					idempotencyKey: 'k',
@@ -342,6 +344,7 @@ describe('envelope signing', () => {
 				seq: 1,
 				ack: 0,
 				body: {
+					nodeId: nodeIdValue,
 					opId: newId('op'),
 					stepId: 's',
 					idempotencyKey: 'k',
@@ -375,6 +378,7 @@ describe('envelope signing', () => {
 	it('refuses an expired command only after the signature checks out', async () => {
 		const dashboard = await generateSigningKey();
 		const body = {
+			nodeId: nodeIdValue,
 			opId: newId('op'),
 			stepId: 's',
 			idempotencyKey: 'k',
@@ -396,13 +400,53 @@ describe('envelope signing', () => {
 			} as UnsignedEnvelope,
 			dashboard.privateKey
 		)) as any;
-		const options = { publicKey: dashboard.publicKey, direction: 'server' as const, now: 100 };
+		const options = {
+			publicKey: dashboard.publicKey,
+			direction: 'server' as const,
+			now: 100,
+			nodeId: nodeIdValue
+		};
 		expect(await verifyEnvelope(message, options)).toEqual({
 			ok: false,
 			code: 'command_expired'
 		});
 		const forged = { ...message, body: { ...body, expiresAt: 9999 } };
 		expect(await verifyEnvelope(forged, options)).toEqual({ ok: false, code: 'bad_signature' });
+	});
+
+	it('refuses a command that names another node, or when the receiver gives no node id', async () => {
+		const dashboard = await generateSigningKey();
+		const message = await signEnvelope(
+			{
+				v: 1,
+				id: 'msg_cmd_000003',
+				type: 'command',
+				ts: 100,
+				seq: 1,
+				ack: 0,
+				body: {
+					nodeId: nodeIdValue,
+					opId: newId('op'),
+					stepId: 's',
+					idempotencyKey: 'k',
+					expiresAt: 500,
+					class: 'safe',
+					approval: 'local',
+					action: 'a',
+					params: {}
+				}
+			} as UnsignedEnvelope,
+			dashboard.privateKey
+		);
+		const options = { publicKey: dashboard.publicKey, direction: 'server' as const, now: 100 };
+		expect(await verifyEnvelope(message, { ...options, nodeId: nodeIdValue })).toMatchObject({
+			ok: true
+		});
+		expect(await verifyEnvelope(message, { ...options, nodeId: newId('nod') })).toEqual({
+			ok: false,
+			code: 'wrong_node'
+		});
+		expect(await verifyEnvelope(message, options)).toEqual({ ok: false, code: 'wrong_node' });
 	});
 
 	it('does not accept a signature made under the challenge context', async () => {

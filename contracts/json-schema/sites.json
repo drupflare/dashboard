@@ -1,7 +1,7 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"contract": "sites",
-	"version": "1.0",
+	"version": "1.1",
 	"schemas": {
 		"site": {
 			"type": "object",
@@ -13,7 +13,12 @@
 					"type": "string",
 					"enum": ["drupal", "nuxtpress", "smoke", "mylora", "custom"]
 				},
+				"category": { "type": "string", "enum": ["cms", "workers"] },
 				"plane": { "type": "string", "enum": ["managed", "self-managed", "self-hosted"] },
+				"config": { "type": "string", "enum": ["managed", "canonical"] },
+				"accountId": {
+					"anyOf": [{ "type": "string", "pattern": "^[0-9a-f]{32}$" }, { "type": "null" }]
+				},
 				"state": {
 					"type": "string",
 					"enum": ["active", "suspended", "tombstoned", "purge-eligible", "deleted"]
@@ -53,7 +58,10 @@
 				"orgId",
 				"name",
 				"kind",
+				"category",
 				"plane",
+				"config",
+				"accountId",
 				"state",
 				"ring",
 				"primaryHostname",

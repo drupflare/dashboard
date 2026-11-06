@@ -195,6 +195,7 @@ export const COMMAND_APPROVALS = ['local', 'automatic'] as const;
 export const COMMAND_OUTCOMES = ['succeeded', 'failed', 'rejected', 'expired', 'queued'] as const;
 
 export const commandBodySchema = z.object({
+	nodeId,
 	opId: operationId,
 	stepId: z.string().min(1).max(64),
 	idempotencyKey: z.string().min(1).max(128),
@@ -269,6 +270,7 @@ export const ENVELOPE_REFUSALS = [
 	'expired',
 	'future',
 	'command_expired',
+	'wrong_node',
 	'replayed'
 ] as const;
 export type EnvelopeRefusal = (typeof ENVELOPE_REFUSALS)[number];
@@ -287,6 +289,8 @@ export type VerifyEnvelopeOptions = {
 	now: number;
 	windowMs?: number;
 	seen?: ReadonlySet<string>;
+	// the receiving node's own id; a command is refused unless it names this node
+	nodeId?: string;
 };
 
 export async function verifyEnvelope(
@@ -318,6 +322,9 @@ export async function verifyEnvelope(
 		opts.publicKey
 	);
 	if (!valid) return { ok: false, code: 'bad_signature' };
+	if (message.type === 'command' && message.body.nodeId !== opts.nodeId) {
+		return { ok: false, code: 'wrong_node' };
+	}
 	const windowMs = opts.windowMs ?? FLEET_TS_WINDOW_MS;
 	if (message.ts < opts.now - windowMs) return { ok: false, code: 'expired' };
 	if (message.ts > opts.now + windowMs) return { ok: false, code: 'future' };
