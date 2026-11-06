@@ -1,0 +1,9 @@
+{
+	"name": "spike-count-tenant",
+	"main": "tenant.js",
+	"compatibility_date": "2026-08-01",
+	"durable_objects": {
+		"bindings": [{ "name": "COUNTER", "class_name": "TenantCounter" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["TenantCounter"] }]
+}

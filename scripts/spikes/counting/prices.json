@@ -1,0 +1,37 @@
+{
+	"doRequests": {
+		"usdPerMillion": 0.15,
+		"includedPerMonth": 1000000,
+		"page": "developers.cloudflare.com/durable-objects/platform/pricing/ (Workers Paid, Requests)",
+		"fetched": "2026-11-06",
+		"read": "summary from the page fetch tool, not the full text"
+	},
+	"doGbSeconds": {
+		"usdPerMillion": 12.5,
+		"includedPerMonth": 400000,
+		"page": "developers.cloudflare.com/durable-objects/platform/pricing/ (Workers Paid, Duration GB-s)",
+		"fetched": "2026-11-06",
+		"read": "summary from the page fetch tool, not the full text"
+	},
+	"rowsRead": {
+		"usdPerMillion": 0.001,
+		"includedPerMonth": 25000000000,
+		"page": "developers.cloudflare.com/durable-objects/platform/pricing/ (Workers Paid, SQLite rows read)",
+		"fetched": "2026-11-06",
+		"read": "summary from the page fetch tool, not the full text; the page still says SQLite storage billing starts January 2026, so whether it is on is unconfirmed"
+	},
+	"rowsWritten": {
+		"usdPerMillion": 1,
+		"includedPerMonth": 50000000,
+		"page": "developers.cloudflare.com/durable-objects/platform/pricing/ (Workers Paid, SQLite rows written)",
+		"fetched": "2026-11-06",
+		"read": "summary from the page fetch tool, not the full text; the page still says SQLite storage billing starts January 2026, so whether it is on is unconfirmed"
+	},
+	"workerRequests": {
+		"usdPerMillion": 0.3,
+		"includedPerMonth": 10000000,
+		"page": "developers.cloudflare.com/workers/platform/pricing/ (Workers Standard, Requests)",
+		"fetched": "2026-11-06",
+		"read": "summary from the page fetch tool, not the full text"
+	}
+}
