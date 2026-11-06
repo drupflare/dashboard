@@ -1,7 +1,13 @@
 import { getTableConfig } from 'drizzle-orm/sqlite-core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { applySchema, createCollegeDB } from '../../../src/server/db/collegedb';
+import { applySchema, createCollegeDB, ensureCollegeDB } from '../../../src/server/db/collegedb';
 import { SCHEMA_VERSION, SchemaVersionError, TABLES } from '../../../src/server/db/schema';
+import {
+	createSchemaGate,
+	loadSchema,
+	requireSchema,
+	SCHEMA_UNAVAILABLE
+} from '../../../src/server/db/schema-gate';
 import { type Bindings, type OpenBindings, openBindings } from '../support';
 
 let harness: OpenBindings;
@@ -55,6 +61,74 @@ describe('applySchema on D1', () => {
 			await env.DB.prepare(`UPDATE schema_meta SET value = ? WHERE key = 'schema_version'`)
 				.bind(String(SCHEMA_VERSION))
 				.run();
+		}
+	});
+});
+
+describe('the schema gate fails closed', () => {
+	const setVersion = (value: string) =>
+		env.DB.prepare(`UPDATE schema_meta SET value = ? WHERE key = 'schema_version'`)
+			.bind(value)
+			.run();
+
+	async function gateOutcome() {
+		const gate = createSchemaGate(loadSchema);
+		return requireSchema(gate, env).then(
+			() => 'open' as const,
+			(error: unknown) => error
+		);
+	}
+
+	it('opens when every shard holds the version this code reads', async () => {
+		await ensureCollegeDB(env);
+		expect(await gateOutcome()).toBe('open');
+	});
+
+	it('answers a typed 503 when a shard records a newer version', async () => {
+		await ensureCollegeDB(env);
+		await setVersion(String(SCHEMA_VERSION + 1));
+		try {
+			expect(await gateOutcome()).toMatchObject({
+				statusCode: 503,
+				data: { code: SCHEMA_UNAVAILABLE }
+			});
+		} finally {
+			await setVersion(String(SCHEMA_VERSION));
+		}
+	});
+
+	it('answers a typed 503 when the version row is gone', async () => {
+		await ensureCollegeDB(env);
+		await env.DB.prepare(`DELETE FROM schema_meta WHERE key = 'schema_version'`).run();
+		try {
+			expect(await gateOutcome()).toMatchObject({
+				statusCode: 503,
+				data: { code: SCHEMA_UNAVAILABLE }
+			});
+		} finally {
+			await applySchema(createCollegeDB(env));
+		}
+		expect(await gateOutcome()).toBe('open');
+	});
+
+	it('answers a typed 503 when the version read itself fails', async () => {
+		await ensureCollegeDB(env);
+		await env.DB.prepare('ALTER TABLE schema_meta RENAME TO schema_meta_gone').run();
+		try {
+			expect(await gateOutcome()).toMatchObject({ statusCode: 503 });
+		} finally {
+			await env.DB.prepare('ALTER TABLE schema_meta_gone RENAME TO schema_meta').run();
+		}
+		expect(await gateOutcome()).toBe('open');
+	});
+
+	it('answers 503 for a version row that is not a number', async () => {
+		await ensureCollegeDB(env);
+		await setVersion('one');
+		try {
+			expect(await gateOutcome()).toMatchObject({ statusCode: 503 });
+		} finally {
+			await setVersion(String(SCHEMA_VERSION));
 		}
 	});
 });

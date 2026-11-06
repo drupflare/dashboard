@@ -1,4 +1,13 @@
+import {
+	OPERATION_STATUSES,
+	OPERATION_TYPES,
+	STEP_STATES,
+	VERIFICATION_STATES
+} from '@contracts/operations';
+import { SITE_CATEGORIES, SITE_CONFIGS, SITE_KINDS } from '@contracts/sites';
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { PENDING_SECRET_KINDS } from '../../shared/custody/records';
+import { BILLING_SCHEMA_STATEMENTS, BILLING_TABLES } from './billing-schema';
 
 export const SCHEMA_VERSION = 1;
 
@@ -7,6 +16,14 @@ export const SITE_GRANT_ROLES = ['site-admin', 'maintainer', 'viewer'] as const;
 export const DELEGATION_ROLES = ['maintainer', 'viewer'] as const;
 export const DELEGATION_STATES = ['pending', 'active', 'revoked'] as const;
 export const INVITE_STATES = ['pending', 'accepted', 'revoked'] as const;
+export const SITE_RESOURCE_KINDS = ['kv', 'r2', 'd1'] as const;
+export const SITE_LEDGER_KINDS = [...SITE_RESOURCE_KINDS, 'script', 'route'] as const;
+export const OPEN_OPERATION_STATUSES = [
+	'planned',
+	'awaiting-approval',
+	'running',
+	'verifying'
+] as const;
 export const SITE_PLANES = ['managed', 'self-managed', 'self-hosted'] as const;
 export const SITE_STATES = [
 	'active',
@@ -36,6 +53,11 @@ export function checkSchemaVersion(stored: string | null): void {
 	if (!/^\d+$/.test(stored) || Number(stored) > SCHEMA_VERSION) {
 		throw new SchemaVersionError(stored);
 	}
+}
+
+// after the schema has run, the row must exist and match; a missing or newer one means do not serve
+export function requireSchemaVersion(stored: string | null): void {
+	if (stored !== String(SCHEMA_VERSION)) throw new SchemaVersionError(stored ?? 'missing');
 }
 
 export const schemaMeta = sqliteTable('schema_meta', {
@@ -137,8 +159,70 @@ export const sites = sqliteTable('sites', {
 	plane: text('plane').notNull(),
 	state: text('state').notNull(),
 	accountId: text('account_id'),
+	category: text('category').notNull().default('cms'),
+	config: text('config').notNull().default('canonical'),
+	kind: text('kind').notNull().default('drupal'),
+	primaryHostname: text('primary_hostname'),
+	readyAt: integer('ready_at'),
 	createdAt: integer('created_at').notNull(),
 	updatedAt: integer('updated_at').notNull()
+});
+
+export const operations = sqliteTable('operations', {
+	id: text('id').primaryKey(),
+	organizationId: text('organization_id').notNull(),
+	accountId: text('account_id'),
+	siteId: text('site_id'),
+	type: text('type').notNull(),
+	status: text('status').notNull(),
+	idempotencyKey: text('idempotency_key').notNull(),
+	targetIds: text('target_ids').notNull(),
+	preconditions: text('preconditions').notNull(),
+	planDigest: text('plan_digest').notNull(),
+	fencingEpoch: integer('fencing_epoch').notNull(),
+	blastRadius: text('blast_radius').notNull(),
+	rollbackPoint: text('rollback_point'),
+	cursor: text('cursor'),
+	verification: text('verification').notNull(),
+	finalObservation: text('final_observation'),
+	budget: text('budget').notNull(),
+	createdAt: integer('created_at').notNull(),
+	updatedAt: integer('updated_at').notNull(),
+	version: integer('version').notNull().default(0)
+});
+
+export const operationSteps = sqliteTable('operation_steps', {
+	operationId: text('operation_id').notNull(),
+	id: text('id').notNull(),
+	position: integer('position').notNull(),
+	name: text('name').notNull(),
+	state: text('state').notNull(),
+	attempt: integer('attempt').notNull().default(0),
+	startedAt: integer('started_at'),
+	finishedAt: integer('finished_at'),
+	error: text('error')
+});
+
+export const siteResources = sqliteTable('site_resources', {
+	id: text('id').primaryKey(),
+	siteId: text('site_id').notNull(),
+	accountId: text('account_id').notNull(),
+	kind: text('kind').notNull(),
+	binding: text('binding').notNull(),
+	name: text('name').notNull(),
+	providerId: text('provider_id'),
+	createdByOperation: text('created_by_operation').notNull(),
+	createdAt: integer('created_at').notNull(),
+	missingAt: integer('missing_at'),
+	deletedAt: integer('deleted_at'),
+	fingerprint: text('fingerprint')
+});
+
+export const siteDiscovery = sqliteTable('site_discovery', {
+	siteId: text('site_id').primaryKey(),
+	document: text('document').notNull(),
+	etag: text('etag'),
+	fetchedAt: integer('fetched_at').notNull()
 });
 
 export const idempotencyKeys = sqliteTable('idempotency_keys', {
@@ -164,6 +248,70 @@ export const auditLog = sqliteTable('audit_log', {
 	createdAt: integer('created_at').notNull()
 });
 
+export const codeAttempts = sqliteTable('code_attempts', {
+	key: text('key').primaryKey(),
+	attempts: integer('attempts').notNull(),
+	windowStart: integer('window_start').notNull()
+});
+
+export const ownerTokens = sqliteTable('owner_tokens', {
+	siteId: text('site_id').primaryKey(),
+	version: integer('version').notNull(),
+	currentEnvelope: text('current_envelope').notNull(),
+	previousEnvelope: text('previous_envelope'),
+	updatedAt: integer('updated_at').notNull()
+});
+
+export const pendingSecrets = sqliteTable('pending_secrets', {
+	siteId: text('site_id').notNull(),
+	kind: text('kind', { enum: PENDING_SECRET_KINDS }).notNull(),
+	ciphertext: text('ciphertext').notNull(),
+	keyVersion: integer('key_version').notNull(),
+	createdAt: integer('created_at').notNull(),
+	expiresAt: integer('expires_at').notNull(),
+	revealedAt: integer('revealed_at')
+});
+
+export const backups = sqliteTable('backups', {
+	id: text('id').primaryKey(),
+	siteId: text('site_id').notNull(),
+	organizationId: text('organization_id').notNull(),
+	operationId: text('operation_id').notNull(),
+	bytes: integer('bytes').notNull(),
+	sha256: text('sha256').notNull(),
+	parts: integer('parts').notNull(),
+	restorable: integer('restorable').notNull(),
+	verified: integer('verified').notNull().default(0),
+	label: text('label'),
+	createdAt: integer('created_at').notNull(),
+	deletedAt: integer('deleted_at')
+});
+
+export const passkeys = sqliteTable('passkeys', {
+	id: text('id').primaryKey(),
+	userId: text('user_id').notNull(),
+	publicKey: text('public_key').notNull(),
+	counter: integer('counter').notNull(),
+	transports: text('transports').notNull(),
+	deviceType: text('device_type').notNull(),
+	backedUp: integer('backed_up').notNull(),
+	name: text('name').notNull(),
+	createdAt: integer('created_at').notNull(),
+	lastUsedAt: integer('last_used_at')
+});
+
+export const singleUse = sqliteTable('single_use', {
+	key: text('key').primaryKey(),
+	value: text('value').notNull(),
+	expiresAt: integer('expires_at').notNull()
+});
+
+export const apiKeyLookup = sqliteTable('api_key_lookup', {
+	lookupId: text('lookup_id').primaryKey(),
+	organizationId: text('organization_id').notNull(),
+	keyId: text('key_id').notNull()
+});
+
 export const TABLES = [
 	schemaMeta,
 	users,
@@ -175,11 +323,27 @@ export const TABLES = [
 	delegations,
 	siteGrants,
 	sites,
+	operations,
+	operationSteps,
+	siteResources,
+	siteDiscovery,
 	idempotencyKeys,
-	auditLog
+	auditLog,
+	codeAttempts,
+	ownerTokens,
+	pendingSecrets,
+	backups,
+	passkeys,
+	singleUse,
+	apiKeyLookup,
+	...BILLING_TABLES
 ] as const;
 
 const quoted = (values: readonly string[]) => values.map((value) => `'${value}'`).join(', ');
+
+const SITE_CATEGORY_COLUMN = `category TEXT NOT NULL DEFAULT 'cms' CHECK (category IN (${quoted(SITE_CATEGORIES)}))`;
+const SITE_CONFIG_COLUMN = `config TEXT NOT NULL DEFAULT 'canonical' CHECK (config IN (${quoted(SITE_CONFIGS)}))`;
+const SITE_KIND_COLUMN = `kind TEXT NOT NULL DEFAULT 'drupal' CHECK (kind IN (${quoted(SITE_KINDS)}))`;
 
 export const SCHEMA_META_STATEMENT = `CREATE TABLE IF NOT EXISTS schema_meta (
 	key TEXT PRIMARY KEY,
@@ -276,8 +440,67 @@ export const SCHEMA_STATEMENTS: string[] = [
 	plane TEXT NOT NULL CHECK (plane IN (${quoted(SITE_PLANES)})),
 	state TEXT NOT NULL CHECK (state IN (${quoted(SITE_STATES)})),
 	account_id TEXT,
+	${SITE_CATEGORY_COLUMN},
+	${SITE_CONFIG_COLUMN},
+	${SITE_KIND_COLUMN},
+	primary_hostname TEXT,
+	ready_at INTEGER,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE IF NOT EXISTS operations (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	account_id TEXT,
+	site_id TEXT,
+	type TEXT NOT NULL CHECK (type IN (${quoted(OPERATION_TYPES)})),
+	status TEXT NOT NULL CHECK (status IN (${quoted(OPERATION_STATUSES)})),
+	idempotency_key TEXT NOT NULL,
+	target_ids TEXT NOT NULL,
+	preconditions TEXT NOT NULL,
+	plan_digest TEXT NOT NULL,
+	fencing_epoch INTEGER NOT NULL,
+	blast_radius TEXT NOT NULL,
+	rollback_point TEXT,
+	cursor TEXT,
+	verification TEXT NOT NULL CHECK (verification IN (${quoted(VERIFICATION_STATES)})),
+	final_observation TEXT,
+	budget TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL,
+	version INTEGER NOT NULL DEFAULT 0
+)`,
+	`CREATE TABLE IF NOT EXISTS operation_steps (
+	operation_id TEXT NOT NULL,
+	id TEXT NOT NULL,
+	position INTEGER NOT NULL,
+	name TEXT NOT NULL,
+	state TEXT NOT NULL CHECK (state IN (${quoted(STEP_STATES)})),
+	attempt INTEGER NOT NULL DEFAULT 0,
+	started_at INTEGER,
+	finished_at INTEGER,
+	error TEXT,
+	PRIMARY KEY (operation_id, id)
+)`,
+	`CREATE TABLE IF NOT EXISTS site_resources (
+	id TEXT PRIMARY KEY,
+	site_id TEXT NOT NULL,
+	account_id TEXT NOT NULL,
+	kind TEXT NOT NULL CHECK (kind IN (${quoted(SITE_LEDGER_KINDS)})),
+	binding TEXT NOT NULL,
+	name TEXT NOT NULL,
+	provider_id TEXT,
+	created_by_operation TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	missing_at INTEGER,
+	deleted_at INTEGER,
+	fingerprint TEXT
+)`,
+	`CREATE TABLE IF NOT EXISTS site_discovery (
+	site_id TEXT PRIMARY KEY,
+	document TEXT NOT NULL,
+	etag TEXT,
+	fetched_at INTEGER NOT NULL
 )`,
 	`CREATE TABLE IF NOT EXISTS idempotency_keys (
 	organization_id TEXT NOT NULL,
@@ -302,6 +525,69 @@ export const SCHEMA_STATEMENTS: string[] = [
 	created_at INTEGER NOT NULL,
 	PRIMARY KEY (organization_id, seq)
 )`,
+	`CREATE TABLE IF NOT EXISTS code_attempts (
+	key TEXT PRIMARY KEY,
+	attempts INTEGER NOT NULL,
+	window_start INTEGER NOT NULL
+)`,
+	`CREATE TABLE IF NOT EXISTS owner_tokens (
+	site_id TEXT PRIMARY KEY,
+	version INTEGER NOT NULL,
+	current_envelope TEXT NOT NULL,
+	previous_envelope TEXT,
+	updated_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE IF NOT EXISTS pending_secrets (
+	site_id TEXT NOT NULL,
+	kind TEXT NOT NULL CHECK (kind IN (${quoted(PENDING_SECRET_KINDS)})),
+	ciphertext TEXT NOT NULL,
+	key_version INTEGER NOT NULL,
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL,
+	revealed_at INTEGER,
+	PRIMARY KEY (site_id, kind)
+)`,
+	`CREATE TABLE IF NOT EXISTS backups (
+	id TEXT PRIMARY KEY,
+	site_id TEXT NOT NULL,
+	organization_id TEXT NOT NULL,
+	operation_id TEXT NOT NULL,
+	bytes INTEGER NOT NULL CHECK (bytes >= 0),
+	sha256 TEXT NOT NULL,
+	parts INTEGER NOT NULL CHECK (parts >= 0),
+	restorable INTEGER NOT NULL CHECK (restorable IN (0, 1)),
+	verified INTEGER NOT NULL DEFAULT 0 CHECK (verified IN (0, 1)),
+	label TEXT,
+	created_at INTEGER NOT NULL,
+	deleted_at INTEGER
+)`,
+	`CREATE TABLE IF NOT EXISTS passkeys (
+	id TEXT PRIMARY KEY,
+	user_id TEXT NOT NULL,
+	public_key TEXT NOT NULL,
+	counter INTEGER NOT NULL,
+	transports TEXT NOT NULL,
+	device_type TEXT NOT NULL CHECK (device_type IN ('singleDevice', 'multiDevice')),
+	backed_up INTEGER NOT NULL,
+	name TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	last_used_at INTEGER
+)`,
+	`CREATE TABLE IF NOT EXISTS single_use (
+	key TEXT PRIMARY KEY,
+	value TEXT NOT NULL,
+	expires_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE IF NOT EXISTS api_key_lookup (
+	lookup_id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	key_id TEXT NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS passkeys_user ON passkeys (user_id)`,
+	`CREATE INDEX IF NOT EXISTS single_use_expiry ON single_use (expires_at)`,
+	`CREATE INDEX IF NOT EXISTS pending_secrets_expiry ON pending_secrets (expires_at)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS backups_operation ON backups (operation_id)`,
+	`CREATE INDEX IF NOT EXISTS backups_site ON backups (organization_id, site_id, created_at, id)`,
 	`CREATE INDEX IF NOT EXISTS identities_user ON identities (user_id)`,
 	`CREATE INDEX IF NOT EXISTS members_org ON members (organization_id, id)`,
 	`CREATE INDEX IF NOT EXISTS invites_org ON invites (organization_id, id)`,
@@ -311,7 +597,28 @@ export const SCHEMA_STATEMENTS: string[] = [
 	`CREATE INDEX IF NOT EXISTS site_grants_org ON site_grants (organization_id, id)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS site_grants_active ON site_grants (site_id, user_id)
 	WHERE revoked_at IS NULL`,
-	`CREATE INDEX IF NOT EXISTS sites_org ON sites (organization_id, id)`
+	`CREATE INDEX IF NOT EXISTS sites_org ON sites (organization_id, id)`,
+	`CREATE INDEX IF NOT EXISTS operations_org ON operations (organization_id, created_at, id)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS operations_idempotency
+	ON operations (organization_id, idempotency_key)`,
+	`CREATE INDEX IF NOT EXISTS operations_site ON operations (site_id, created_at)
+	WHERE site_id IS NOT NULL`,
+	`CREATE INDEX IF NOT EXISTS operations_account ON operations (account_id, created_at)
+	WHERE account_id IS NOT NULL`,
+	`CREATE INDEX IF NOT EXISTS operations_open ON operations (status, updated_at)
+	WHERE status IN (${quoted(OPEN_OPERATION_STATUSES)})`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS operation_steps_order
+	ON operation_steps (operation_id, position)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS site_resources_live ON site_resources (site_id, binding)
+	WHERE deleted_at IS NULL`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS site_resources_provider
+	ON site_resources (account_id, kind, provider_id)
+	WHERE kind <> 'script'`,
+	`CREATE INDEX IF NOT EXISTS site_resources_operation ON site_resources (created_by_operation)`,
+	`CREATE INDEX IF NOT EXISTS site_resources_account ON site_resources (account_id, kind)
+	WHERE deleted_at IS NULL`,
+	`CREATE INDEX IF NOT EXISTS site_discovery_fetched ON site_discovery (fetched_at)`,
+	...BILLING_SCHEMA_STATEMENTS
 ];
 
 // collegedb splits schema text on ';', so trigger bodies run one at a time

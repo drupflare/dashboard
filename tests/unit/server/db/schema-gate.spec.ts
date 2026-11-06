@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { CollegeDBEnv } from '../../../../src/server/db/collegedb';
-import { createSchemaGate, requireSchema } from '../../../../src/server/db/schema-gate';
+import {
+	SCHEMA_UNAVAILABLE,
+	createSchemaGate,
+	requireSchema
+} from '../../../../src/server/db/schema-gate';
 
 const env = { KV: {} } as unknown as CollegeDBEnv;
 
@@ -51,7 +55,7 @@ describe('requireSchema', () => {
 	it('answers 503 without the cause while the load fails, then recovers', async () => {
 		const ensure = createSchemaGate(failsOnce());
 		const error = await requireSchema(ensure, env).catch((e: unknown) => e);
-		expect(error).toMatchObject({ statusCode: 503 });
+		expect(error).toMatchObject({ statusCode: 503, data: { code: SCHEMA_UNAVAILABLE } });
 		expect(JSON.stringify(error)).not.toContain('D1 unavailable');
 		await expect(requireSchema(ensure, env)).resolves.toBeUndefined();
 	});

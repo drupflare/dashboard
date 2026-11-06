@@ -1,4 +1,5 @@
 import type { CollegeDBClient } from '@earth-app/collegedb';
+import { toPage } from '../../utils/pagination';
 import { uniqueOrDuplicate, wasChanged } from '../collegedb';
 import type {
 	DelegationRole,
@@ -268,6 +269,75 @@ export async function getOrganization(
 		[id]
 	);
 	return row ? toOrganization(row) : null;
+}
+
+export class OrganizationListError extends Error {
+	readonly code = 'ORGANIZATION_LIST';
+
+	constructor() {
+		super('the organisation list failed on a shard');
+		this.name = 'OrganizationListError';
+	}
+}
+
+export interface UserOrganization {
+	id: string;
+	name: string;
+	personal: boolean;
+	role: OrganizationRole;
+}
+
+export interface OrganizationCursor {
+	personal: boolean;
+	name: string;
+	id: string;
+}
+
+interface UserOrganizationRow {
+	id: string;
+	name: string;
+	personal: number;
+	role: OrganizationRole;
+}
+
+// personal first, then name, then id: the order is total, so a cursor names exactly one row
+function compareOrganizations(a: OrganizationCursor, b: OrganizationCursor): number {
+	if (a.personal !== b.personal) return a.personal ? -1 : 1;
+	if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+	if (a.id === b.id) return 0;
+	return a.id < b.id ? -1 : 1;
+}
+
+function toUserOrganization(row: UserOrganizationRow): UserOrganization {
+	return { id: row.id, name: row.name, personal: row.personal === 1, role: row.role };
+}
+
+// a user's member rows sit on every shard, so the merge and the page run in memory; a failed shard
+// stops the list rather than hiding organisations.
+export async function listUserOrganizations(
+	db: CollegeDBClient,
+	userId: string,
+	options: { after?: OrganizationCursor; limit: number }
+): Promise<Page<UserOrganization>> {
+	const shards = await db.allAllShards<UserOrganizationRow>(
+		`SELECT o.id, o.name, o.personal, m.role FROM members m
+		 JOIN organizations o ON o.id = m.organization_id WHERE m.user_id = ?`,
+		[userId]
+	);
+	const rows: UserOrganization[] = [];
+	for (const shard of shards) {
+		if (!shard.success) throw new OrganizationListError();
+		rows.push(...shard.results.map(toUserOrganization));
+	}
+	rows.sort(compareOrganizations);
+	const after = options.after;
+	const remaining =
+		after === undefined ? rows : rows.filter((row) => compareOrganizations(row, after) > 0);
+	return toPage(remaining.slice(0, options.limit + 1), options.limit, (row) => ({
+		personal: row.personal,
+		name: row.name,
+		id: row.id
+	}));
 }
 
 export async function addMember(
