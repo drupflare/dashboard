@@ -1,4 +1,5 @@
 import { toBase64Url } from '@contracts/common';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
 	CHALLENGE_TTL_MS,
@@ -334,5 +335,22 @@ describe('authentication', () => {
 		expect(names).toHaveLength(1);
 		expect(names[0]).not.toContain(options.challenge);
 		expect(once.puts.at(-1)?.expiresAt).toBe(clock.now + CHALLENGE_TTL_MS);
+	});
+});
+
+describe('worker startup', () => {
+	it('loads the reflect polyfill before the library that needs it', () => {
+		const source = readFileSync(
+			new URL('../../../../src/server/integrations/webauthn.ts', import.meta.url),
+			'utf8'
+		);
+		const polyfill = source.indexOf("import 'reflect-metadata'");
+		expect(polyfill).toBeGreaterThanOrEqual(0);
+		expect(polyfill).toBeLessThan(source.indexOf("from '@simplewebauthn/server'"));
+	});
+
+	it('keeps the polyfill in the bundle, which drops side-effect imports from packages by default', () => {
+		const config = readFileSync(new URL('../../../../nuxt.config.ts', import.meta.url), 'utf8');
+		expect(config).toContain("moduleSideEffects: ['reflect-metadata']");
 	});
 });

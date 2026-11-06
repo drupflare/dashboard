@@ -1,3 +1,6 @@
+// organize-imports-ignore
+// the polyfill has to run before the library, and sorting moves it
+import 'reflect-metadata';
 import { fromBase64Url, sha256Hex, toBase64Url } from '@contracts/common';
 import {
 	generateAuthenticationOptions,

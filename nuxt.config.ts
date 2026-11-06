@@ -53,6 +53,7 @@ export default defineNuxtConfig({
 	nitro: {
 		preset: 'cloudflare_module',
 		experimental: { tasks: true },
+		moduleSideEffects: ['reflect-metadata'],
 		scheduledTasks: { '*/15 * * * *': ['pending-secrets-purge'] },
 		publicAssets: [
 			{
