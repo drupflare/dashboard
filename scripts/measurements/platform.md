@@ -69,3 +69,63 @@ Measured on the same run.
 - Worker size (documentation search summary): 64 MiB uncompressed and no compressed limit. The v1.0.4 managed bundle is 17.3 MiB.
 - Account limits, from Cloudflare's documentation through search summaries (the fetch tool returned no full text), read on 2026-11-05: KV namespaces 1,000 per account (more cost $0.10 a month each); R2 buckets 100,000 by default; D1 databases 1,000,000 on Workers Paid with 100,000 included; Workers for Platforms scripts and Durable Object namespaces unlimited; Workers Static Assets 100,000 files per version on Workers Paid and 25 MiB per file.
 - Per-account tenant ceiling: two KV namespaces per site gives 500 sites on the default KV limit, below the storage-based estimate of about 1,083. KV namespaces are the first limit to hit.
+
+## Time to stop serving after a revoke
+
+Run on 2026-11-06 against the stage dispatch Worker (`drupflare-dispatch-stage`, deployed from the working tree, not a commit). The tenant is a script that answers a static 200 page. Each trial uses one site on a proxied `drupflare.app` host. The site is probed at 5 requests a second for 60 s, revoked through the signed control route, then probed for 60 s more. There are 10 trials per arm. The stale window runs from the acknowledgement of the revoke request to the end of the last 2xx response after it, so it includes one round trip.
+
+| Arm                                          | Stale window p50 | p95        | max        | Warm latency p50 | p95      |
+| -------------------------------------------- | ---------------- | ---------- | ---------- | ---------------- | -------- |
+| Per request (every request asks `SITE_AUTH`) | 0 ms             | 0 ms       | 0 ms       | 48.4 ms          | 117.6 ms |
+| Lease (30 s leases)                          | 235.0 ms         | 1,048.7 ms | 1,048.7 ms | 36.0 ms          | 72.5 ms  |
+| Hybrid (1 strict site of 10)                 | 33.5 ms          | 315.0 ms   | 315.0 ms   | 35.0 ms          | 112.6 ms |
+
+- Warm latency is client time over 3,000 probes per arm, from one client. The per-request arm's p50 is 12.3 ms above the lease arm's and its p95 is 45.1 ms above. Each arm has a maximum above 500 ms (5,105.6 ms, 1,324.6 ms and 535.4 ms) that was not examined.
+- At n = 10 the p95 equals the maximum in every arm.
+- Every probe, 6,000 per arm, reached the IAD colo. A colo that cached an earlier answer was not tested, and neither was a second client location. No bound is stated from this reading.
+- The lease arm's windows are far below the 30 s lease. This reading does not say why.
+- The control site gave no baseline. Its host is the control host, which answers 405 to a GET, so all 18,000 control probes were non-2xx.
+- Spend was not read from the billing meter. The script's list-price estimate for the run is $0.0116.
+
+## Counting views
+
+Run on 2026-11-06 against the same stage dispatch Worker and a tenant that answers a 200 `text/html` page and counts each request in its own Durable Object. Each trial uses one site: 3,000 requests at 50 a second, then 20 s to settle, with batches of 50 and a 5 s flush. There are 10 trials per arm, and the odd trials call a stage-only route that allocates past the 128 MB memory limit partway through. A control site with counting off was probed at the same moments (90,000 requests, 4 non-2xx, trial p50 70.6 ms, n = 30). Everything came from one client in one location.
+
+"Short" below is the tenant's own count minus the counter's count for the same trial.
+
+| Arm           | Added p50 per trial (min, p50, max) | Short, clean trials (n = 5) | Short, terminated trials (n = 5) |
+| ------------- | ----------------------------------- | --------------------------- | -------------------------------- |
+| Write-through | -1.9, 14.0, 27.7 ms                 | 0 in all five               | 1 view in one trial, 0 in four   |
+| Batched       | -19.7, -10.6, 1.6 ms                | p50 143 (78 to 295)         | p50 133 (106 to 188)             |
+| Hybrid        | -18.6, -9.7, 1.4 ms                 | p50 39 (24 to 121)          | p50 61 (8 to 180)                |
+
+- Write-through waits for the counter before the response returns. Its added p95 per trial had a p50 of 37.5 ms and a maximum of 59.9 ms. Batched and hybrid showed negative added p50 against the control, so the control is not an exact baseline here. Against batched, which does not wait, write-through is 24.6 ms higher at the p50.
+- Batched fell short in every trial, by 2.6 to 9.8 percent of 3,000. Hybrid fell short in every trial too, by 0.3 to 6.0 percent. The shortfall also appears in the number of views the isolates reported as issued, so the counter holds no gap that would mark the hour estimated. Under the ledger's rule that an hour whose acknowledged and issued counts match is exact, these hours would read exact while short. This follows from the rule and the counts. No ledger run was made.
+- Each trial saw 9 to 30 different isolate origins. A shortfall of a few tens of views per origin would account for the totals. That was not tested.
+- The run does not show that the memory route ends an isolate. The shortfalls of clean and terminated trials overlap.
+- Not measured: the counter object's request and row counts. The statistics it keeps in memory read zero in every trial, so the object had been evicted before the read. The cost of each mechanism rests on the dry-run arithmetic and not on a meter reading.
+
+## Serving a Drupal site without the Cache API
+
+Run on 2026-11-06 on a Drupal site built from worker commit `edd7f09234` with `wrangler.managed.jsonc` (`CACHE_API=off`, `PLAN=free`), uploaded by hand to the stage namespace and reached through the stage dispatch Worker. No dashboard or engine was deployed, so the site was created without them. One client in one location, and every response came through the IAD colo.
+
+- First requests on the new site: 503 with `x-cfw-migrate: starting`, then 503 at `40/74` during the database replay, then a 200 rendered in 4,540 ms (`x-cfw-serve-ms`). Later requests were cache hits.
+- Warm, 100 requests per path after 5 warm-up requests, client time:
+
+| Path               | p50     | p95     | max     | Answered by                      |
+| ------------------ | ------- | ------- | ------- | -------------------------------- |
+| `/`                | 44.8 ms | 60.3 ms | 78.8 ms | 97 isolate memory, 3 object hits |
+| `/user/login`      | 45.2 ms | 60.3 ms | 94.2 ms | 100 isolate memory               |
+| a path that is 404 | 62.5 ms | 80.7 ms | 94.7 ms | 100 object hits                  |
+
+- After 10 minutes with no requests, six requests to `/` took 1,214 ms (object hit), 186 ms (`PAGE_KV`), then 70, 46, 44 and 61 ms (isolate memory). That is one sequence, so n = 1 per position.
+- No response was answered by `caches.default`. `x-cfw-edge` read `MEM` or `MISS` throughout.
+- Not established: what the missing Cache API costs, because this run has no control arm with it on. The worker's published serving figures were measured inside a rig and are not comparable with client time through the dispatch Worker, so no comparison to them is made. Several colos and a cold isolate in a second location were not tested.
+
+## Settings discovery on a deployed Drupal site
+
+Run on 2026-11-06 against the same stage site after its first-run call, with the owner token the call returned. The dashboard's discovery code read `GET /settings` and composed the discovery document.
+
+- The document passes the discovery contract. It holds 32 settings, each with a value, a provenance and a writable flag, plus 6 routes. Its capabilities list is empty, because the composer does not fill it from `/settings`.
+- One write round trip on a numeric setting (`LAZY_FS_BUDGET_BYTES`, 4,194,304): a write with the current value as its snapshot succeeded and the next read returned the new value. A write sent with the old value as its snapshot came back as a conflict that carried the server's value. A revert restored the original value. The worker serves no `ETag`, so the conflict comes from the dashboard's own comparison against a fresh read and not from `If-Match`.
+- Only the Drupal worker was tested. The first-party Worker templates deploy unmodified and serve no discovery document, so nothing about them was run.
