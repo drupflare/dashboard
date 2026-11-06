@@ -1,6 +1,7 @@
 {
 	"name": "drupflare-engine",
 	"main": "src/index.ts",
+	"tsconfig": "./tsconfig.json",
 	"compatibility_date": "2026-08-01",
 	"compatibility_flags": ["nodejs_compat"],
 	"observability": { "enabled": true },

@@ -5,6 +5,7 @@ import { CONFIG_VARS } from '../../../engine/src/config';
 
 interface Config {
 	name?: string;
+	tsconfig?: string;
 	d1_databases?: { binding: string }[];
 	kv_namespaces?: { binding: string }[];
 	r2_buckets?: { binding: string }[];
@@ -229,6 +230,10 @@ describe('the engine and the dispatch unit agree', () => {
 				target.dispatch_namespaces?.[0]?.namespace
 			);
 		}
+	});
+
+	it('bundles the engine with its own tsconfig, since shared code imports @contracts', () => {
+		expect(load('engine').tsconfig).toBe('./tsconfig.json');
 	});
 
 	it('sets the stage switch in stage and nowhere else', () => {
