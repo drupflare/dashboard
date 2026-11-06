@@ -1,4 +1,5 @@
 import { sha256Hex } from '@contracts/common';
+import type { CollegeDBClient } from '@earth-app/collegedb';
 import type {
 	AuthenticationResponseJSON,
 	PublicKeyCredentialCreationOptionsJSON,
@@ -9,7 +10,24 @@ import { ApiError } from '../../shared/errors';
 import { STEP_UP_WINDOW_MS } from '../../shared/permissions';
 import { nowUtc } from '../../shared/utils/time';
 import { DuplicateRowError } from '../db/collegedb';
-import { normalizeEmail, type Identity, type User } from '../db/repos/identity';
+import { getPersonalOrganizationId } from '../db/repos/accounts';
+import {
+	advancePasskeyCounterRow,
+	deleteIdentity,
+	deletePasskeyRow,
+	getPasskeyById,
+	insertPasskeyRow,
+	listIdentitiesByUser,
+	listPasskeysByUser,
+	renamePasskeyRow
+} from '../db/repos/credentials';
+import {
+	createIdentity,
+	getIdentityByProviderSubject,
+	normalizeEmail,
+	type Identity,
+	type User
+} from '../db/repos/identity';
 import {
 	OAUTH_PROVIDERS,
 	type FetchLike,
@@ -27,9 +45,10 @@ import {
 	type WebAuthnConfig
 } from '../integrations/webauthn';
 import { authServices } from '../utils/auth';
-import type { Directory } from './auth';
+import { createAccount, healAccount, type Directory } from './auth';
 import { randomToken } from './crypto';
 import { createSession, type IssuedSession, type KvStore } from './sessions';
+import type { OnceStore } from './single-use';
 
 // #region collaborators
 
@@ -47,6 +66,45 @@ export interface IdentityStore extends PasskeyStore {
 	personalOrganizationId(userId: string): Promise<string | null>;
 }
 
+// every row sits on the directory shard, so the unique pairs hold across shards
+export function collegeIdentityStore(getDb: () => Promise<CollegeDBClient>): IdentityStore {
+	return {
+		async findIdentity(provider, subject) {
+			return getIdentityByProviderSubject(await getDb(), provider, subject);
+		},
+		async listIdentities(userId) {
+			return listIdentitiesByUser(await getDb(), userId);
+		},
+		async createIdentity(input) {
+			return createIdentity(await getDb(), input);
+		},
+		async deleteIdentity(userId, id) {
+			return deleteIdentity(await getDb(), userId, id);
+		},
+		async personalOrganizationId(userId) {
+			return getPersonalOrganizationId(await getDb(), userId);
+		},
+		async listPasskeys(userId) {
+			return listPasskeysByUser(await getDb(), userId);
+		},
+		async getPasskey(id) {
+			return getPasskeyById(await getDb(), id);
+		},
+		async insertPasskey(passkey) {
+			await insertPasskeyRow(await getDb(), passkey);
+		},
+		async advancePasskeyCounter(id, from, to, usedAt) {
+			return advancePasskeyCounterRow(await getDb(), id, from, to, usedAt);
+		},
+		async renamePasskey(userId, id, name) {
+			return renamePasskeyRow(await getDb(), userId, id, name);
+		},
+		async deletePasskey(userId, id) {
+			return deletePasskeyRow(await getDb(), userId, id);
+		}
+	};
+}
+
 export interface IdentityServices {
 	store: IdentityStore;
 	webauthn: WebAuthnConfig;
@@ -58,6 +116,7 @@ export interface IdentityServices {
 
 export interface IdentityDeps extends IdentityServices {
 	kv: KvStore;
+	once: OnceStore;
 	directory: Directory;
 }
 
@@ -73,8 +132,8 @@ export function identityServices(): IdentityServices {
 }
 
 export function identityDeps(): IdentityDeps {
-	const { kv, directory } = authServices();
-	return { ...identityServices(), kv, directory };
+	const { kv, once, directory } = authServices();
+	return { ...identityServices(), kv, once, directory };
 }
 
 // #endregion
@@ -114,8 +173,6 @@ const lastMethod = () =>
 export const LINK_COOKIE = '__Host-drupflare_link';
 export const LINK_TTL_MS = 15 * 60 * 1000;
 
-const KV_MIN_TTL_SECONDS = 60;
-
 const linkKey = (hash: string) => `link:pending:${hash}`;
 
 const pendingSchema = z.object({
@@ -127,17 +184,15 @@ const pendingSchema = z.object({
 
 type Pending = z.infer<typeof pendingSchema>;
 
-async function putPending(kv: KvStore, pending: Omit<Pending, 'createdAt'>): Promise<string> {
+async function putPending(once: OnceStore, pending: Omit<Pending, 'createdAt'>): Promise<string> {
 	const token = randomToken();
-	const record: Pending = { ...pending, createdAt: nowUtc().toMillis() };
-	await kv.put(linkKey(await sha256Hex(token)), JSON.stringify(record), {
-		expirationTtl: Math.max(KV_MIN_TTL_SECONDS, LINK_TTL_MS / 1000)
-	});
+	const now = nowUtc().toMillis();
+	const record: Pending = { ...pending, createdAt: now };
+	await once.put(linkKey(await sha256Hex(token)), JSON.stringify(record), now + LINK_TTL_MS);
 	return token;
 }
 
-async function readPending(kv: KvStore, token: string): Promise<Pending | null> {
-	const raw = await kv.get(linkKey(await sha256Hex(token)));
+function parsePending(raw: string | null): Pending | null {
 	if (raw === null) return null;
 	try {
 		const parsed = pendingSchema.safeParse(JSON.parse(raw));
@@ -147,6 +202,15 @@ async function readPending(kv: KvStore, token: string): Promise<Pending | null> 
 	} catch {
 		return null;
 	}
+}
+
+async function readPending(once: OnceStore, token: string): Promise<Pending | null> {
+	return parsePending(await once.get(linkKey(await sha256Hex(token)), nowUtc().toMillis()));
+}
+
+// the atomic delete decides which of several parallel confirmations may go on
+async function takePending(once: OnceStore, token: string): Promise<Pending | null> {
+	return parsePending(await once.take(linkKey(await sha256Hex(token)), nowUtc().toMillis()));
 }
 
 // #endregion
@@ -178,16 +242,18 @@ async function signedIn(
 	return { status: 'signed_in', user, isNew, ...issued };
 }
 
-// the same steps as an email sign-up: user, personal organisation, owner membership, audit row
-async function createAccount(
+// a provider may start an account only on an address it has verified, and never on one that
+// already has an account; null means a rival got there first
+async function createProviderAccount(
 	deps: IdentityDeps,
 	provider: OAuthProvider,
 	profile: ProviderProfile,
 	email: string
 ): Promise<User | null> {
+	if (!profile.emailVerified) throw unverifiedEmail();
+	const user = await createAccount(deps.directory, email, provider);
+	if (user === null) return null;
 	try {
-		const user = await deps.directory.createUser(email);
-		const org = await deps.directory.createPersonalOrganization(user);
 		await deps.store.createIdentity({
 			userId: user.id,
 			provider,
@@ -195,18 +261,17 @@ async function createAccount(
 			email,
 			verified: true
 		});
-		await deps.directory.appendAudit(org.id, {
-			actor: user.id,
-			action: 'account.create',
-			target: user.id,
-			detail: { method: provider }
-		});
-		return user;
 	} catch (error) {
 		if (error instanceof DuplicateRowError) return null;
 		throw error;
 	}
+	return user;
 }
+
+const unverifiedEmail = () =>
+	new ApiError('forbidden', 'The provider has not verified an email address', {
+		requires: 'verified-email'
+	});
 
 // a provider identity never joins an account on its own: a matching email asks for a confirmed link
 export async function signInWithProvider(
@@ -219,22 +284,19 @@ export async function signInWithProvider(
 	if (known) {
 		const user = await deps.directory.findUserById(known.userId);
 		if (!user) throw new ApiError('unauthenticated', 'The sign-in could not be completed');
+		await healAccount(deps.directory, user);
 		return signedIn(deps, user, false, context);
 	}
-	if (profile.email === null || !profile.emailVerified) {
-		throw new ApiError('forbidden', 'The provider has not verified an email address', {
-			requires: 'verified-email'
-		});
-	}
+	if (profile.email === null || !profile.emailVerified) throw unverifiedEmail();
 	const email = normalizeEmail(profile.email);
 	const needsLink = async (): Promise<ProviderSignIn> => ({
 		status: 'link_required',
 		provider,
 		email,
-		token: await putPending(deps.kv, { provider, subject: profile.subject, email })
+		token: await putPending(deps.once, { provider, subject: profile.subject, email })
 	});
 	if (await deps.directory.findUserByEmail(email)) return needsLink();
-	const created = await createAccount(deps, provider, profile, email);
+	const created = await createProviderAccount(deps, provider, profile, email);
 	return created ? signedIn(deps, created, true, context) : needsLink();
 }
 
@@ -247,14 +309,17 @@ export async function confirmLink(
 	input: { userId: string; stepUpAt: number | undefined; token: string | undefined }
 ): Promise<Identity> {
 	requireFresh(input.stepUpAt);
-	const pending = input.token ? await readPending(deps.kv, input.token) : null;
-	if (!pending) throw new ApiError('not_found', 'No sign-in is waiting to be linked');
+	const token = input.token;
+	const peeked = token ? await readPending(deps.once, token) : null;
+	if (!token || !peeked) throw new ApiError('not_found', 'No sign-in is waiting to be linked');
 	const user = await deps.directory.findUserById(input.userId);
 	if (!user) throw new ApiError('unauthenticated', 'Authentication is required');
-	if (normalizeEmail(user.email) !== pending.email) {
+	if (normalizeEmail(user.email) !== peeked.email) {
 		throw new ApiError('forbidden', 'This provider sign-in belongs to a different account');
 	}
 	const orgId = await auditOrg(deps, user.id);
+	const pending = await takePending(deps.once, token);
+	if (!pending) throw new ApiError('not_found', 'No sign-in is waiting to be linked');
 	let identity: Identity;
 	try {
 		identity = await deps.store.createIdentity({
@@ -270,7 +335,6 @@ export async function confirmLink(
 		}
 		throw error;
 	}
-	await deps.kv.delete(linkKey(await sha256Hex(input.token as string)));
 	await deps.directory.appendAudit(orgId, {
 		actor: user.id,
 		action: 'account.identity.link',
@@ -321,7 +385,7 @@ export async function startPasskeyRegistration(
 	const user = await deps.directory.findUserById(input.userId);
 	if (!user) throw new ApiError('unauthenticated', 'Authentication is required');
 	return registrationOptions(
-		{ kv: deps.kv, store: deps.store, config: deps.webauthn },
+		{ once: deps.once, store: deps.store, config: deps.webauthn },
 		{ id: user.id, email: user.email }
 	);
 }
@@ -338,7 +402,7 @@ export async function finishPasskeyRegistration(
 	requireFresh(input.stepUpAt);
 	const orgId = await auditOrg(deps, input.userId);
 	const passkey = await verifyRegistration(
-		{ kv: deps.kv, store: deps.store, config: deps.webauthn },
+		{ once: deps.once, store: deps.store, config: deps.webauthn },
 		{ id: input.userId },
 		input.response,
 		input.name
@@ -394,7 +458,7 @@ export async function signInWithPasskey(
 	context: Context = {}
 ): Promise<SignedInResult> {
 	const passkey = await verifyAuthentication(
-		{ kv: deps.kv, store: deps.store, config: deps.webauthn },
+		{ once: deps.once, store: deps.store, config: deps.webauthn },
 		response
 	);
 	const user = await deps.directory.findUserById(passkey.userId);

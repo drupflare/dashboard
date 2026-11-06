@@ -1,16 +1,18 @@
+import type { CollegeDBClient } from '@earth-app/collegedb';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import * as cryptoModule from '../../../../src/server/services/crypto';
 import {
+	CODE_ATTEMPT_RATE,
 	CODE_LENGTH,
 	CODE_MAX_ATTEMPTS,
 	CODE_RESEND_COOLDOWN_MS,
 	CODE_SEND_RATE,
 	CODE_TTL_MS,
+	collegeAttemptStore,
 	consumeCode,
 	generateCode,
 	issueCode
 } from '../../../../src/server/services/email-codes';
-import { SECRET, memoryKv, memoryMail, useClock } from './auth-support';
+import { SECRET, memoryAttempts, memoryMail, memoryOnce, useClock } from './auth-support';
 
 let clock: ReturnType<typeof useClock>;
 beforeEach(() => {
@@ -24,12 +26,13 @@ afterEach(() => {
 const EMAIL = 'Ada@Example.com';
 
 async function setup() {
-	const kv = memoryKv();
+	const once = memoryOnce();
 	const mail = memoryMail();
-	const issue = (email = EMAIL) => issueCode(kv, mail, SECRET, email, clock.now);
+	const attempts = memoryAttempts();
+	const issue = (email = EMAIL) => issueCode(once, mail, SECRET, email, clock.now);
 	const consume = (code: string, email = EMAIL, secret = SECRET) =>
-		consumeCode(kv, secret, email, code, clock.now);
-	return { kv, mail, issue, consume };
+		consumeCode(once, attempts, secret, email, code, clock.now);
+	return { once, mail, attempts, issue, consume };
 }
 
 describe('generateCode', () => {
@@ -59,7 +62,7 @@ describe('generateCode', () => {
 
 describe('issueCode', () => {
 	it('sends the code to the normalised address and stores only a keyed hash', async () => {
-		const { kv, mail, issue } = await setup();
+		const { once, mail, issue } = await setup();
 		expect(await issue()).toEqual({ ok: true });
 		expect(mail.sent).toHaveLength(1);
 		expect(mail.sent[0]!.to).toBe('ada@example.com');
@@ -69,7 +72,7 @@ describe('issueCode', () => {
 		});
 		const code = mail.lastCode();
 		expect(code).toMatch(/^\d{6}$/);
-		const everything = JSON.stringify({ keys: kv.keys(), values: kv.dump() });
+		const everything = JSON.stringify({ keys: once.keys(), values: once.dump() });
 		expect(everything).not.toContain(`"${code}"`);
 		expect(everything).not.toMatch(new RegExp(`:${code}\\b`));
 		expect(everything).not.toContain('ada@example.com');
@@ -132,10 +135,10 @@ describe('issueCode', () => {
 	});
 
 	it('drops the record and rethrows when the mail fails, so a retry is not blocked', async () => {
-		const { kv, mail, issue } = await setup();
+		const { once, mail, issue } = await setup();
 		mail.failNext();
 		await expect(issue()).rejects.toThrow('mail is down');
-		expect(kv.keys()).toEqual([]);
+		expect(once.keys()).toEqual([]);
 		expect(await issue()).toEqual({ ok: true });
 	});
 });
@@ -184,14 +187,61 @@ describe('consumeCode', () => {
 		expect(await consume(code)).toBe(true);
 	});
 
-	it('a fresh code clears the lock', async () => {
+	it('keeps the lock when a fresh code is issued inside the attempt window', async () => {
 		const { mail, issue, consume } = await setup();
 		await issue();
 		const wrong = mail.lastCode() === '000000' ? '000001' : '000000';
 		for (let i = 0; i < CODE_MAX_ATTEMPTS; i++) await consume(wrong);
 		clock.advance(CODE_RESEND_COOLDOWN_MS);
 		await issue();
+		expect(await consume(mail.lastCode())).toBe(false);
+	});
+
+	it('frees the address once the attempt window has passed', async () => {
+		const { mail, issue, consume } = await setup();
+		await issue();
+		const wrong = mail.lastCode() === '000000' ? '000001' : '000000';
+		for (let i = 0; i < CODE_MAX_ATTEMPTS; i++) await consume(wrong);
+		clock.advance(CODE_ATTEMPT_RATE.windowMs);
+		await issue();
 		expect(await consume(mail.lastCode())).toBe(true);
+	});
+
+	it('outlasts the life of a code, so waiting for expiry does not reset the count', () => {
+		expect(CODE_ATTEMPT_RATE.windowMs).toBeGreaterThan(CODE_TTL_MS);
+		expect(CODE_ATTEMPT_RATE.limit).toBe(CODE_MAX_ATTEMPTS);
+	});
+
+	it('clears the count after a right code, so the next sign-in starts fresh', async () => {
+		const { mail, issue, consume } = await setup();
+		await issue();
+		const wrong = mail.lastCode() === '000000' ? '000001' : '000000';
+		for (let i = 0; i < CODE_MAX_ATTEMPTS - 1; i++) await consume(wrong);
+		expect(await consume(mail.lastCode())).toBe(true);
+		clock.advance(CODE_RESEND_COOLDOWN_MS);
+		await issue();
+		for (let i = 0; i < CODE_MAX_ATTEMPTS - 1; i++) await consume(wrong);
+		expect(await consume(mail.lastCode())).toBe(true);
+	});
+
+	it('counts one address apart from another', async () => {
+		const { mail, issue, consume } = await setup();
+		await issue('a@example.com');
+		const a = mail.lastCode();
+		await issue('b@example.com');
+		const b = mail.lastCode();
+		const wrong = a === '000000' || b === '000000' ? '000001' : '000000';
+		for (let i = 0; i < CODE_MAX_ATTEMPTS; i++) await consume(wrong, 'a@example.com');
+		expect(await consume(a, 'a@example.com')).toBe(false);
+		expect(await consume(b, 'b@example.com')).toBe(true);
+	});
+
+	it('claims no per-address row for a guess with no live code', async () => {
+		const { attempts, consume } = await setup();
+		await consume('123456');
+		await consume('123456', 'other@example.com');
+		expect(attempts.granted).toHaveLength(2);
+		expect(new Set(attempts.granted.map((entry) => entry.key)).size).toBe(1);
 	});
 
 	it('answers false the same way for no code, a wrong code, an expired code and another address', async () => {
@@ -212,13 +262,78 @@ describe('consumeCode', () => {
 		expect(await consume(mail.lastCode(), EMAIL, 'another-secret')).toBe(false);
 	});
 
-	it('compares hashes in constant time, with or without a stored record', async () => {
-		const spy = vi.spyOn(cryptoModule, 'timingSafeEqual');
-		const { mail, issue, consume } = await setup();
+	it('does the same store work with or without a stored code', async () => {
+		const { once, mail, issue, consume } = await setup();
+		const calls = { get: vi.spyOn(once, 'get'), takeIf: vi.spyOn(once, 'takeIf') };
 		await consume('123456');
-		expect(spy).toHaveBeenCalledTimes(1);
+		const without = {
+			get: calls.get.mock.calls.length,
+			takeIf: calls.takeIf.mock.calls.length
+		};
 		await issue();
+		calls.get.mockClear();
+		calls.takeIf.mockClear();
 		await consume(mail.lastCode());
-		expect(spy).toHaveBeenCalledTimes(2);
+		expect(without).toEqual({ get: 1, takeIf: 1 });
+		expect({
+			get: calls.get.mock.calls.length,
+			takeIf: calls.takeIf.mock.calls.length
+		}).toEqual(without);
+	});
+
+	it('lets exactly one of several parallel right guesses take the code', async () => {
+		const { mail, issue, consume } = await setup();
+		await issue();
+		const code = mail.lastCode();
+		const results = await Promise.all(Array.from({ length: 6 }, () => consume(code)));
+		expect(results.filter(Boolean)).toHaveLength(1);
+	});
+
+	it('leaves a code in place after a wrong guess, so the right one still works', async () => {
+		const { once, mail, issue, consume } = await setup();
+		await issue();
+		const before = once.keys().length;
+		const wrong = String((Number(mail.lastCode()) + 1) % 1_000_000).padStart(6, '0');
+		expect(await consume(wrong)).toBe(false);
+		expect(once.keys()).toHaveLength(before);
+		expect(await consume(mail.lastCode())).toBe(true);
+	});
+});
+
+describe('collegeAttemptStore', () => {
+	it('sends the claim and the clear to the database under the same key', async () => {
+		const calls: { method: string; key: string; sql: string; params: unknown[] }[] = [];
+		const db = {
+			async first(key: string, sql: string, params: unknown[]) {
+				calls.push({ method: 'first', key, sql, params });
+				return { attempts: 3 };
+			},
+			async run(key: string, sql: string, params: unknown[]) {
+				calls.push({ method: 'run', key, sql, params });
+			}
+		} as unknown as CollegeDBClient;
+		const store = collegeAttemptStore(async () => db);
+		expect(await store.claim('k1', 1_000_000, { limit: 5, windowMs: 1000 })).toBe(3);
+		await store.clear('k1');
+		expect(calls.map((call) => [call.method, call.key])).toEqual([
+			['first', 'k1'],
+			['run', 'k1']
+		]);
+		expect(calls[0]!.sql).toMatch(/RETURNING attempts/);
+		expect(calls[0]!.params).toEqual([
+			'k1',
+			1_000_000,
+			999_000,
+			999_000,
+			1_000_000,
+			999_000,
+			5
+		]);
+	});
+
+	it('reads a refused claim as null', async () => {
+		const db = { first: async () => null } as unknown as CollegeDBClient;
+		const store = collegeAttemptStore(async () => db);
+		expect(await store.claim('k1', 1, { limit: 5, windowMs: 1000 })).toBeNull();
 	});
 });

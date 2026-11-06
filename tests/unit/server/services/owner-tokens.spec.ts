@@ -1,14 +1,11 @@
+import type { CollegeDBClient } from '@earth-app/collegedb';
 import { describe, expect, it } from 'vitest';
 import { fromBase64Url, toBase64Url } from '../../../../contracts/src/common';
 import type { Principal } from '../../../../src/server/domain/authorize';
 import type { AuditInput } from '../../../../src/server/services/audit';
 import {
-	CryptoError,
-	decryptRecordText,
-	loadKeyRing,
-	type KeyRing
-} from '../../../../src/server/services/crypto';
-import {
+	OwnerTokenConflictError,
+	collegeOwnerTokenStore,
 	principalActor,
 	revealOwnerToken,
 	rewrapOwnerToken,
@@ -16,33 +13,25 @@ import {
 	storeOwnerToken,
 	withOwnerToken,
 	type CustodyDeps,
-	type OwnerTokenStore,
 	type SessionCall,
 	type StoredOwnerToken
 } from '../../../../src/server/services/owner-tokens';
+import {
+	CryptoError,
+	decryptRecordText,
+	loadKeyRing,
+	type KeyRing
+} from '../../../../src/shared/custody/envelope';
 import { ApiError } from '../../../../src/shared/errors';
+import { MemoryOwnerTokenStore } from './custody-support';
 
 const kek = (fill: number) => toBase64Url(new Uint8Array(32).fill(fill));
 const SECRET = 'worker-owner-token-0123456789';
 const user: Principal = { kind: 'user', userId: 'user_1' };
 const key: Principal = { kind: 'key', keyId: 'key_1', issuerId: 'user_1' };
 
-class MemoryStore implements OwnerTokenStore {
-	rows = new Map<string, StoredOwnerToken>();
-	reads = 0;
-
-	async get(siteId: string) {
-		this.reads++;
-		return this.rows.get(siteId) ?? null;
-	}
-
-	async put(siteId: string, value: StoredOwnerToken) {
-		this.rows.set(siteId, structuredClone(value));
-	}
-}
-
 async function setup(ring?: KeyRing) {
-	const store = new MemoryStore();
+	const store = new MemoryOwnerTokenStore();
 	const rows: AuditInput[] = [];
 	const deps: CustodyDeps = {
 		store,
@@ -269,14 +258,17 @@ describe('rotateOwnerToken', () => {
 	it('restores the old token and records the failure when push throws', async () => {
 		const { store, rows, deps } = await setup();
 		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
-		const before = structuredClone(store.rows.get('site_1'));
+		const before = structuredClone(store.rows.get('site_1'))!;
 		rows.length = 0;
 		await expect(
 			rotateOwnerToken(deps, session(), async () => {
 				throw new Error('worker unreachable');
 			})
 		).rejects.toThrow('worker unreachable');
-		expect(store.rows.get('site_1')).toEqual(before);
+		const after = store.rows.get('site_1')!;
+		expect(after.current).toEqual(before.current);
+		expect(after.previous).toBeNull();
+		expect(after.version).toBeGreaterThan(before.version);
 		expect(rows.map((r) => r.action)).toEqual([
 			'site.owner-token.rotate',
 			'site.owner-token.rotate-failed'
@@ -371,7 +363,7 @@ describe('rewrapOwnerToken', () => {
 		const stored = store.rows.get('site_1')!;
 		await rewrapOwnerToken(grown, { siteId: 'site_1', actor: 'a' });
 		const current = store.rows.get('site_1')!.current;
-		store.rows.set('site_1', { current, previous: stored.current });
+		store.rows.set('site_1', { version: 9, current, previous: stored.current });
 		expect(await rewrapOwnerToken(grown, { siteId: 'site_1', actor: 'a' })).toBe(true);
 		const after = store.rows.get('site_1')!;
 		expect(after.previous?.kv).toBe(2);
@@ -428,5 +420,170 @@ describe('principalActor', () => {
 	it('names a user and a key', () => {
 		expect(principalActor(user)).toBe('user:user_1');
 		expect(principalActor(key)).toBe('key:key_1');
+	});
+});
+
+describe('concurrent writers', () => {
+	it('gives the loser of two rotations a typed conflict, and the winner keeps custody', async () => {
+		const store = new MemoryOwnerTokenStore(true);
+		const rows: AuditInput[] = [];
+		const deps: CustodyDeps = {
+			store,
+			audit: { append: async (input) => void rows.push(input) },
+			ring: await loadKeyRing({ KEK_V1: kek(1) })
+		};
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		const pushed: string[] = [];
+		const push = async (next: string) => void pushed.push(next);
+		const results = await Promise.allSettled([
+			rotateOwnerToken(deps, session(), push),
+			rotateOwnerToken(deps, session(), push)
+		]);
+		const lost = results.filter((r) => r.status === 'rejected');
+		expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+		expect(lost).toHaveLength(1);
+		const error = (lost[0] as PromiseRejectedResult).reason;
+		expect(error).toBeInstanceOf(OwnerTokenConflictError);
+		expect(error).toMatchObject({
+			code: 'conflict',
+			status: 409,
+			details: { reason: 'owner_token_conflict', siteId: 'site_1' }
+		});
+		expect(pushed).toHaveLength(1);
+		expect(await revealOwnerToken(deps, session())).toBe(pushed[0]);
+		const failed = rows.filter((row) => row.action === 'site.owner-token.rotate-failed');
+		expect(failed).toEqual([
+			{
+				actor: 'user:user_1',
+				action: 'site.owner-token.rotate-failed',
+				target: 'site_1',
+				detail: { keyVersion: 1, reason: 'conflict' }
+			}
+		]);
+	});
+
+	it('leaves a record that another writer moved during a failed push alone', async () => {
+		const { store, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		let moved: StoredOwnerToken | undefined;
+		await expect(
+			rotateOwnerToken(deps, session(), async () => {
+				const stored = store.rows.get('site_1')!;
+				await store.put(
+					'site_1',
+					{ current: stored.current, previous: null },
+					stored.version
+				);
+				moved = store.rows.get('site_1');
+				throw new Error('worker unreachable');
+			})
+		).rejects.toThrow('worker unreachable');
+		expect(store.rows.get('site_1')).toEqual(moved);
+	});
+
+	it('surfaces a conflict when the record moved before the final write', async () => {
+		const { store, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		await expect(
+			rotateOwnerToken(deps, session(), async () => {
+				const stored = store.rows.get('site_1')!;
+				await store.put('site_1', stored, stored.version);
+			})
+		).rejects.toBeInstanceOf(OwnerTokenConflictError);
+	});
+
+	it('refuses a rewrap that lost a race instead of overwriting the winner', async () => {
+		const { store, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'system:create', token: SECRET });
+		const grown: CustodyDeps = {
+			...deps,
+			store: {
+				get: async (siteId) => {
+					const stale = await store.get(siteId);
+					const stored = store.rows.get(siteId)!;
+					await store.put(siteId, stored, stored.version);
+					return stale;
+				},
+				put: (siteId, value, expected) => store.put(siteId, value, expected)
+			},
+			ring: await loadKeyRing({ KEK_V1: kek(1), KEK_V2: kek(2) })
+		};
+		await expect(
+			rewrapOwnerToken(grown, { siteId: 'site_1', actor: 'system:rewrap' })
+		).rejects.toBeInstanceOf(OwnerTokenConflictError);
+		expect(store.rows.get('site_1')?.current.kv).toBe(1);
+	});
+
+	it('stores over an existing record by naming its version', async () => {
+		const { store, deps } = await setup();
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'a', token: SECRET });
+		await storeOwnerToken(deps, { siteId: 'site_1', actor: 'a', token: `${SECRET}-2` });
+		expect(store.rows.get('site_1')?.version).toBe(2);
+		expect(await revealOwnerToken(deps, session())).toBe(`${SECRET}-2`);
+	});
+});
+
+describe('collegeOwnerTokenStore', () => {
+	const envelope = {
+		v: 1,
+		kv: 1,
+		wk: 'w'.repeat(80),
+		iv: 'i'.repeat(16),
+		ct: 'c'.repeat(22)
+	};
+
+	function fakeDb(answers: unknown[]) {
+		const calls: { key: string; sql: string; params: unknown[] }[] = [];
+		const db = {
+			async first(key: string, sql: string, params: unknown[]) {
+				calls.push({ key, sql, params });
+				return answers.shift() ?? null;
+			}
+		} as unknown as CollegeDBClient;
+		return { calls, store: collegeOwnerTokenStore(async () => db) };
+	}
+
+	it('inserts the first record and updates later ones by version', async () => {
+		const { calls, store } = fakeDb([{ version: 1 }, { version: 2 }]);
+		const record = { current: envelope as never, previous: null };
+		expect(await store.put('site_1', record, null)).toBe(1);
+		expect(await store.put('site_1', record, 1)).toBe(2);
+		expect(calls[0]!.sql).toMatch(/INSERT INTO owner_tokens .* ON CONFLICT .* DO NOTHING/s);
+		expect(calls[1]!.sql).toMatch(/UPDATE owner_tokens SET version = version \+ 1/);
+		expect(calls[1]!.params.slice(-2)).toEqual(['site_1', 1]);
+		expect(calls.map((call) => call.key)).toEqual(['site_1', 'site_1']);
+	});
+
+	it('throws the typed conflict when no row came back', async () => {
+		const { store } = fakeDb([null, null]);
+		const record = { current: envelope as never, previous: null };
+		await expect(store.put('site_1', record, null)).rejects.toBeInstanceOf(
+			OwnerTokenConflictError
+		);
+		await expect(store.put('site_1', record, 3)).rejects.toBeInstanceOf(
+			OwnerTokenConflictError
+		);
+	});
+
+	it('reads a stored row back into envelopes, and null for a missing one', async () => {
+		const row = {
+			version: 4,
+			current_envelope: JSON.stringify(envelope),
+			previous_envelope: JSON.stringify({ ...envelope, kv: 2 })
+		};
+		const { store } = fakeDb([row, null]);
+		expect(await store.get('site_1')).toEqual({
+			version: 4,
+			current: envelope,
+			previous: { ...envelope, kv: 2 }
+		});
+		expect(await store.get('site_2')).toBeNull();
+	});
+
+	it('reads a row with no previous envelope as null', async () => {
+		const { store } = fakeDb([
+			{ version: 1, current_envelope: JSON.stringify(envelope), previous_envelope: null }
+		]);
+		expect((await store.get('site_1'))?.previous).toBeNull();
 	});
 });

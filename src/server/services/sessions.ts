@@ -196,7 +196,9 @@ export async function createSession(
 	return { token, session };
 }
 
-// slides the idle window, but writes at most once per touch interval
+// slides the idle window, but writes at most once per touch interval. A touch must not bring back
+// a session that a revoke ended while it ran: the token record is written first, then the reverse
+// record is checked, and a missing one means a revoke got in, so the token record is deleted again
 export async function getSession(kv: KvStore, token: string): Promise<SessionRecord | null> {
 	if (!TOKEN_PATTERN.test(token)) return null;
 	const hash = await hashSessionToken(token);
@@ -209,7 +211,14 @@ export async function getSession(kv: KvStore, token: string): Promise<SessionRec
 	}
 	if (now - session.lastSeenAt < SESSION_TOUCH_MS) return session;
 	const touched = { ...session, lastSeenAt: now };
-	await store(kv, hash, touched, now);
+	const options = { expirationTtl: ttlSeconds(touched, now) };
+	await kv.put(tokenKey(hash), JSON.stringify(touched), options);
+	const reverse = parseJson(reverseSchema, await kv.get(userKey(session.userId, session.id)));
+	if (!reverse) {
+		await kv.delete(tokenKey(hash));
+		return null;
+	}
+	await kv.put(userKey(session.userId, session.id), JSON.stringify(reverse), options);
 	return touched;
 }
 

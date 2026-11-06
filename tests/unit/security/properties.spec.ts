@@ -1,4 +1,5 @@
 import type { EventHandler } from 'h3';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { API_ROOT, scanRoutes, type RouteEntry } from '../../../scripts/gen-openapi';
@@ -25,7 +26,7 @@ import {
 	setAuthServices
 } from '../../../src/server/utils/auth';
 import { PLACEHOLDER_RATES, resetApiDeps } from '../../../src/server/utils/define-api';
-import { ROUTE_CLASSES } from '../../../src/server/utils/rate-limit';
+import { LIMIT_CLASSES, ROUTE_CLASSES } from '../../../src/server/utils/rate-limit';
 import { isSessionOnly, type Action } from '../../../src/shared/permissions';
 import { facts, fresh } from '../domain/fixtures';
 import { asKey, send as sendRoute, setup, type Reply } from '../server/fixtures/harness';
@@ -36,6 +37,34 @@ const requestPath = (route: RouteEntry) => route.path.replace(/\{([^}]+)\}/g, 'x
 
 afterEach(() => resetApiDeps());
 
+function sourceFiles(dir: string): string[] {
+	return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+		const path = join(dir, entry.name);
+		if (entry.isDirectory()) return sourceFiles(path);
+		return entry.name.endsWith('.ts') ? [path] : [];
+	});
+}
+
+describe('audit writes', () => {
+	it('pass the head store at every append, appendBoth and verify call in the server', () => {
+		const root = join(process.cwd(), 'src/server');
+		const callPattern = /(?<=\b(?:await|return) )(?:append|appendBoth|verify)\(/g;
+		const found: string[] = [];
+		for (const file of sourceFiles(root)) {
+			if (file.endsWith(join('services', 'audit.ts'))) continue;
+			const source = readFileSync(file, 'utf8');
+			if (!/from '(?:\.\.\/services|\.)\/audit'/.test(source)) continue;
+			for (const match of source.matchAll(callPattern)) {
+				const rest = source.slice(match.index);
+				const call = rest.slice(0, rest.indexOf(');') + 2);
+				found.push(file);
+				expect(call, `${file}: ${call}`).toContain('heads');
+			}
+		}
+		expect(found.length).toBeGreaterThanOrEqual(3);
+	});
+});
+
 describe('route table', () => {
 	it('scans every route file without a problem', async () => {
 		const { routes, problems } = await scanRoutes();
@@ -45,7 +74,7 @@ describe('route table', () => {
 
 	it('gives every route a rate class that has a rule', async () => {
 		const { routes } = await scanRoutes();
-		expect(Object.keys(PLACEHOLDER_RATES).sort()).toEqual([...ROUTE_CLASSES].sort());
+		expect(Object.keys(PLACEHOLDER_RATES).sort()).toEqual([...LIMIT_CLASSES].sort());
 		for (const route of routes) {
 			expect(ROUTE_CLASSES, route.rel).toContain(route.meta.rateClass);
 		}

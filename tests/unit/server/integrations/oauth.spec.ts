@@ -7,6 +7,7 @@ import {
 	OAUTH_STATE_TTL_MS,
 	beginOAuth,
 	completeOAuth,
+	edovVerified,
 	isOAuthProvider,
 	oauthClient,
 	oauthClients,
@@ -15,7 +16,7 @@ import {
 	type ProviderProfile
 } from '../../../../src/server/integrations/oauth';
 import { ApiError } from '../../../../src/shared/errors';
-import { memoryKv, useClock, type MemoryKv } from '../services/auth-support';
+import { memoryOnce, useClock, type MemoryOnce } from '../services/auth-support';
 import {
 	CREDS,
 	PROFILE_URLS,
@@ -26,7 +27,7 @@ import {
 } from '../services/identities-support';
 
 let clock: ReturnType<typeof useClock>;
-let kv: MemoryKv;
+let once: MemoryOnce;
 let net: FakeFetch;
 let tokens: Record<string, ReturnType<typeof primeProfile>>;
 let deps: OAuthDeps;
@@ -35,7 +36,7 @@ const PROFILE = { subject: '4242', email: 'Ada@Example.com', emailVerified: true
 
 beforeEach(() => {
 	clock = useClock();
-	kv = memoryKv();
+	once = memoryOnce();
 	net = fakeFetch();
 	tokens = {};
 	const clients = oauthClients(
@@ -52,7 +53,7 @@ beforeEach(() => {
 			}
 		};
 	}
-	deps = { kv, clients, fetch: net.fn };
+	deps = { once, clients, fetch: net.fn };
 });
 
 afterEach(() => {
@@ -94,7 +95,9 @@ describe('start url', () => {
 		'%s challenge is the S256 hash of the stored verifier',
 		async (provider) => {
 			const { url, state } = await beginOAuth(deps, provider);
-			const record = JSON.parse(kv.dump()[`oauth:state:${await sha256Hex(state)}`] as string);
+			const record = JSON.parse(
+				once.dump()[`oauth:state:${await sha256Hex(state)}`] as string
+			);
 			const digest = await crypto.subtle.digest(
 				'SHA-256',
 				new TextEncoder().encode(record.verifier)
@@ -140,8 +143,10 @@ describe('start url', () => {
 		const b = await beginOAuth(deps, 'github');
 		expect(a.state).not.toBe(b.state);
 		expect(a.state.length).toBeGreaterThanOrEqual(43);
-		for (const name of kv.keys()) expect(name).not.toContain(a.state);
-		expect(kv.puts.every((put) => (put.ttl ?? 0) >= 60)).toBe(true);
+		for (const name of once.keys()) expect(name).not.toContain(a.state);
+		expect(once.puts.every((put) => put.expiresAt === clock.now + OAUTH_STATE_TTL_MS)).toBe(
+			true
+		);
 	});
 
 	it('says why before the handoff', () => {
@@ -343,7 +348,7 @@ describe('email verification by provider', () => {
 		expect(profile.emailVerified).toBe(false);
 	});
 
-	it('GitHub falls back to a verified address when none is primary', async () => {
+	it('GitHub gives no address when none is primary, even if another is verified', async () => {
 		tokens.github = { accessToken: 'gh-token', idToken: null };
 		net.replies.set(PROFILE_URLS.githubUser, { body: { id: 7, name: null } });
 		net.replies.set(PROFILE_URLS.githubEmails, {
@@ -354,11 +359,41 @@ describe('email verification by provider', () => {
 		});
 		const { state, cookieState } = await begin('github');
 		const profile = await completeOAuth(deps, 'github', { code: 'c', state, cookieState });
-		expect(profile).toMatchObject({
-			subject: '7',
-			email: 'ok@example.com',
-			emailVerified: true
+		expect(profile).toMatchObject({ subject: '7', email: null, emailVerified: false });
+	});
+
+	it('GitHub trusts a verified primary address', async () => {
+		tokens.github = { accessToken: 'gh-token', idToken: null, scopes: ['user:email'] };
+		net.replies.set(PROFILE_URLS.githubUser, { body: { id: 7 } });
+		net.replies.set(PROFILE_URLS.githubEmails, {
+			body: [{ email: 'main@example.com', primary: true, verified: true }]
 		});
+		const { state, cookieState } = await begin('github');
+		const profile = await completeOAuth(deps, 'github', { code: 'c', state, cookieState });
+		expect(profile).toMatchObject({ email: 'main@example.com', emailVerified: true });
+	});
+
+	it('GitHub refuses a token that was not granted the email scope, and asks for no emails', async () => {
+		tokens.github = { accessToken: 'gh-token', idToken: null, scopes: ['read:user'] };
+		const { state, cookieState } = await begin('github');
+		await expectFailure(
+			completeOAuth(deps, 'github', { code: 'c', state, cookieState }),
+			'unauthenticated'
+		);
+		expect(net.calls.some((call) => call.url === PROFILE_URLS.githubEmails)).toBe(false);
+	});
+
+	it.each([
+		[true, true],
+		['1', true],
+		['true', true],
+		[false, false],
+		['0', false],
+		['false', false],
+		[undefined, false],
+		[null, false]
+	])('Microsoft reads the domain-owner claim %j as %s', (claim, verified) => {
+		expect(edovVerified(claim)).toBe(verified);
 	});
 
 	it('GitHub prefers the primary address even when it is unverified', async () => {
@@ -444,6 +479,15 @@ describe('real code exchange', () => {
 		expect(form.get('code')).toBe('the-code');
 		expect(form.get('code_verifier')).toBe('the-verifier');
 		expect(seen[0]?.authorization).toMatch(/^Basic /);
+	});
+
+	it('reads the granted scopes whether the provider separates them by commas or spaces', async () => {
+		stubToken({ access_token: 'at', token_type: 'bearer', scope: 'read:user,user:email' });
+		const github = await oauthClient('github', CREDS('github')).exchange('c', 'v');
+		expect(github.scopes).toEqual(['read:user', 'user:email']);
+		stubToken({ access_token: 'at', token_type: 'Bearer', scope: 'openid email profile' });
+		const google = await oauthClient('google', CREDS('google')).exchange('c', 'v');
+		expect(google.scopes).toEqual(['openid', 'email', 'profile']);
 	});
 
 	it('Google returns the id token when the provider sends one', async () => {

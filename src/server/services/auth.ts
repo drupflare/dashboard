@@ -3,6 +3,7 @@ import { ApiError } from '../../shared/errors';
 import { STEP_UP_WINDOW_MS } from '../../shared/permissions';
 import { nowUtc } from '../../shared/utils/time';
 import { DuplicateRowError } from '../db/collegedb';
+import { ensurePersonalOrganization } from '../db/repos/accounts';
 import {
 	createUser,
 	getUserByEmail,
@@ -10,16 +11,19 @@ import {
 	normalizeEmail,
 	type User
 } from '../db/repos/identity';
-import { addMember, createOrganization, type Organization } from '../db/repos/organization';
-import { append, type AuditInput } from './audit';
-import { consumeCode, issueCode, type MailSender } from './email-codes';
+import type { Organization } from '../db/repos/organization';
+import { append, type AuditInput, type HeadStore } from './audit';
+import { sha256Hex } from './crypto';
+import { consumeCode, issueCode, type AttemptStore, type MailSender } from './email-codes';
 import {
 	createSession,
 	rotateSession,
+	truncateIp,
 	type IssuedSession,
 	type KvStore,
 	type SessionRecord
 } from './sessions';
+import type { OnceStore } from './single-use';
 
 // #region collaborators
 
@@ -27,7 +31,8 @@ export interface Directory {
 	findUserByEmail(email: string): Promise<User | null>;
 	findUserById(id: string): Promise<User | null>;
 	createUser(email: string): Promise<User>;
-	createPersonalOrganization(user: User): Promise<Organization>;
+	// idempotent: the organisation and the owner membership come together or not at all
+	ensurePersonalOrganization(user: User): Promise<{ org: Organization; created: boolean }>;
 	appendAudit(organizationId: string, input: AuditInput): Promise<void>;
 }
 
@@ -38,6 +43,8 @@ export type TurnstileCheck = (
 
 export interface AuthDeps {
 	kv: KvStore;
+	once: OnceStore;
+	attempts: AttemptStore;
 	directory: Directory;
 	mail: MailSender;
 	turnstile: TurnstileCheck;
@@ -45,7 +52,10 @@ export interface AuthDeps {
 }
 
 // the h2 repositories behind the directory seam; the handle resolves on first use
-export function collegeDirectory(getDb: () => Promise<CollegeDBClient>): Directory {
+export function collegeDirectory(
+	getDb: () => Promise<CollegeDBClient>,
+	heads?: HeadStore
+): Directory {
 	return {
 		async findUserByEmail(email) {
 			return getUserByEmail(await getDb(), email);
@@ -56,18 +66,11 @@ export function collegeDirectory(getDb: () => Promise<CollegeDBClient>): Directo
 		async createUser(email) {
 			return createUser(await getDb(), { email });
 		},
-		async createPersonalOrganization(user) {
-			const db = await getDb();
-			const org = await createOrganization(db, {
-				name: 'Personal',
-				personal: true,
-				createdBy: user.id
-			});
-			await addMember(db, org.id, { userId: user.id, role: 'owner' });
-			return org;
+		async ensurePersonalOrganization(user) {
+			return ensurePersonalOrganization(await getDb(), user.id);
 		},
 		async appendAudit(organizationId, input) {
-			await append(await getDb(), organizationId, input);
+			await append(await getDb(), organizationId, input, heads);
 		}
 	};
 }
@@ -93,7 +96,7 @@ export async function requestCode(
 		throw new ApiError('forbidden', 'The bot check failed', { requires: 'challenge' });
 	}
 	const result = await issueCode(
-		deps.kv,
+		deps.once,
 		deps.mail,
 		deps.codeSecret,
 		input.email,
@@ -106,30 +109,87 @@ export async function requestCode(
 	}
 }
 
-// a unique-email collision means a parallel verify made the user first, so that one owns the setup
+// the caller has already proven the address belongs to the person; null means a parallel sign-up
+// made the user first and owns the setup
+export async function createAccount(
+	directory: Directory,
+	email: string,
+	method: string
+): Promise<User | null> {
+	try {
+		const user = await directory.createUser(email);
+		const { org } = await directory.ensurePersonalOrganization(user);
+		await directory.appendAudit(org.id, {
+			actor: user.id,
+			action: 'account.create',
+			target: user.id,
+			detail: { method }
+		});
+		return user;
+	} catch (error) {
+		if (error instanceof DuplicateRowError) return null;
+		throw error;
+	}
+}
+
+// a user whose setup stopped halfway gets the missing organisation and membership on sign-in
+export async function healAccount(directory: Directory, user: User): Promise<void> {
+	const { org, created } = await directory.ensurePersonalOrganization(user);
+	if (!created) return;
+	await directory.appendAudit(org.id, {
+		actor: user.id,
+		action: 'account.repair',
+		target: user.id,
+		detail: { restored: 'personal-organization' }
+	});
+}
+
 async function findOrCreateUser(
 	directory: Directory,
 	email: string
 ): Promise<{ user: User; isNew: boolean }> {
 	const existing = await directory.findUserByEmail(email);
-	if (existing) return { user: existing, isNew: false };
+	if (existing) {
+		await healAccount(directory, existing);
+		return { user: existing, isNew: false };
+	}
+	const created = await createAccount(directory, email, 'email-code');
+	if (created) return { user: created, isNew: true };
+	const winner = await directory.findUserByEmail(email);
+	if (!winner) throw new ApiError('internal', 'The account could not be created');
+	return { user: winner, isNew: false };
+}
+
+// #endregion
+
+// #region denial audit
+
+// failed sign-ins go to one chain per address hash, so known and unknown addresses cost the same
+export async function authChain(email: string): Promise<string> {
+	return `auth:${await sha256Hex(normalizeEmail(email))}`;
+}
+
+// a failed write must not change the answer to the caller; it holds no code, token or address
+async function auditDenied(
+	deps: AuthDeps,
+	input: { email: string; action: string; reason: string; ip?: string | null; actor?: string }
+): Promise<void> {
 	try {
-		const user = await directory.createUser(email);
-		const org = await directory.createPersonalOrganization(user);
-		await directory.appendAudit(org.id, {
-			actor: user.id,
-			action: 'account.create',
-			target: user.id,
-			detail: { method: 'email-code' }
+		const chain = await authChain(input.email);
+		await deps.directory.appendAudit(chain, {
+			actor: input.actor ?? 'anonymous',
+			action: input.action,
+			target: chain,
+			detail: { reason: input.reason, network: truncateIp(input.ip) }
 		});
-		return { user, isNew: true };
 	} catch (error) {
-		if (!(error instanceof DuplicateRowError)) throw error;
-		const winner = await directory.findUserByEmail(email);
-		if (!winner) throw error;
-		return { user: winner, isNew: false };
+		console.error('audit write failed', error);
 	}
 }
+
+// #endregion
+
+// #region verify
 
 export interface SignedIn extends IssuedSession {
 	user: User;
@@ -143,7 +203,14 @@ export async function verifyCode(
 ): Promise<SignedIn> {
 	ready(deps);
 	const email = normalizeEmail(input.email);
-	if (!(await consumeCode(deps.kv, deps.codeSecret, email, input.code, nowUtc().toMillis()))) {
+	const now = nowUtc().toMillis();
+	if (!(await consumeCode(deps.once, deps.attempts, deps.codeSecret, email, input.code, now))) {
+		await auditDenied(deps, {
+			email,
+			action: 'auth.code.denied',
+			reason: 'invalid_code',
+			ip: input.ip
+		});
 		throw invalidCode();
 	}
 	const { user, isNew } = await findOrCreateUser(deps.directory, email);
@@ -172,7 +239,15 @@ export async function stepUp(
 	const user = await deps.directory.findUserById(input.userId);
 	if (!user) throw new ApiError('unauthenticated', 'Authentication is required');
 	const now = nowUtc().toMillis();
-	if (!(await consumeCode(deps.kv, deps.codeSecret, user.email, input.code, now))) {
+	if (
+		!(await consumeCode(deps.once, deps.attempts, deps.codeSecret, user.email, input.code, now))
+	) {
+		await auditDenied(deps, {
+			email: user.email,
+			action: 'auth.step-up.denied',
+			reason: 'invalid_code',
+			actor: user.id
+		});
 		throw invalidCode();
 	}
 	const issued = await rotateSession(deps.kv, input.userId, input.sessionId, { stepUpAt: now });

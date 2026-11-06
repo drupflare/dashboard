@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { ApiError } from '../../shared/errors';
 import { nowUtc } from '../../shared/utils/time';
 import { randomToken, timingSafeEqual } from '../services/crypto';
-import type { KvStore } from '../services/sessions';
+import type { OnceStore } from '../services/single-use';
 
 // #region providers
 
@@ -44,6 +44,8 @@ export interface ProviderProfile {
 export interface ProviderTokens {
 	accessToken: string;
 	idToken: string | null;
+	// the scopes the provider says it granted, when it says
+	scopes?: readonly string[];
 }
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -110,7 +112,9 @@ async function getJson<T extends z.ZodType>(
 	return schema.parse(await response.json());
 }
 
+// only a verified primary address counts, and only when the user granted the email scope
 async function githubProfile(tokens: ProviderTokens, fetchFn: FetchLike): Promise<ProviderProfile> {
+	if (tokens.scopes && !tokens.scopes.includes('user:email')) throw signInFailed();
 	const user = await getJson(
 		fetchFn,
 		'https://api.github.com/user',
@@ -123,7 +127,7 @@ async function githubProfile(tokens: ProviderTokens, fetchFn: FetchLike): Promis
 		tokens.accessToken,
 		githubEmails
 	);
-	const chosen = emails.find((entry) => entry.primary) ?? emails.find((entry) => entry.verified);
+	const chosen = emails.find((entry) => entry.primary);
 	return {
 		subject: String(user.id),
 		email: chosen?.email ?? null,
@@ -144,6 +148,11 @@ function userinfoProfile(url: string) {
 	};
 }
 
+// the claim arrives as a boolean or as the strings 1 and true; anything else, or nothing, is false
+export function edovVerified(claim: boolean | string | null | undefined): boolean {
+	return claim === true || claim === '1' || claim === 'true';
+}
+
 // the email claim is not proof of ownership on Microsoft; only the domain-owner-verified claim is
 function microsoftProfile(clientId: string) {
 	return async (tokens: ProviderTokens): Promise<ProviderProfile> => {
@@ -154,7 +163,7 @@ function microsoftProfile(clientId: string) {
 		return {
 			subject: claims.sub,
 			email: claims.email ?? null,
-			emailVerified: claims.xms_edov === true,
+			emailVerified: edovVerified(claims.xms_edov),
 			name: claims.name ?? null
 		};
 	};
@@ -164,10 +173,13 @@ function microsoftProfile(clientId: string) {
 
 // #region clients
 
+// github answers with commas and the others with spaces
 function tokensOf(tokens: OAuth2Tokens): ProviderTokens {
+	const granted = 'scope' in tokens.data ? tokens.data.scope : undefined;
 	return {
 		accessToken: tokens.accessToken(),
-		idToken: 'id_token' in tokens.data ? tokens.idToken() : null
+		idToken: 'id_token' in tokens.data ? tokens.idToken() : null,
+		...(typeof granted === 'string' ? { scopes: granted.split(/[\s,]+/).filter(Boolean) } : {})
 	};
 }
 
@@ -270,8 +282,6 @@ export function oauthClients(config: OAuthConfig): OAuthClients {
 export const OAUTH_STATE_COOKIE = '__Host-drupflare_oauth';
 export const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
 
-const KV_MIN_TTL_SECONDS = 60;
-
 const stateKey = (hash: string) => `oauth:state:${hash}`;
 
 const stateRecord = z.object({
@@ -281,7 +291,7 @@ const stateRecord = z.object({
 });
 
 export interface OAuthDeps {
-	kv: KvStore;
+	once: OnceStore;
 	clients: OAuthClients;
 	fetch: FetchLike;
 }
@@ -299,19 +309,23 @@ export async function beginOAuth(
 	const client = clientFor(deps, provider);
 	const state = randomToken();
 	const verifier = generateCodeVerifier();
-	const record = { provider, verifier, createdAt: nowUtc().toMillis() };
-	await deps.kv.put(stateKey(await sha256Hex(state)), JSON.stringify(record), {
-		expirationTtl: Math.max(KV_MIN_TTL_SECONDS, OAUTH_STATE_TTL_MS / 1000)
-	});
+	const now = nowUtc().toMillis();
+	const record = { provider, verifier, createdAt: now };
+	await deps.once.put(
+		stateKey(await sha256Hex(state)),
+		JSON.stringify(record),
+		now + OAUTH_STATE_TTL_MS
+	);
 	return { url: client.authorizationUrl(state, verifier).toString(), state };
 }
 
-// the record goes before the code is exchanged, so a state works for one callback only
-async function takeState(kv: KvStore, state: string): Promise<z.infer<typeof stateRecord> | null> {
-	const key = stateKey(await sha256Hex(state));
-	const raw = await kv.get(key);
+// one atomic take before the code is exchanged, so a state works for one callback only
+async function takeState(
+	once: OnceStore,
+	state: string
+): Promise<z.infer<typeof stateRecord> | null> {
+	const raw = await once.take(stateKey(await sha256Hex(state)), nowUtc().toMillis());
 	if (raw === null) return null;
-	await kv.delete(key);
 	try {
 		const parsed = stateRecord.safeParse(JSON.parse(raw));
 		if (!parsed.success) return null;
@@ -338,7 +352,7 @@ export async function completeOAuth(
 	const { state, cookieState } = input;
 	// the cookie ties the callback to the browser that started the flow
 	if (!state || !cookieState || !timingSafeEqual(state, cookieState)) throw signInFailed();
-	const record = await takeState(deps.kv, state);
+	const record = await takeState(deps.once, state);
 	if (record === null || record.provider !== provider) throw signInFailed();
 	if (input.error) throw signInFailed();
 	if (!input.code) throw new ApiError('validation', 'The provider did not return a code');

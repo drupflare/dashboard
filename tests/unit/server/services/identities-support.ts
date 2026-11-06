@@ -213,7 +213,7 @@ export function primeProfile(
 
 // #endregion
 
-export interface IdentityHarness extends Harness, Omit<IdentityDeps, 'kv' | 'directory'> {
+export interface IdentityHarness extends Harness, Omit<IdentityDeps, 'kv' | 'once' | 'directory'> {
 	store: MemoryStore;
 	fetchLog: FakeFetch;
 	tokens: Partial<Record<OAuthProvider, ProviderTokens>>;
@@ -241,11 +241,11 @@ export function identityHarness(options: { emailFloor?: boolean } = {}): Identit
 	}
 	const base2 = base.directory;
 	// the personal organisation a sign-up creates is the audit trail the store reports
-	const createOrg = base2.createPersonalOrganization.bind(base2);
-	base2.createPersonalOrganization = async (user) => {
-		const org = await createOrg(user);
-		store.orgOf.set(user.id, org.id);
-		return org;
+	const ensureOrg = base2.ensurePersonalOrganization.bind(base2);
+	base2.ensurePersonalOrganization = async (user) => {
+		const result = await ensureOrg(user);
+		store.orgOf.set(user.id, result.org.id);
+		return result;
 	};
 	return {
 		...base,

@@ -10,7 +10,7 @@ import {
 	type WebAuthnDeps
 } from '../../../../src/server/integrations/webauthn';
 import { ApiError } from '../../../../src/shared/errors';
-import { memoryKv, useClock } from '../services/auth-support';
+import { memoryOnce, useClock } from '../services/auth-support';
 import { RP, memoryStore, type MemoryStore } from '../services/identities-support';
 import { makeAuthenticator, newKeyPair, type Authenticator } from './webauthn-support';
 
@@ -24,7 +24,7 @@ let key: Authenticator;
 beforeEach(async () => {
 	clock = useClock();
 	store = memoryStore();
-	deps = { kv: memoryKv(), store, config: RP };
+	deps = { once: memoryOnce(), store, config: RP };
 	key = await makeAuthenticator(RP);
 });
 
@@ -323,16 +323,16 @@ describe('authentication', () => {
 	it('keeps no challenge in the store after use', async () => {
 		const options = await signInOptions();
 		await verifyAuthentication(deps, await key.assert(options, USER.id));
-		const kv = deps.kv as ReturnType<typeof memoryKv>;
-		expect(kv.keys().filter((name) => name.startsWith('webauthn:auth:'))).toEqual([]);
+		const once = deps.once as ReturnType<typeof memoryOnce>;
+		expect(once.keys().filter((name) => name.startsWith('webauthn:auth:'))).toEqual([]);
 	});
 
-	it('stores the challenge under a hash, with a ttl of at least a minute', async () => {
-		const kv = deps.kv as ReturnType<typeof memoryKv>;
+	it('stores the challenge under a hash, expiring with the challenge life', async () => {
+		const once = deps.once as ReturnType<typeof memoryOnce>;
 		const options = await signInOptions();
-		const names = kv.keys().filter((name) => name.startsWith('webauthn:auth:'));
+		const names = once.keys().filter((name) => name.startsWith('webauthn:auth:'));
 		expect(names).toHaveLength(1);
 		expect(names[0]).not.toContain(options.challenge);
-		expect(kv.puts.at(-1)?.ttl).toBeGreaterThanOrEqual(60);
+		expect(once.puts.at(-1)?.expiresAt).toBe(clock.now + CHALLENGE_TTL_MS);
 	});
 });

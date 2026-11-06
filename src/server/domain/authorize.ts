@@ -206,6 +206,11 @@ function findSource(
 			}
 			const agency = facts.agencyMemberships.find((m) => m.orgId === d.agencyOrgId);
 			if (agency && delegatedActions(d.role, agency.role).has(action)) {
+				// authorize checks the client org's suspension; this is the acting agency's own
+				if (facts.flags.suspendedOrgIds?.includes(d.agencyOrgId)) {
+					blocked ??= 'org_suspended';
+					continue;
+				}
 				return { via: 'delegation', audit: delegationAudit(d) };
 			}
 		}

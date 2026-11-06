@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stepUpFresh } from '../../../../src/server/domain/authorize';
 import { generateApiKey } from '../../../../src/server/services/api-keys';
-import { requestCode, stepUp, stepUpUntil, verifyCode } from '../../../../src/server/services/auth';
+import {
+	authChain,
+	createAccount,
+	requestCode,
+	stepUp,
+	stepUpUntil,
+	verifyCode
+} from '../../../../src/server/services/auth';
 import { CODE_RESEND_COOLDOWN_MS, CODE_TTL_MS } from '../../../../src/server/services/email-codes';
 import {
 	SESSION_COOKIE_NAME,
@@ -15,7 +22,6 @@ import {
 	authServices,
 	createPrincipalResolver,
 	kvKeyIndex,
-	productionServices,
 	resolveCredential,
 	setAuthServices,
 	siteverifyTurnstile,
@@ -25,7 +31,7 @@ import {
 import { ApiError } from '../../../../src/shared/errors';
 import { STEP_UP_WINDOW_MS } from '../../../../src/shared/permissions';
 import { facts } from '../../domain/fixtures';
-import { harness, useClock, type Harness } from './auth-support';
+import { SECRET, harness, useClock, type Harness } from './auth-support';
 
 let clock: ReturnType<typeof useClock>;
 beforeEach(() => {
@@ -59,6 +65,76 @@ async function signIn(h: Harness, email = 'ada@example.com') {
 	return result;
 }
 
+describe('denied sign-ins are audited', () => {
+	const wrongFor = (code: string) => String((Number(code) + 1) % 1_000_000).padStart(6, '0');
+
+	it('writes one row to the address chain for a failed verification, with no code or address', async () => {
+		const h = harness();
+		const code = await codeFor(h, 'ada@example.com');
+		const wrong = wrongFor(code);
+		await thrown(verifyCode(h, { email: 'ada@example.com', code: wrong, ip: '203.0.113.77' }));
+		const chain = await authChain('Ada@Example.com');
+		expect(h.directory.audits).toEqual([
+			{
+				organizationId: chain,
+				input: {
+					actor: 'anonymous',
+					action: 'auth.code.denied',
+					target: chain,
+					detail: { reason: 'invalid_code', network: '203.0.113.0/24' }
+				}
+			}
+		]);
+		const text = JSON.stringify(h.directory.audits);
+		for (const secret of [wrong, code, 'ada@example.com', SECRET, '203.0.113.77']) {
+			expect(text).not.toContain(secret);
+		}
+	});
+
+	it('writes the same row shape for an address with no account and one with an account', async () => {
+		const h = harness();
+		await signIn(h, 'known@example.com');
+		h.directory.audits.length = 0;
+		await thrown(verifyCode(h, { email: 'known@example.com', code: '000000' }));
+		await thrown(verifyCode(h, { email: 'nobody@example.com', code: '000000' }));
+		expect(h.directory.audits.map((a) => a.input.action)).toEqual([
+			'auth.code.denied',
+			'auth.code.denied'
+		]);
+		expect(h.directory.audits[0]!.organizationId).not.toBe(
+			h.directory.audits[1]!.organizationId
+		);
+		expect(h.directory.audits[0]!.input.detail).toEqual(h.directory.audits[1]!.input.detail);
+	});
+
+	it('writes nothing for a code that works', async () => {
+		const h = harness();
+		await signIn(h);
+		expect(h.directory.audits.map((a) => a.input.action)).toEqual(['account.create']);
+	});
+
+	it('writes a step-up row under the account when the code is wrong', async () => {
+		const h = harness();
+		const { user, session } = await signIn(h);
+		const code = await codeFor(h, 'ada@example.com');
+		await thrown(stepUp(h, { userId: user.id, sessionId: session.id, code: wrongFor(code) }));
+		const denied = h.directory.audits.filter((a) => a.input.action === 'auth.step-up.denied');
+		expect(denied).toHaveLength(1);
+		expect(denied[0]!.input.actor).toBe(user.id);
+		expect(JSON.stringify(denied)).not.toContain(code);
+	});
+
+	it('still refuses the same way when the audit write fails', async () => {
+		const h = harness();
+		await codeFor(h, 'ada@example.com');
+		vi.spyOn(h.directory, 'appendAudit').mockRejectedValue(new Error('audit store is down'));
+		const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const error = await thrown(verifyCode(h, { email: 'ada@example.com', code: '000000' }));
+		expect(error).toMatchObject({ code: 'unauthenticated' });
+		expect(log).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe('requestCode', () => {
 	it('checks the bot challenge first and passes the token and address through', async () => {
 		const h = harness();
@@ -78,7 +154,7 @@ describe('requestCode', () => {
 		expect(error.code).toBe('forbidden');
 		expect(error.details).toEqual({ requires: 'challenge' });
 		expect(h.mail.sent).toEqual([]);
-		expect(h.kv.keys()).toEqual([]);
+		expect(h.once.keys()).toEqual([]);
 	});
 
 	it('turns a cooldown into a rate_limited error with a wait', async () => {
@@ -151,46 +227,50 @@ describe('verifyCode', () => {
 		expect(second.session.id).not.toBe(first.session.id);
 	});
 
-	it('signs in a user that already exists, such as one a provider created, without making an organisation', async () => {
+	it('gives a user with no organisation the organisation and membership on sign-in', async () => {
 		const h = harness();
 		const existing = await h.directory.createUser('grace@example.com');
 		const result = await signIn(h, 'grace@example.com');
 		expect(result.user.id).toBe(existing.id);
 		expect(result.isNew).toBe(false);
-		expect(h.directory.orgs).toEqual([]);
+		expect(h.directory.orgs).toHaveLength(1);
+		expect(h.directory.members).toHaveLength(1);
+		expect(h.directory.audits).toEqual([
+			{
+				organizationId: h.directory.orgs[0]!.id,
+				input: expect.objectContaining({ action: 'account.repair', target: existing.id })
+			}
+		]);
+		await signIn(h, 'grace@example.com');
+		expect(h.directory.orgs).toHaveLength(1);
+		expect(h.directory.audits).toHaveLength(1);
 	});
 
-	it('is safe when two verifications for one new address run at once', async () => {
+	it('lets exactly one of two parallel verifications with one code sign in', async () => {
 		const h = harness();
 		const code = await codeFor(h, 'ada@example.com');
-		// both lookups answer before either insert, so both callers try to create the user
-		let arrivals = 0;
-		let release!: () => void;
-		const gate = new Promise<void>((resolve) => {
-			release = resolve;
-			setTimeout(resolve, 500);
-		});
-		const find = h.directory.findUserByEmail.bind(h.directory);
-		vi.spyOn(h.directory, 'findUserByEmail').mockImplementation(async (email) => {
-			const found = await find(email);
-			if (++arrivals <= 2) {
-				if (arrivals === 2) release();
-				await gate;
-			}
-			return found;
-		});
-		const createUser = vi.spyOn(h.directory, 'createUser');
-		const results = await Promise.all([
+		const results = await Promise.allSettled([
 			verifyCode(h, { email: 'ada@example.com', code }),
 			verifyCode(h, { email: 'ada@example.com', code })
 		]);
-		expect(createUser).toHaveBeenCalledTimes(2);
+		expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+		const refused = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+		expect(refused.reason).toMatchObject({ code: 'unauthenticated' });
+		expect(h.directory.users).toHaveLength(1);
+		expect(h.directory.orgs).toHaveLength(1);
+	});
+
+	it('leaves one organisation, one membership and one account row when two sign-ups race', async () => {
+		const h = harness();
+		const made = await Promise.all([
+			createAccount(h.directory, 'ada@example.com', 'email-code'),
+			createAccount(h.directory, 'ada@example.com', 'github')
+		]);
+		expect(made.filter((user) => user !== null)).toHaveLength(1);
 		expect(h.directory.users).toHaveLength(1);
 		expect(h.directory.orgs).toHaveLength(1);
 		expect(h.directory.members).toHaveLength(1);
-		expect(h.directory.audits).toHaveLength(1);
-		expect(results[0].user.id).toBe(results[1].user.id);
-		expect(results.filter((r) => r.isNew)).toHaveLength(1);
+		expect(h.directory.audits.map((a) => a.input.action)).toEqual(['account.create']);
 	});
 
 	it('adopts the winner when a parallel verification made the user after this one looked', async () => {
@@ -535,37 +615,6 @@ describe('siteverifyTurnstile', () => {
 		await expect(siteverifyTurnstile(undefined)('t', undefined)).rejects.toMatchObject({
 			code: 'not_built'
 		});
-	});
-});
-
-describe('productionServices', () => {
-	it('keeps mail and an unconfigured bot check closed, and the code secret empty', async () => {
-		const h = harness();
-		const prod = productionServices({ KV: h.kv } as never, {});
-		expect(prod.kv).toBe(h.kv);
-		expect(prod.codeSecret).toBe('');
-		await expect(
-			prod.mail.send('a@b.co', { kind: 'login-code', code: '1', expiresInMinutes: 1 })
-		).rejects.toMatchObject({ code: 'not_built' });
-		await expect(prod.turnstile('t', undefined)).rejects.toMatchObject({ code: 'not_built' });
-		const error = await thrown(requestCode(prod, { email: 'a@b.co' }));
-		expect(error.code).toBe('not_built');
-	});
-
-	it('takes the secrets it is given and finds keys through the KV index', async () => {
-		const h = harness();
-		const prod = productionServices({ KV: h.kv } as never, {
-			codeSecret: 'c',
-			turnstileSecret: 't'
-		});
-		expect(prod.codeSecret).toBe('c');
-		await kvKeyIndex(h.kv).put('aaaaaaaaaaaa', {
-			keyId: 'k',
-			issuerId: 'i',
-			orgId: 'o',
-			keyHash: 'h'
-		});
-		expect((await prod.keys.find('aaaaaaaaaaaa'))?.keyId).toBe('k');
 	});
 });
 

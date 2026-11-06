@@ -108,6 +108,62 @@ describe('route scan: src/server/api', () => {
 	});
 });
 
+// a handler must take the organisation and the site from ctx.resource, which the loader built from
+// rows. Comparing a path value with the resource is allowed; using it is not
+function requestInputReads(scope: string, source: string): string[] {
+	const found: string[] = [];
+	const pathId = scope === 'site' ? 'id' : scope === 'organization' ? 'orgId' : null;
+	if (pathId !== null) {
+		const used = source
+			.replace(new RegExp(`(?:!==|===)\\s*params\\.${pathId}\\b`, 'g'), '')
+			.replace(new RegExp(`\\bparams\\.${pathId}\\s*(?:!==|===)`, 'g'), '');
+		if (new RegExp(`\\bparams\\.${pathId}\\b`).test(used)) found.push(`params.${pathId}`);
+	}
+	if (scope === 'site' || scope === 'organization') {
+		for (const hit of source.matchAll(/\b(?:body|query)\.(?:orgId|organizationId|siteId)\b/g)) {
+			found.push(hit[0]);
+		}
+	}
+	return found;
+}
+
+describe('route scan: organisation and site come from the resource', () => {
+	it('flags a path value used as an organisation or a site, and a body or query id', () => {
+		expect(requestInputReads('site', 'get(db, resource.orgId, params.id)')).toEqual([
+			'params.id'
+		]);
+		expect(requestInputReads('organization', 'use(params.orgId)')).toEqual(['params.orgId']);
+		expect(requestInputReads('organization', 'x(body.orgId, query.siteId)')).toEqual([
+			'body.orgId',
+			'query.siteId'
+		]);
+		expect(requestInputReads('site', 'x(body.organizationId)')).toEqual([
+			'body.organizationId'
+		]);
+	});
+
+	it('allows a comparison with the resource, another resource id and unscoped routes', () => {
+		expect(
+			requestInputReads('organization', 'if (resource.orgId !== params.orgId) fail()')
+		).toEqual([]);
+		expect(requestInputReads('site', 'if (params.id === resource.siteId) ok()')).toEqual([]);
+		expect(requestInputReads('organization', 'get(resource.orgId, params.id)')).toEqual([]);
+		expect(requestInputReads('session', 'x(params.id, body.orgId)')).toEqual([]);
+		expect(requestInputReads('public', 'x(params.orgId)')).toEqual([]);
+	});
+
+	it('finds no handler that reads one after the loader has produced the resource', async () => {
+		const { routes } = await scanRoutes(API_ROOT);
+		const offenders = routes.flatMap((route) =>
+			requestInputReads(
+				route.meta.scope,
+				readFileSync(join(API_ROOT, route.rel), 'utf8')
+			).map((read) => `${route.rel}: ${read}`)
+		);
+		expect(offenders).toEqual([]);
+	});
+});
+
 describe('route scan: sample routes', () => {
 	it('maps file names to methods and paths and reads every scope', async () => {
 		const { routes, problems } = await scanRoutes(FIXTURES);

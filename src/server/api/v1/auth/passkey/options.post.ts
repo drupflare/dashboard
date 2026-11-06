@@ -16,7 +16,7 @@ export default defineApi(
 	},
 	async ({ event }) => {
 		setResponseHeader(event, 'cache-control', 'no-store');
-		const { kv, webauthn } = identityDeps();
-		return authenticationOptions({ kv, config: webauthn });
+		const { once, webauthn } = identityDeps();
+		return authenticationOptions({ once, config: webauthn });
 	}
 );

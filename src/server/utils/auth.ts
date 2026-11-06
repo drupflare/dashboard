@@ -1,3 +1,4 @@
+import type { CollegeDBClient } from '@earth-app/collegedb';
 import {
 	deleteCookie,
 	getCookie,
@@ -9,10 +10,11 @@ import {
 import { z } from 'zod';
 import { ApiError } from '../../shared/errors';
 import { nowUtc } from '../../shared/utils/time';
-import { ensureCollegeDB, type CollegeDBEnv } from '../db/collegedb';
+import { findApiKeyByLookup } from '../db/repos/api-key-lookup';
 import type { Principal } from '../domain/authorize';
+import type { ApiKeyFacts } from '../domain/scopes';
 import { parseApiKey, verifyApiKey } from '../services/api-keys';
-import { collegeDirectory, type AuthDeps, type TurnstileCheck } from '../services/auth';
+import type { AuthDeps, TurnstileCheck } from '../services/auth';
 import {
 	SESSION_COOKIE_NAME,
 	getSession,
@@ -42,6 +44,7 @@ const keyRecordSchema = z.object({
 	issuerId: z.string(),
 	orgId: z.string(),
 	keyHash: z.string(),
+	scopes: z.array(z.string()).optional(),
 	expiresAt: z.number().optional(),
 	revokedAt: z.number().optional()
 });
@@ -76,6 +79,26 @@ export function kvKeyIndex(kv: KvStore) {
 	};
 }
 
+// the production index: the lookup row and the key row on D1, so a key stops working the moment
+// the key row is revoked
+export function collegeKeyIndex(getDb: () => Promise<CollegeDBClient>): KeyIndex {
+	return {
+		async find(lookupId) {
+			const record = await findApiKeyByLookup(await getDb(), lookupId);
+			if (!record) return null;
+			return {
+				keyId: record.keyId,
+				issuerId: record.issuerId,
+				orgId: record.orgId,
+				keyHash: record.keyHash,
+				scopes: record.scopes,
+				...(record.expiresAt === null ? {} : { expiresAt: record.expiresAt }),
+				...(record.revokedAt === null ? {} : { revokedAt: record.revokedAt })
+			};
+		}
+	};
+}
+
 // #endregion
 
 // #region services
@@ -95,10 +118,6 @@ export function authServices(): AuthServices {
 	return installed;
 }
 
-const notBuilt = (what: string) => async (): Promise<never> => {
-	throw new ApiError('not_built', `${what} is not available yet`);
-};
-
 const SITEVERIFY = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
 export function siteverifyTurnstile(
@@ -117,24 +136,16 @@ export function siteverifyTurnstile(
 	};
 }
 
-// the boot plugin installs this once; mail stays closed until the email sending binding lands
-export function productionServices(
-	env: CollegeDBEnv,
-	secrets: { codeSecret?: string; turnstileSecret?: string }
-): AuthServices {
-	return {
-		kv: env.KV,
-		directory: collegeDirectory(() => ensureCollegeDB(env)),
-		mail: { send: notBuilt('Mail') },
-		turnstile: siteverifyTurnstile(secrets.turnstileSecret),
-		codeSecret: secrets.codeSecret ?? '',
-		keys: kvKeyIndex(env.KV)
-	};
-}
-
 // #endregion
 
 // #region resolver
+
+// what the key's own record says about it, kept beside the principal for the facts loader
+const keyFacts = new WeakMap<object, ApiKeyFacts>();
+
+export function keyFactsOf(principal: Principal): ApiKeyFacts | undefined {
+	return principal.kind === 'key' ? keyFacts.get(principal) : undefined;
+}
 
 async function resolveKey(services: AuthServices, token: string): Promise<Principal | null> {
 	const parsed = parseApiKey(token);
@@ -142,7 +153,15 @@ async function resolveKey(services: AuthServices, token: string): Promise<Princi
 	const record = await services.keys.find(parsed.lookupId);
 	if (!record) return null;
 	const checked = await verifyApiKey(token, record, nowUtc().toMillis());
-	return checked.ok ? { kind: 'key', keyId: record.keyId, issuerId: record.issuerId } : null;
+	if (!checked.ok) return null;
+	const principal: Principal = { kind: 'key', keyId: record.keyId, issuerId: record.issuerId };
+	keyFacts.set(principal, {
+		id: record.keyId,
+		scopes: record.scopes ?? [],
+		...(record.expiresAt === undefined ? {} : { expiresAt: record.expiresAt }),
+		...(record.revokedAt === undefined ? {} : { revokedAt: record.revokedAt })
+	});
+	return principal;
 }
 
 async function resolveSession(services: AuthServices, token: string): Promise<Principal | null> {

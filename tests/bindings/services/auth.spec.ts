@@ -1,7 +1,12 @@
 import type { CollegeDBClient } from '@earth-app/collegedb';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ensureCollegeDB } from '../../../src/server/db/collegedb';
-import { collegeDirectory, requestCode, verifyCode } from '../../../src/server/services/auth';
+import {
+	collegeDirectory,
+	createAccount,
+	requestCode,
+	verifyCode
+} from '../../../src/server/services/auth';
 import { CODE_RESEND_COOLDOWN_MS } from '../../../src/server/services/email-codes';
 import { harness as fakes, useClock } from '../../unit/server/services/auth-support';
 import { type Bindings, type OpenBindings, openBindings } from '../support';
@@ -83,17 +88,30 @@ describe('verifyCode against real D1', () => {
 		expect(await counts(email, first.user.id)).toEqual(ONE_OF_EACH);
 	});
 
-	it('leaves exactly one of each when parallel verifications race on a new address', async () => {
+	it('lets exactly one of five parallel verifications with one code sign in', async () => {
 		const { f, deps } = world();
 		const email = uniqueEmail();
 		await requestCode(deps, { email });
 		const code = f.mail.lastCode();
-		const results = await Promise.all(
+		const results = await Promise.allSettled(
 			Array.from({ length: 5 }, () => verifyCode(deps, { email, code }))
 		);
-		const ids = new Set(results.map((r) => r.user.id));
-		expect(ids.size).toBe(1);
-		expect(results.filter((r) => r.isNew)).toHaveLength(1);
-		expect(await counts(email, [...ids][0] as string)).toEqual(ONE_OF_EACH);
+		const signedIn = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+		expect(signedIn).toHaveLength(1);
+		expect(signedIn[0]!.isNew).toBe(true);
+		expect(await counts(email, signedIn[0]!.user.id)).toEqual(ONE_OF_EACH);
+	});
+
+	it('leaves exactly one of each when parallel sign-ups race on a new address', async () => {
+		const { deps } = world();
+		const email = uniqueEmail();
+		const made = await Promise.all(
+			Array.from({ length: 5 }, (_, i) =>
+				createAccount(deps.directory, email, i % 2 === 0 ? 'email-code' : 'github')
+			)
+		);
+		const winners = made.filter((user) => user !== null);
+		expect(winners).toHaveLength(1);
+		expect(await counts(email, winners[0]!.id)).toEqual(ONE_OF_EACH);
 	});
 });

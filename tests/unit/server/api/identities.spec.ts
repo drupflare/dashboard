@@ -112,7 +112,7 @@ const jar = (values: Record<string, string | undefined>) => ({
 
 async function existingUser(email = 'ada@example.com') {
 	const user = await h.directory.createUser(email);
-	await h.directory.createPersonalOrganization(user);
+	await h.directory.ensurePersonalOrganization(user);
 	return user;
 }
 

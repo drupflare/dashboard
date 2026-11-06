@@ -1,5 +1,36 @@
+import { getRequestHeader, getRequestWebStream, type H3Event } from 'h3';
 import type { z } from 'zod';
 import { ApiError } from '../../shared/errors';
+
+const tooLarge = () => new ApiError('validation', 'Request body is too large');
+
+// counts bytes as they arrive and stops reading at the first byte past the cap, so a body that is
+// larger than declared, or has no declared length, never sits in memory whole
+export async function readCappedBody(event: H3Event, maxBytes: number): Promise<string> {
+	if (Number(getRequestHeader(event, 'content-length') ?? 0) > maxBytes) throw tooLarge();
+	const stream = getRequestWebStream(event);
+	if (!stream) return '';
+	const reader = stream.getReader();
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	for (;;) {
+		const { done, value } = await reader.read();
+		if (done) break;
+		total += value.byteLength;
+		if (total > maxBytes) {
+			await reader.cancel();
+			throw tooLarge();
+		}
+		chunks.push(value);
+	}
+	const body = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		body.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return new TextDecoder().decode(body);
+}
 
 export function parseQuery<T extends z.ZodType>(
 	schema: T,
@@ -15,9 +46,7 @@ export function parseBody<T extends z.ZodType>(
 	text: string,
 	maxBytes: number
 ): z.infer<T> {
-	if (new TextEncoder().encode(text).byteLength > maxBytes) {
-		throw new ApiError('validation', 'Request body is too large');
-	}
+	if (new TextEncoder().encode(text).byteLength > maxBytes) throw tooLarge();
 	let json: unknown;
 	try {
 		json = JSON.parse(text);

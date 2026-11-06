@@ -305,6 +305,45 @@ describe('listSessions', () => {
 	});
 });
 
+describe('touch', () => {
+	it('refreshes both records with the new idle window and keeps them consistent', async () => {
+		const kv = memoryKv();
+		const { token } = await createSession(kv, { userId: 'user-1' });
+		clock.advance(SESSION_TOUCH_MS + 1000);
+		const touched = await getSession(kv, token);
+		expect(touched?.lastSeenAt).toBe(clock.now);
+		await expectConsistent(kv);
+		const ttls = kv.puts.slice(-2).map((put) => put.ttl);
+		expect(ttls[0]).toBe(ttls[1]);
+		expect(ttls[0]).toBe(Math.ceil(SESSION_IDLE_MS / 1000));
+	});
+
+	it('leaves no record behind when a revoke removed the reverse record mid-touch', async () => {
+		const kv = memoryKv();
+		const { token, session } = await createSession(kv, { userId: 'user-1' });
+		clock.advance(SESSION_TOUCH_MS + 1000);
+		const racing: MemoryKv = {
+			...kv,
+			async get(key) {
+				const value = await kv.get(key);
+				if (key.startsWith('session:token:')) await revokeSession(kv, 'user-1', session.id);
+				return value;
+			}
+		};
+		expect(await getSession(racing, token)).toBeNull();
+		expect(kv.keys()).toEqual([]);
+	});
+
+	it('writes nothing for a read inside the touch interval', async () => {
+		const kv = memoryKv();
+		const { token } = await createSession(kv, { userId: 'user-1' });
+		const writes = kv.puts.length;
+		clock.advance(SESSION_TOUCH_MS - 1);
+		await getSession(kv, token);
+		expect(kv.puts).toHaveLength(writes);
+	});
+});
+
 describe('device label and address', () => {
 	it.each([
 		[CHROME_MAC, 'Chrome on macOS'],

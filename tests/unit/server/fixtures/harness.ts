@@ -4,6 +4,7 @@ import {
 	setApiDeps,
 	type ApiDeps,
 	type AuditRecord,
+	type DenialRecord,
 	type Loaded,
 	type LoadInput,
 	type OwnerNotice
@@ -77,6 +78,7 @@ export interface Setup {
 // a world with two organisations, two sites and one member; every collaborator is a recording fake
 export function setup(options: Setup = {}) {
 	const audits: AuditRecord[] = [];
+	const denials: DenialRecord[] = [];
 	const notices: OwnerNotice[] = [];
 	const errors: unknown[] = [];
 	const loads: LoadInput[] = [];
@@ -134,6 +136,9 @@ export function setup(options: Setup = {}) {
 		audit: async (record) => {
 			audits.push(record);
 		},
+		auditDenied: async (record) => {
+			denials.push(record);
+		},
 		notifyOwners: async (notice) => {
 			notices.push(notice);
 		},
@@ -143,5 +148,5 @@ export function setup(options: Setup = {}) {
 		...options.deps
 	};
 	setApiDeps(deps);
-	return { deps, audits, notices, errors, loads, limits };
+	return { deps, audits, denials, notices, errors, loads, limits };
 }

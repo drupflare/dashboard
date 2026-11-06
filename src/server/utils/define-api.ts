@@ -14,7 +14,6 @@ import {
 	getRequestURL,
 	getRouterParams,
 	parseCookies,
-	readRawBody,
 	setResponseHeader,
 	setResponseHeaders,
 	setResponseStatus,
@@ -36,11 +35,15 @@ import { API_TAG_NAMES, type ApiTag } from '../api-tags';
 import {
 	authorize,
 	type Decision,
+	type DenyDetail,
+	type DenyReason,
 	type Facts,
 	type Principal,
 	type Resource,
 	type Via
 } from '../domain/authorize';
+import { sha256Hex } from '../services/crypto';
+import { truncateIp } from '../services/sessions';
 import { toApiError } from './errors';
 import {
 	checkIdempotency,
@@ -52,11 +55,12 @@ import {
 	ROUTE_CLASSES,
 	rateLimitHeaders,
 	slideWindow,
+	type LimitClass,
 	type RateConfig,
 	type RateDecision,
 	type RouteClass
 } from './rate-limit';
-import { parseBody, parseQuery } from './request';
+import { parseBody, parseQuery, readCappedBody } from './request';
 
 // #region meta
 
@@ -163,38 +167,77 @@ export interface OwnerNotice {
 	via: Via;
 }
 
+export type Limiter = (input: { routeClass: LimitClass; key: string }) => Promise<RateDecision>;
+
+export interface DenialRecord {
+	requestId: string;
+	principal: Principal;
+	action: Action;
+	reason: DenyReason;
+	detail?: DenyDetail;
+	resource: Resource;
+	method: string;
+	path: string;
+}
+
 export interface ApiDeps {
 	newRequestId(): string;
 	contractPolicy: SupportPolicy;
 	maxBodyBytes: number;
 	resolvePrincipal(credential: Credential): Promise<Principal | null>;
-	limit(input: { routeClass: RouteClass; key: string }): Promise<RateDecision>;
+	limit: Limiter;
 	load(input: LoadInput): Promise<Loaded | null>;
 	idempotency: IdempotencyStore;
 	audit(record: AuditRecord): Promise<void>;
+	// a refusal is recorded best effort; a failed write is logged and the refusal still goes out
+	auditDenied(record: DenialRecord): Promise<void>;
 	notifyOwners(notice: OwnerNotice): Promise<void>;
 	logError(error: unknown, requestId: string): void;
 }
 
-// placeholder numbers until the limiter object and plan limits land; only auth-code is from the plan
+// placeholder numbers until the limiter object and plan limits land; only auth-code is from the plan.
+// auth-code counts per address; auth-code-ip is the ceiling per network, high enough for a campus
 export const PLACEHOLDER_RATES: RateConfig = {
 	'auth-code': { limit: 5, windowMs: 10 * 60_000 },
+	'auth-code-ip': { limit: 300, windowMs: 10 * 60_000 },
 	read: { limit: 300, windowMs: 60_000 },
 	write: { limit: 60, windowMs: 60_000 },
 	heavy: { limit: 10, windowMs: 60_000 },
 	webhook: { limit: 1000, windowMs: 60_000 }
 };
 
-const MAX_TRACKED_KEYS = 10_000;
+export const MAX_TRACKED_KEYS = 10_000;
 
-function memoryLimiter(rates: RateConfig): ApiDeps['limit'] {
-	let windows = new Map<string, number[]>();
+type Tracked = { timestamps: number[]; full: boolean; staleAt: number };
+
+// frees one slot: the oldest key that is under its limit or whose window has passed, so a flood of
+// cheap keys never pushes out a key that is at its limit; if every key is at its limit, the oldest
+function evictOne(windows: Map<string, Tracked>, now: number): void {
+	let oldest: string | undefined;
+	for (const [id, entry] of windows) {
+		oldest ??= id;
+		if (!entry.full || entry.staleAt <= now) {
+			windows.delete(id);
+			return;
+		}
+	}
+	if (oldest !== undefined) windows.delete(oldest);
+}
+
+export function memoryLimiter(rates: RateConfig, maxKeys = MAX_TRACKED_KEYS): Limiter {
+	const windows = new Map<string, Tracked>();
 	return async ({ routeClass, key }) => {
 		const id = `${routeClass}|${key}`;
-		const decision = slideWindow(windows.get(id) ?? [], nowUtc().toMillis(), rates[routeClass]);
-		// bounded memory: a flood of distinct keys resets this isolate's counts
-		if (!windows.has(id) && windows.size >= MAX_TRACKED_KEYS) windows = new Map();
-		windows.set(id, decision.timestamps);
+		const now = nowUtc().toMillis();
+		const rule = rates[routeClass];
+		const decision = slideWindow(windows.get(id)?.timestamps ?? [], now, rule);
+		// a touched key moves to the newest end, so iteration order is oldest first
+		if (!windows.delete(id) && windows.size >= maxKeys) evictOne(windows, now);
+		windows.set(id, {
+			timestamps: decision.timestamps,
+			full: decision.remaining <= 0,
+			staleAt: (decision.timestamps.at(-1) ?? now) + rule.windowMs
+		});
 		return decision;
 	};
 }
@@ -213,10 +256,12 @@ export function productionDeps(): ApiDeps {
 		limit: memoryLimiter(PLACEHOLDER_RATES),
 		load: notBuilt('The facts loader'),
 		idempotency: {
-			get: notBuilt('The idempotency store'),
-			put: notBuilt('The idempotency store')
+			claim: notBuilt('The idempotency store'),
+			put: notBuilt('The idempotency store'),
+			release: notBuilt('The idempotency store')
 		},
 		audit: notBuilt('The audit writer'),
+		auditDenied: async () => undefined,
 		notifyOwners: notBuilt('Owner notification'),
 		logError: (error, requestId) => console.error(requestId, error)
 	};
@@ -374,20 +419,29 @@ async function authenticate(event: H3Event, deps: ApiDeps): Promise<Principal | 
 	return principal.kind === expected ? principal : null;
 }
 
+const IPV4 = /^(?:::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/i;
+
+// an ipv6 caller controls a whole /64, so the bucket is the prefix and not the address
+function addressBucket(address: string | undefined): string {
+	if (!address) return 'unknown';
+	const v4 = IPV4.exec(address)?.[1];
+	if (v4) return v4;
+	return address.includes(':') ? (truncateIp(address) ?? address) : address;
+}
+
 // cloudflare sets this header at the edge, so it is only trustworthy behind cloudflare
 function callerKey(event: H3Event, principal: Principal | null): string {
 	if (principal) return principalKey(principal);
-	return `ip:${getRequestHeader(event, 'cf-connecting-ip') ?? 'unknown'}`;
+	return `ip:${addressBucket(getRequestHeader(event, 'cf-connecting-ip'))}`;
 }
 
-async function throttle(
+async function limit(
 	event: H3Event,
-	meta: AnyApiMeta,
-	principal: Principal | null,
-	deps: ApiDeps
+	deps: ApiDeps,
+	routeClass: LimitClass,
+	key: string
 ): Promise<void> {
-	const key = callerKey(event, principal);
-	const decision = await deps.limit({ routeClass: meta.rateClass, key });
+	const decision = await deps.limit({ routeClass, key });
 	setResponseHeaders(event, rateLimitHeaders(decision));
 	if (!decision.allowed) {
 		throw new ApiError('rate_limited', 'Too many requests', {
@@ -396,14 +450,39 @@ async function throttle(
 	}
 }
 
+// an anonymous auth-code request counts against its network's ceiling here, and against its own
+// address once the body is read, so one campus address does not lock out the people behind it
+function throttle(
+	event: H3Event,
+	meta: AnyApiMeta,
+	principal: Principal | null,
+	deps: ApiDeps
+): Promise<void> {
+	const routeClass =
+		meta.rateClass === 'auth-code' && principal === null ? 'auth-code-ip' : meta.rateClass;
+	return limit(event, deps, routeClass, callerKey(event, principal));
+}
+
+// the auth-code class also counts per address: the email a body names, lower case and trimmed
+async function throttleAddress(
+	event: H3Event,
+	meta: AnyApiMeta,
+	principal: Principal | null,
+	body: unknown,
+	deps: ApiDeps
+): Promise<void> {
+	if (meta.rateClass !== 'auth-code' || principal !== null) return;
+	const email = (body as { email?: unknown } | null)?.email;
+	if (typeof email !== 'string') return;
+	await limit(event, deps, 'auth-code', `email:${await sha256Hex(email.trim().toLowerCase())}`);
+}
+
 async function readJsonBody(event: H3Event, maxBytes: number): Promise<string> {
 	const type = getRequestHeader(event, 'content-type')?.split(';')[0]?.trim().toLowerCase() ?? '';
 	if (type !== 'application/json' && !type.endsWith('+json')) {
 		throw new ApiError('validation', 'Content-Type must be application/json');
 	}
-	const length = Number(getRequestHeader(event, 'content-length') ?? 0);
-	if (length > maxBytes) throw new ApiError('validation', 'Request body is too large');
-	return (await readRawBody(event, 'utf8')) ?? '';
+	return readCappedBody(event, maxBytes);
 }
 
 function denial(decision: Extract<Decision, { allow: false }>): ApiError {
@@ -432,10 +511,12 @@ async function serve(
 	event: H3Event,
 	meta: AnyApiMeta,
 	handler: (ctx: ApiContext<never, never, never>) => unknown
-): Promise<string | null> {
+): Promise<string | null | Response> {
 	const deps = active;
 	const requestId = deps.newRequestId();
 	setResponseHeader(event, 'X-Request-Id', requestId);
+	// only a route marked public may be cached; a handler can still set its own value
+	if (meta.scope !== 'public') setResponseHeader(event, 'Cache-Control', 'no-store');
 	try {
 		return await pipeline(event, meta, handler, deps, requestId);
 	} catch (error) {
@@ -449,7 +530,7 @@ async function pipeline(
 	handler: (ctx: ApiContext<never, never, never>) => unknown,
 	deps: ApiDeps,
 	requestId: string
-): Promise<string | null> {
+): Promise<string | null | Response> {
 	const method = getMethod(event).toUpperCase();
 	const url = getRequestURL(event);
 	const isPublic = meta.scope === 'public';
@@ -461,8 +542,33 @@ async function pipeline(
 	if (!isPublic && principal === null) {
 		throw new ApiError('unauthenticated', 'Authentication is required');
 	}
+
+	// an authenticated refusal is written to the audit trail before it goes out
+	const refuse = async (
+		result: Extract<Decision, { allow: false }>,
+		resource: Resource
+	): Promise<never> => {
+		if (principal !== null) {
+			try {
+				await deps.auditDenied({
+					requestId,
+					principal,
+					action: meta.action as Action,
+					reason: result.reason,
+					...(result.detail ? { detail: result.detail } : {}),
+					resource,
+					method,
+					path: url.pathname
+				});
+			} catch (error) {
+				deps.logError(error, requestId);
+			}
+		}
+		throw denial(result);
+	};
+
 	if (principal?.kind === 'key' && isSessionOnly(meta.action as Action)) {
-		throw denial({ allow: false, reason: 'session_only' });
+		return refuse({ allow: false, reason: 'session_only' }, {});
 	}
 
 	const rawParams = getRouterParams(event, { decode: true });
@@ -479,6 +585,7 @@ async function pipeline(
 	if (meta.body) {
 		rawBody = await readJsonBody(event, deps.maxBodyBytes);
 		body = parseBody(meta.body, rawBody, deps.maxBodyBytes);
+		await throttleAddress(event, meta, principal, body, deps);
 	}
 
 	let resource: Resource = {};
@@ -494,7 +601,7 @@ async function pipeline(
 		if (loaded === null) throw new ApiError('not_found', 'Not found');
 		({ resource, facts } = loaded);
 		const result = authorize({ principal, action: meta.action, resource, facts });
-		if (!result.allow) throw denial(result);
+		if (!result.allow) return refuse(result, resource);
 		decision = result;
 	}
 
@@ -503,67 +610,90 @@ async function pipeline(
 	if (idempotencyKey !== undefined) {
 		storeKey = [callerKey(event, principal), resource.orgId ?? '-', idempotencyKey].join('|');
 		fingerprint = await requestFingerprint(method, url.pathname + url.search, rawBody);
-		const replay = await checkIdempotency(deps.idempotency, storeKey, fingerprint);
-		if (replay.kind === 'replay') {
+		const claim = await checkIdempotency(deps.idempotency, storeKey, fingerprint);
+		if (claim.kind === 'replay') {
 			setResponseHeader(event, 'Idempotency-Replayed', 'true');
-			return respond(event, replay.status, replay.body);
+			return respond(event, claim.status, claim.body);
 		}
-	}
-
-	if (decision !== null && principal !== null) {
-		const audited =
-			write ||
-			decision.via === 'delegation' ||
-			decision.via === 'support-grant' ||
-			decision.via === 'break-glass';
-		if (audited && decision.audit.length > 0) {
-			await deps.audit({
-				requestId,
-				principal,
-				action: meta.action as Action,
-				via: decision.via,
-				orgIds: decision.audit,
-				resource,
-				method,
-				path: url.pathname
-			});
-		}
-		if (decision.notifyOwners !== undefined) {
-			await deps.notifyOwners({
-				requestId,
-				orgId: decision.notifyOwners,
-				principal,
-				action: meta.action as Action,
-				via: decision.via
+		if (claim.kind === 'pending') {
+			setResponseHeader(event, 'Retry-After', 1);
+			throw new ApiError('conflict', 'A request with this Idempotency-Key is still running', {
+				reason: 'idempotency_pending',
+				retryAfterSeconds: 1
 			});
 		}
 	}
 
-	const status = meta.successStatus ?? 200;
-	const result = await handler({
-		event,
-		requestId,
-		principal,
-		params,
-		query,
-		body,
-		resource,
-		facts,
-		decision,
-		idempotencyKey
-	} as ApiContext<never, never, never>);
-	if (status !== 204 && result === undefined) {
-		throw new Error(`defineApi: handler for ${meta.action} returned nothing`);
-	}
-
-	if (storeKey !== undefined) {
-		try {
-			await deps.idempotency.put(storeKey, { fingerprint, status, body: result ?? null });
-		} catch (error) {
-			deps.logError(error, requestId);
+	try {
+		if (decision !== null && principal !== null) {
+			const audited =
+				write ||
+				decision.via === 'delegation' ||
+				decision.via === 'support-grant' ||
+				decision.via === 'break-glass';
+			if (audited && decision.audit.length > 0) {
+				await deps.audit({
+					requestId,
+					principal,
+					action: meta.action as Action,
+					via: decision.via,
+					orgIds: decision.audit,
+					resource,
+					method,
+					path: url.pathname
+				});
+			}
+			if (decision.notifyOwners !== undefined) {
+				await deps.notifyOwners({
+					requestId,
+					orgId: decision.notifyOwners,
+					principal,
+					action: meta.action as Action,
+					via: decision.via
+				});
+			}
 		}
+
+		const status = meta.successStatus ?? 200;
+		const result = await handler({
+			event,
+			requestId,
+			principal,
+			params,
+			query,
+			body,
+			resource,
+			facts,
+			decision,
+			idempotencyKey
+		} as ApiContext<never, never, never>);
+		if (result instanceof Response) {
+			if (storeKey !== undefined) {
+				throw new Error('defineApi: a raw response cannot be stored for replay');
+			}
+			return result;
+		}
+		if (status !== 204 && result === undefined) {
+			throw new Error(`defineApi: handler for ${meta.action} returned nothing`);
+		}
+
+		if (storeKey !== undefined) {
+			try {
+				await deps.idempotency.put(storeKey, { fingerprint, status, body: result ?? null });
+			} catch (error) {
+				deps.logError(error, requestId);
+			}
+		}
+		return respond(event, status, result);
+	} catch (error) {
+		// the claim is ours, so a failed request frees the key for a retry
+		if (storeKey !== undefined) {
+			await deps.idempotency.release(storeKey).catch((releaseError: unknown) => {
+				deps.logError(releaseError, requestId);
+			});
+		}
+		throw error;
 	}
-	return respond(event, status, result);
 }
 
 // #endregion

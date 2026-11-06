@@ -4,8 +4,13 @@ import type { User } from '../../../../src/server/db/repos/identity';
 import type { Member, Organization } from '../../../../src/server/db/repos/organization';
 import type { AuditInput } from '../../../../src/server/services/audit';
 import type { AuthDeps, Directory } from '../../../../src/server/services/auth';
-import type { MailSender, MailTemplate } from '../../../../src/server/services/email-codes';
+import type {
+	AttemptStore,
+	MailSender,
+	MailTemplate
+} from '../../../../src/server/services/email-codes';
 import type { KvStore } from '../../../../src/server/services/sessions';
+import type { OnceStore } from '../../../../src/server/services/single-use';
 import { nowUtc, setClock } from '../../../../src/shared/utils/time';
 
 export const T0 = 1_800_000_000_000;
@@ -86,6 +91,84 @@ export function memoryKv(): MemoryKv {
 	};
 }
 
+export interface MemoryOnce extends OnceStore {
+	dump(): Record<string, string>;
+	keys(): string[];
+	puts: { key: string; expiresAt: number }[];
+}
+
+// take and takeIf read and delete in one synchronous step, as the d1 statement does
+export function memoryOnce(): MemoryOnce {
+	const rows = new Map<string, { value: string; expiresAt: number }>();
+	const puts: MemoryOnce['puts'] = [];
+	const liveRows = () => {
+		const now = nowUtc().toMillis();
+		return [...rows].filter(([, row]) => row.expiresAt > now);
+	};
+	return {
+		puts,
+		async put(key, value, expiresAt) {
+			await tick();
+			puts.push({ key, expiresAt });
+			rows.set(key, { value, expiresAt });
+		},
+		async get(key, now) {
+			await tick();
+			const row = rows.get(key);
+			return row && row.expiresAt > now ? row.value : null;
+		},
+		async take(key, now) {
+			await tick();
+			const row = rows.get(key);
+			rows.delete(key);
+			return row && row.expiresAt > now ? row.value : null;
+		},
+		async takeIf(key, value, now) {
+			await tick();
+			const row = rows.get(key);
+			if (!row || row.expiresAt <= now || row.value !== value) return false;
+			rows.delete(key);
+			return true;
+		},
+		dump() {
+			return Object.fromEntries(liveRows().map(([key, row]) => [key, row.value]));
+		},
+		keys() {
+			return liveRows().map(([key]) => key);
+		}
+	};
+}
+
+export interface MemoryAttempts extends AttemptStore {
+	granted: { key: string; attempts: number }[];
+}
+
+// check and count run in one synchronous step, as the d1 statement does
+export function memoryAttempts(): MemoryAttempts {
+	const rows = new Map<string, { attempts: number; windowStart: number }>();
+	const granted: MemoryAttempts['granted'] = [];
+	return {
+		granted,
+		async claim(key, now, rule) {
+			await tick();
+			const row = rows.get(key);
+			if (!row || row.windowStart <= now - rule.windowMs) {
+				rows.set(key, { attempts: 1, windowStart: now });
+				granted.push({ key, attempts: 1 });
+				return 1;
+			}
+			if (row.attempts >= rule.limit) return null;
+			row.attempts += 1;
+			granted.push({ key, attempts: row.attempts });
+			return row.attempts;
+		},
+		async clear(key) {
+			await tick();
+			rows.delete(key);
+		}
+	};
+}
+
 export interface MemoryDirectory extends Directory {
 	users: User[];
 	orgs: Organization[];
@@ -130,8 +213,10 @@ export function memoryDirectory(): MemoryDirectory {
 			users.push(user);
 			return user;
 		},
-		async createPersonalOrganization(user) {
+		async ensurePersonalOrganization(user) {
 			await tick();
+			const found = orgs.find((org) => org.personal && org.createdBy === user.id);
+			if (found) return { org: found, created: false };
 			const now = nowUtc().toMillis();
 			const org: Organization = {
 				id: `org-${++counter}`,
@@ -150,7 +235,7 @@ export function memoryDirectory(): MemoryDirectory {
 				createdAt: now,
 				updatedAt: now
 			});
-			return org;
+			return { org, created: true };
 		},
 		async appendAudit(organizationId, input) {
 			await tick();
@@ -192,6 +277,8 @@ export const SECRET = 'test-code-secret';
 
 export interface Harness extends AuthDeps {
 	kv: MemoryKv;
+	once: MemoryOnce;
+	attempts: MemoryAttempts;
 	directory: MemoryDirectory;
 	mail: MemoryMail;
 	turnstileCalls: { token: string | undefined; ip: string | undefined }[];
@@ -203,6 +290,8 @@ export function harness(): Harness {
 	const turnstileCalls: Harness['turnstileCalls'] = [];
 	const h: Harness = {
 		kv: memoryKv(),
+		once: memoryOnce(),
+		attempts: memoryAttempts(),
 		directory: memoryDirectory(),
 		mail: memoryMail(),
 		codeSecret: SECRET,

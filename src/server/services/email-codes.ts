@@ -1,8 +1,10 @@
+import type { CollegeDBClient } from '@earth-app/collegedb';
 import { z } from 'zod';
+import { claimAttempt, clearAttempts } from '../db/repos/code-attempts';
 import { normalizeEmail } from '../db/repos/identity';
 import { slideWindow, type RateRule } from '../utils/rate-limit';
-import { hmacSha256Hex, sha256Hex, timingSafeEqual } from './crypto';
-import type { KvStore } from './sessions';
+import { hmacSha256Hex, sha256Hex } from './crypto';
+import type { OnceStore } from './single-use';
 
 // #region constants
 
@@ -11,13 +13,39 @@ export const CODE_TTL_MS = 10 * 60 * 1000;
 export const CODE_MAX_ATTEMPTS = 5;
 export const CODE_RESEND_COOLDOWN_MS = 60 * 1000;
 export const CODE_SEND_RATE: RateRule = { limit: 5, windowMs: 10 * 60 * 1000 };
+// guesses per address, longer than a code lives so a fresh code does not reset the count
+export const CODE_ATTEMPT_RATE: RateRule = {
+	limit: CODE_MAX_ATTEMPTS,
+	windowMs: 15 * 60 * 1000
+};
 
-const RECORD_TTL_MS = Math.max(CODE_TTL_MS, CODE_SEND_RATE.windowMs);
-const MIN_KV_TTL_SECONDS = 60;
+const SENDS_TTL_MS = Math.max(CODE_TTL_MS, CODE_SEND_RATE.windowMs);
 const CODE_SPACE = 10 ** CODE_LENGTH;
 // the largest multiple of the code space below 2^32, so every code is equally likely
 const SAMPLE_LIMIT = Math.floor(2 ** 32 / CODE_SPACE) * CODE_SPACE;
-const NO_RECORD_HASH = '0'.repeat(64);
+const NO_RECORD_ATTEMPTS = 'code-attempts:none';
+
+// #endregion
+
+// #region attempts
+
+// claim counts one guess and returns the new count, or null once the allowance is spent; an
+// implementation must make the check and the count one atomic step
+export interface AttemptStore {
+	claim(key: string, now: number, rule: RateRule): Promise<number | null>;
+	clear(key: string): Promise<void>;
+}
+
+export function collegeAttemptStore(getDb: () => Promise<CollegeDBClient>): AttemptStore {
+	return {
+		async claim(key, now, rule) {
+			return claimAttempt(await getDb(), key, now, rule);
+		},
+		async clear(key) {
+			await clearAttempts(await getDb(), key);
+		}
+	};
+}
 
 // #endregion
 
@@ -33,36 +61,46 @@ export interface MailSender {
 	send(to: string, template: MailTemplate): Promise<void>;
 }
 
+// the development sender; it prints the code, so nothing selects it where logs are shared
+export function consoleMailSender(write: (line: string) => void = console.info): MailSender {
+	return {
+		async send(to, template) {
+			write(
+				`[dev mail] ${template.kind} to ${to}: ${template.code} (${template.expiresInMinutes} min)`
+			);
+		}
+	};
+}
+
 // #endregion
 
 // #region records
 
-const recordSchema = z.object({
-	hash: z.string(),
-	expiresAt: z.number(),
-	attempts: z.number(),
-	sentAt: z.number(),
-	sends: z.array(z.number())
-});
+// the hash is the single-use row's value; the send history is its own row
+const sendsSchema = z.object({ sentAt: z.number(), sends: z.array(z.number()) });
 
-type CodeRecord = z.infer<typeof recordSchema>;
+type SendHistory = z.infer<typeof sendsSchema>;
 
-function parseRecord(raw: string | null): CodeRecord | null {
+function parseSends(raw: string | null): SendHistory | null {
 	if (raw === null) return null;
 	try {
-		const parsed = recordSchema.safeParse(JSON.parse(raw));
+		const parsed = sendsSchema.safeParse(JSON.parse(raw));
 		return parsed.success ? parsed.data : null;
 	} catch {
 		return null;
 	}
 }
 
-async function recordKey(email: string): Promise<string> {
+async function codeKey(email: string): Promise<string> {
 	return `code:${await sha256Hex(email)}`;
 }
 
-function ttlSeconds(record: CodeRecord, now: number): number {
-	return Math.max(MIN_KV_TTL_SECONDS, Math.ceil((record.sentAt + RECORD_TTL_MS - now) / 1000));
+async function sendsKey(email: string): Promise<string> {
+	return `code-sends:${await sha256Hex(email)}`;
+}
+
+async function attemptKey(email: string): Promise<string> {
+	return `code-attempts:${await sha256Hex(email)}`;
 }
 
 // the secret keys the hash, so a copy of the store cannot be searched for the million codes
@@ -87,15 +125,15 @@ export type IssueResult = { ok: true } | { ok: false; retryAfterSeconds: number 
 
 // the cooldown and the send rate hold for every email, known or not, so they reveal nothing
 export async function issueCode(
-	kv: KvStore,
+	once: OnceStore,
 	mail: MailSender,
 	secret: string,
 	rawEmail: string,
 	now: number
 ): Promise<IssueResult> {
 	const email = normalizeEmail(rawEmail);
-	const key = await recordKey(email);
-	const existing = parseRecord(await kv.get(key));
+	const [key, historyKey] = await Promise.all([codeKey(email), sendsKey(email)]);
+	const existing = parseSends(await once.get(historyKey, now));
 	if (existing && now - existing.sentAt < CODE_RESEND_COOLDOWN_MS) {
 		const wait = CODE_RESEND_COOLDOWN_MS - (now - existing.sentAt);
 		return { ok: false, retryAfterSeconds: Math.ceil(wait / 1000) };
@@ -104,14 +142,12 @@ export async function issueCode(
 	if (!rate.allowed) return { ok: false, retryAfterSeconds: rate.retryAfterSeconds };
 
 	const code = generateCode();
-	const record: CodeRecord = {
-		hash: await hashCode(secret, email, code),
-		expiresAt: now + CODE_TTL_MS,
-		attempts: 0,
-		sentAt: now,
-		sends: rate.timestamps
-	};
-	await kv.put(key, JSON.stringify(record), { expirationTtl: ttlSeconds(record, now) });
+	await once.put(key, await hashCode(secret, email, code), now + CODE_TTL_MS);
+	await once.put(
+		historyKey,
+		JSON.stringify({ sentAt: now, sends: rate.timestamps } satisfies SendHistory),
+		now + SENDS_TTL_MS
+	);
 	try {
 		await mail.send(email, {
 			kind: 'login-code',
@@ -119,32 +155,34 @@ export async function issueCode(
 			expiresInMinutes: CODE_TTL_MS / 60_000
 		});
 	} catch (error) {
-		await kv.delete(key);
+		await Promise.all([once.take(key, now), once.take(historyKey, now)]);
 		throw error;
 	}
 	return { ok: true };
 }
 
-// a missing, expired, locked or wrong code all return false, so a caller learns nothing more
+// a missing, expired, locked or wrong code all return false, so a caller learns nothing more.
+// Every guess claims an attempt first, and the code is taken by one conditional delete that
+// matches on the hash, so a wrong guess leaves it and two right guesses cannot both win
 export async function consumeCode(
-	kv: KvStore,
+	once: OnceStore,
+	attempts: AttemptStore,
 	secret: string,
 	rawEmail: string,
 	code: string,
 	now: number
 ): Promise<boolean> {
 	const email = normalizeEmail(rawEmail);
-	const key = await recordKey(email);
-	const record = parseRecord(await kv.get(key));
+	const key = await codeKey(email);
 	const candidate = await hashCode(secret, email, code);
-	const matches = timingSafeEqual(candidate, record?.hash ?? NO_RECORD_HASH);
-	if (!record || record.expiresAt <= now || record.attempts >= CODE_MAX_ATTEMPTS) return false;
-	if (!matches) {
-		const next = { ...record, attempts: record.attempts + 1 };
-		await kv.put(key, JSON.stringify(next), { expirationTtl: ttlSeconds(next, now) });
-		return false;
-	}
-	await kv.delete(key);
+	const live = (await once.get(key, now)) !== null;
+	// no live code: claim a shared slot so the work matches and no row is made per address
+	const slot = live ? await attemptKey(email) : NO_RECORD_ATTEMPTS;
+	const claimed = await attempts.claim(slot, now, CODE_ATTEMPT_RATE);
+	if (claimed === null) return false;
+	const taken = await once.takeIf(key, candidate, now);
+	if (!live || !taken) return false;
+	await attempts.clear(slot);
 	return true;
 }
 

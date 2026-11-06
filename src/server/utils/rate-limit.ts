@@ -2,9 +2,15 @@ export const ROUTE_CLASSES = ['auth-code', 'read', 'write', 'heavy', 'webhook'] 
 
 export type RouteClass = (typeof ROUTE_CLASSES)[number];
 
+// a route names one of the route classes; the limiter also keeps the address ceiling that sits
+// behind the auth-code class
+export const LIMIT_CLASSES = [...ROUTE_CLASSES, 'auth-code-ip'] as const;
+
+export type LimitClass = (typeof LIMIT_CLASSES)[number];
+
 export type RateRule = { limit: number; windowMs: number };
 
-export type RateConfig = Record<RouteClass, RateRule>;
+export type RateConfig = Record<LimitClass, RateRule>;
 
 export type RateDecision = {
 	allowed: boolean;

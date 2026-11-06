@@ -46,7 +46,7 @@ const profile = (
 
 async function existingUser(email = 'ada@example.com') {
 	const user = await h.directory.createUser(email);
-	await h.directory.createPersonalOrganization(user);
+	await h.directory.ensurePersonalOrganization(user);
 	return user;
 }
 
@@ -153,7 +153,7 @@ describe.each(OAUTH_PROVIDERS)('%s sign-in', (provider: OAuthProvider) => {
 		expect(h.store.identities).toEqual([]);
 		expect(h.directory.users).toHaveLength(1);
 		expect(sessionKeys()).toEqual([]);
-		expect(h.kv.keys().filter((name) => name.startsWith('link:'))).toEqual([]);
+		expect(h.once.keys().filter((name) => name.startsWith('link:'))).toEqual([]);
 	});
 
 	it('refuses an unverified email on a new address without creating an account', async () => {
@@ -199,6 +199,68 @@ describe('sign-up races', () => {
 		expect(h.directory.users).toHaveLength(1);
 		expect([a.status, b.status].sort()).toEqual(['link_required', 'signed_in']);
 		expect(h.store.identities).toHaveLength(1);
+	});
+});
+
+describe('provider sign-in and existing accounts', () => {
+	it.each(OAUTH_PROVIDERS)(
+		'%s never creates an account or claims one for an unverified address',
+		async (provider) => {
+			const owner = await existingUser();
+			const users = h.directory.users.length;
+			for (const email of ['ada@example.com', 'new@example.com']) {
+				await expectFailure(
+					signInWithProvider(h, provider, profile({ email, emailVerified: false })),
+					'forbidden'
+				);
+			}
+			expect(h.directory.users).toHaveLength(users);
+			expect(h.store.identities).toEqual([]);
+			expect(await listIdentities(h, owner.id)).toEqual([]);
+			expect(h.once.keys().filter((name) => name.startsWith('link:'))).toEqual([]);
+		}
+	);
+
+	it.each(OAUTH_PROVIDERS)(
+		'%s with the address of an account asks for a link and signs no one in',
+		async (provider) => {
+			await existingUser();
+			const result = await signInWithProvider(h, provider, profile());
+			expect(result.status).toBe('link_required');
+			expect(h.store.identities).toEqual([]);
+			expect(sessionKeys()).toEqual([]);
+		}
+	);
+
+	it('gives a known identity whose account has no organisation the missing one', async () => {
+		const user = await h.directory.createUser('ada@example.com');
+		await h.store.createIdentity({
+			userId: user.id,
+			provider: 'github',
+			providerSubject: '4242',
+			email: 'ada@example.com',
+			verified: true
+		});
+		const result = await signInWithProvider(h, 'github', profile());
+		expect(result.status).toBe('signed_in');
+		expect(h.directory.orgs).toHaveLength(1);
+		expect(h.directory.members).toHaveLength(1);
+		expect(h.directory.audits.map((a) => a.input.action)).toEqual(['account.repair']);
+	});
+
+	it('lets exactly one of two parallel confirmations of one pending link go through', async () => {
+		const owner = await existingUser();
+		const first = await signInWithProvider(h, 'github', profile());
+		if (first.status !== 'link_required') throw new Error('expected a link request');
+		const results = await Promise.allSettled([
+			confirmLink(h, { userId: owner.id, stepUpAt: clock.now, token: first.token }),
+			confirmLink(h, { userId: owner.id, stepUpAt: clock.now, token: first.token })
+		]);
+		expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+		expect(h.store.identities).toHaveLength(1);
+		expect(
+			h.directory.audits.filter((a) => a.input.action === 'account.identity.link')
+		).toHaveLength(1);
 	});
 });
 
@@ -586,7 +648,7 @@ describe('passkey management', () => {
 
 	it('signs in with a passkey and opens a session', async () => {
 		await addPasskey();
-		const options = await authenticationOptions({ kv: h.kv, config: h.webauthn });
+		const options = await authenticationOptions({ once: h.once, config: h.webauthn });
 		const result = await signInWithPasskey(h, await key.assert(options, userId), {
 			userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/120.0'
 		});
@@ -598,7 +660,7 @@ describe('passkey management', () => {
 
 	it('opens no session when the passkey is refused', async () => {
 		await addPasskey();
-		const options = await authenticationOptions({ kv: h.kv, config: h.webauthn });
+		const options = await authenticationOptions({ once: h.once, config: h.webauthn });
 		await expectFailure(
 			signInWithPasskey(h, await key.assert(options, userId, { counter: 0, flags: 0x01 })),
 			'unauthenticated'
@@ -609,7 +671,7 @@ describe('passkey management', () => {
 	it('refuses a passkey whose user no longer exists', async () => {
 		await addPasskey();
 		h.directory.users.length = 0;
-		const options = await authenticationOptions({ kv: h.kv, config: h.webauthn });
+		const options = await authenticationOptions({ once: h.once, config: h.webauthn });
 		await expectFailure(
 			signInWithPasskey(h, await key.assert(options, userId)),
 			'unauthenticated'
@@ -625,7 +687,7 @@ describe('wrapper calls', () => {
 
 	it('builds registration options for a user', async () => {
 		const options = await registrationOptions(
-			{ kv: h.kv, store: h.store, config: h.webauthn },
+			{ once: h.once, store: h.store, config: h.webauthn },
 			{ id: 'user-1', email: 'ada@example.com' }
 		);
 		expect(options.user.id.length).toBeGreaterThan(0);

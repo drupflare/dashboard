@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { ApiError } from '../../shared/errors';
 import { nowUtc } from '../../shared/utils/time';
 import { DuplicateRowError } from '../db/collegedb';
-import type { KvStore } from '../services/sessions';
+import type { OnceStore } from '../services/single-use';
 
 // #region types
 
@@ -47,7 +47,7 @@ export interface PasskeyStore {
 }
 
 export interface WebAuthnDeps {
-	kv: KvStore;
+	once: OnceStore;
 	store: PasskeyStore;
 	config: WebAuthnConfig;
 }
@@ -94,25 +94,20 @@ const DEFAULT_NAME = 'Passkey';
 
 export const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
-const KV_MIN_TTL_SECONDS = 60;
-
 const regKey = (userId: string) => `webauthn:reg:${userId}`;
 const authKey = (hash: string) => `webauthn:auth:${hash}`;
 
 const challengeSchema = z.object({ challenge: z.string(), createdAt: z.number() });
 
-async function putChallenge(kv: KvStore, key: string, challenge: string): Promise<void> {
-	const record = { challenge, createdAt: nowUtc().toMillis() };
-	await kv.put(key, JSON.stringify(record), {
-		expirationTtl: Math.max(KV_MIN_TTL_SECONDS, CHALLENGE_TTL_MS / 1000)
-	});
+async function putChallenge(once: OnceStore, key: string, challenge: string): Promise<void> {
+	const now = nowUtc().toMillis();
+	await once.put(key, JSON.stringify({ challenge, createdAt: now }), now + CHALLENGE_TTL_MS);
 }
 
-// the record goes before it is checked, so a challenge works for one attempt only
-async function takeChallenge(kv: KvStore, key: string): Promise<string | null> {
-	const raw = await kv.get(key);
+// one atomic take before the check, so a challenge works for one attempt only
+async function takeChallenge(once: OnceStore, key: string): Promise<string | null> {
+	const raw = await once.take(key, nowUtc().toMillis());
 	if (raw === null) return null;
-	await kv.delete(key);
 	try {
 		const parsed = challengeSchema.safeParse(JSON.parse(raw));
 		if (!parsed.success) return null;
@@ -152,7 +147,7 @@ export async function registrationOptions(
 		})),
 		authenticatorSelection: { residentKey: 'required', userVerification: 'required' }
 	});
-	await putChallenge(deps.kv, regKey(user.id), options.challenge);
+	await putChallenge(deps.once, regKey(user.id), options.challenge);
 	return options;
 }
 
@@ -164,7 +159,7 @@ export async function verifyRegistration(
 	response: RegistrationResponseJSON,
 	name: string | undefined
 ): Promise<PasskeyRecord> {
-	const challenge = await takeChallenge(deps.kv, regKey(user.id));
+	const challenge = await takeChallenge(deps.once, regKey(user.id));
 	if (challenge === null) throw registrationFailed();
 	let verified;
 	try {
@@ -210,13 +205,13 @@ const alreadyRegistered = () => new ApiError('conflict', 'This passkey is alread
 // #region authentication
 
 export async function authenticationOptions(
-	deps: Pick<WebAuthnDeps, 'kv' | 'config'>
+	deps: Pick<WebAuthnDeps, 'once' | 'config'>
 ): Promise<PublicKeyCredentialRequestOptionsJSON> {
 	const options = await generateAuthenticationOptions({
 		rpID: deps.config.rpId,
 		userVerification: 'required'
 	});
-	await putChallenge(deps.kv, authKey(await sha256Hex(options.challenge)), options.challenge);
+	await putChallenge(deps.once, authKey(await sha256Hex(options.challenge)), options.challenge);
 	return options;
 }
 
@@ -236,7 +231,7 @@ export async function verifyAuthentication(
 		result = await verifyAuthenticationResponse({
 			response,
 			expectedChallenge: async (challenge) =>
-				(await takeChallenge(deps.kv, authKey(await sha256Hex(challenge)))) === challenge,
+				(await takeChallenge(deps.once, authKey(await sha256Hex(challenge)))) === challenge,
 			expectedOrigin: deps.config.origin,
 			expectedRPID: deps.config.rpId,
 			requireUserVerification: true,

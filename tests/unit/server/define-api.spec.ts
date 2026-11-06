@@ -1,11 +1,14 @@
-import { defineEventHandler } from 'h3';
-import { afterEach, describe, expect, it } from 'vitest';
+import { defineEventHandler, setResponseHeader } from 'h3';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { errorEnvelope } from '../../../contracts/src/common';
 import { acceptDelegation, createDelegation } from '../../../src/server/domain/delegation';
+import { sha256Hex } from '../../../src/server/services/crypto';
 import {
+	PLACEHOLDER_RATES,
 	defineApi,
 	isApiHandler,
+	memoryLimiter,
 	productionDeps,
 	resetApiDeps,
 	setApiDeps,
@@ -23,6 +26,7 @@ import siteDelete from './fixtures/api/v1/sites/[id].delete';
 import siteGet from './fixtures/api/v1/sites/[id].get';
 import deployPost, { deploys } from './fixtures/api/v1/sites/[id]/deploys.post';
 import { SITES, asKey, asOtherUser, asUser, send, setup, type Reply } from './fixtures/harness';
+import { useClock } from './services/auth-support';
 import { thrownBy } from './utils/support';
 
 afterEach(() => {
@@ -523,7 +527,76 @@ describe('defineApi: rate limiting', () => {
 			headers: { 'cf-connecting-ip': '198.51.100.4' },
 			json: { email: 'a@example.test' }
 		});
-		expect(limits).toEqual([{ routeClass: 'auth-code', key: 'ip:198.51.100.4' }]);
+		expect(limits).toEqual([
+			{ routeClass: 'auth-code-ip', key: 'ip:198.51.100.4' },
+			{ routeClass: 'auth-code', key: `email:${await sha256Hex('a@example.test')}` }
+		]);
+	});
+
+	it('counts an address case insensitively, and never stores it in the key', async () => {
+		const { limits } = setup();
+		for (const email of ['A@Example.test', 'a@example.test']) {
+			await send(codePost, '/api/v1/auth/code', {
+				method: 'POST',
+				path: '/api/v1/auth/code',
+				headers: { 'cf-connecting-ip': '198.51.100.4' },
+				json: { email }
+			});
+		}
+		const keys = limits.filter((entry) => entry.routeClass === 'auth-code').map((e) => e.key);
+		expect(keys[0]).toBe(keys[1]);
+		expect(keys[0]).not.toContain('example');
+	});
+
+	it('lets two addresses behind one network address both proceed', async () => {
+		setApiDeps({ resolvePrincipal: async () => null });
+		const statuses: number[] = [];
+		for (let i = 0; i < 8; i++) {
+			const reply = await send(codePost, '/api/v1/auth/code', {
+				method: 'POST',
+				path: '/api/v1/auth/code',
+				headers: { 'cf-connecting-ip': '192.0.2.88' },
+				json: { email: `person-${i}@example.test` }
+			});
+			statuses.push(reply.status);
+		}
+		expect(statuses).toEqual(Array(8).fill(202));
+	});
+
+	it('stops one address asking from many networks', async () => {
+		setApiDeps({ resolvePrincipal: async () => null });
+		const statuses: number[] = [];
+		for (let i = 0; i < 6; i++) {
+			const reply = await send(codePost, '/api/v1/auth/code', {
+				method: 'POST',
+				path: '/api/v1/auth/code',
+				headers: { 'cf-connecting-ip': `192.0.2.${100 + i}` },
+				json: { email: 'one@example.test' }
+			});
+			statuses.push(reply.status);
+		}
+		expect(statuses).toEqual([202, 202, 202, 202, 202, 429]);
+	});
+
+	it('still stops a network that passes its ceiling, whatever the addresses', async () => {
+		setApiDeps({
+			resolvePrincipal: async () => null,
+			limit: memoryLimiter({
+				...PLACEHOLDER_RATES,
+				'auth-code-ip': { limit: 3, windowMs: 60_000 }
+			})
+		});
+		const statuses: number[] = [];
+		for (let i = 0; i < 5; i++) {
+			const reply = await send(codePost, '/api/v1/auth/code', {
+				method: 'POST',
+				path: '/api/v1/auth/code',
+				headers: { 'cf-connecting-ip': '192.0.2.89' },
+				json: { email: `walker-${i}@example.test` }
+			});
+			statuses.push(reply.status);
+		}
+		expect(statuses).toEqual([202, 202, 202, 429, 429]);
 	});
 
 	it('stops the sixth auth-code request from one address with the in-memory default limiter', async () => {
@@ -539,6 +612,125 @@ describe('defineApi: rate limiting', () => {
 			statuses.push(reply.status);
 		}
 		expect(statuses).toEqual([202, 202, 202, 202, 202, 429]);
+	});
+});
+
+describe('defineApi: limiter memory', () => {
+	const rates = {
+		...PLACEHOLDER_RATES,
+		read: { limit: 2, windowMs: 1000 },
+		heavy: { limit: 1, windowMs: 1000 }
+	};
+	const read = (key: string) => ({ routeClass: 'read' as const, key });
+	let clock: ReturnType<typeof useClock>;
+	beforeEach(() => {
+		clock = useClock();
+	});
+	afterEach(() => clock.stop());
+
+	it('keeps a key that is at its limit and drops one that is under it when the map is full', async () => {
+		const limit = memoryLimiter(rates, 2);
+		await limit(read('full'));
+		await limit(read('full'));
+		await limit(read('light'));
+		await limit(read('newcomer'));
+		expect((await limit(read('full'))).allowed).toBe(false);
+		expect((await limit(read('light'))).remaining).toBe(1);
+	});
+
+	it('drops the oldest key when every key is at its limit', async () => {
+		const limit = memoryLimiter(rates, 2);
+		for (const key of ['a', 'b']) {
+			await limit(read(key));
+			await limit(read(key));
+		}
+		await limit(read('c'));
+		expect((await limit(read('b'))).allowed).toBe(false);
+		expect((await limit(read('a'))).remaining).toBe(1);
+	});
+
+	it('counts a touched key as newer than a key that was not touched', async () => {
+		const limit = memoryLimiter(rates, 2);
+		for (const key of ['a', 'b']) {
+			await limit(read(key));
+			await limit(read(key));
+		}
+		await limit(read('a'));
+		await limit(read('c'));
+		expect((await limit(read('a'))).allowed).toBe(false);
+		expect((await limit(read('b'))).remaining).toBe(1);
+	});
+
+	it('drops a key whose window has passed before a key that is still at its limit', async () => {
+		const limit = memoryLimiter(rates, 2);
+		await limit(read('old'));
+		await limit(read('old'));
+		clock.advance(500);
+		await limit(read('live'));
+		await limit(read('live'));
+		clock.advance(600);
+		await limit(read('newcomer'));
+		expect((await limit(read('live'))).allowed).toBe(false);
+		expect((await limit(read('old'))).remaining).toBe(1);
+	});
+
+	it('keeps counts apart by route class', async () => {
+		const limit = memoryLimiter(rates, 10);
+		await limit({ routeClass: 'heavy', key: 'a' });
+		expect((await limit({ routeClass: 'heavy', key: 'a' })).allowed).toBe(false);
+		expect((await limit(read('a'))).allowed).toBe(true);
+	});
+});
+
+describe('defineApi: limiter keys', () => {
+	const keyFor = async (header: string | undefined) => {
+		const { limits } = setup();
+		await send(codePost, '/api/v1/auth/code', {
+			method: 'POST',
+			path: '/api/v1/auth/code',
+			headers: header === undefined ? {} : { 'cf-connecting-ip': header },
+			json: { email: 'a@example.test' }
+		});
+		return limits[0]!.key;
+	};
+
+	it('keys an ipv6 caller by its /64 in lower case', async () => {
+		expect(await keyFor('2001:DB8:1:2:ffff::9')).toBe('ip:2001:db8:1:2::/64');
+		expect(await keyFor('2001:db8:1:2:3:4:5:6')).toBe('ip:2001:db8:1:2::/64');
+		expect(await keyFor('::1')).toBe('ip:0:0:0:0::/64');
+	});
+
+	it('keys an ipv4-mapped caller by its ipv4 address', async () => {
+		expect(await keyFor('::ffff:198.51.100.7')).toBe('ip:198.51.100.7');
+		expect(await keyFor('198.51.100.7')).toBe('ip:198.51.100.7');
+	});
+
+	it('keeps an address it cannot read as it came, and names a missing one unknown', async () => {
+		expect(await keyFor('zz::1')).toBe('ip:zz::1');
+		expect(await keyFor('not-an-address')).toBe('ip:not-an-address');
+		expect(await keyFor(undefined)).toBe('ip:unknown');
+	});
+});
+
+describe('defineApi: cache directive', () => {
+	it('lets a handler replace the default no-store', async () => {
+		const route = defineApi({ ...base, scope: 'session', action: 'account.read' }, (ctx) => {
+			setResponseHeader(ctx.event, 'Cache-Control', 'private, max-age=60');
+			return {};
+		});
+		setup();
+		const reply = await send(route, '/x', { path: '/x', headers: asUser });
+		expect(reply.headers.get('cache-control')).toBe('private, max-age=60');
+	});
+
+	it('marks a failure on a protected route no-store', async () => {
+		setup({ role: null });
+		const reply = await send(siteGet, SITE_ROUTE, {
+			path: `/api/v1/sites/${SITE}`,
+			headers: asUser
+		});
+		expect(reply.status).toBe(403);
+		expect(reply.headers.get('cache-control')).toBe('no-store');
 	});
 });
 
@@ -596,13 +788,14 @@ describe('defineApi: idempotency', () => {
 			},
 			deps: {
 				idempotency: {
-					get: async (key) => {
+					claim: async (key) => {
 						seen.push(key);
-						return null;
+						return { kind: 'claimed' };
 					},
 					put: async (key) => {
 						seen.push(key);
-					}
+					},
+					release: async () => undefined
 				}
 			}
 		});
@@ -635,11 +828,12 @@ describe('defineApi: idempotency', () => {
 				}),
 			deps: {
 				idempotency: {
-					get: async (key) => {
+					claim: async (key) => {
 						seen.push(key);
-						return null;
+						return { kind: 'claimed' };
 					},
-					put: async () => undefined
+					put: async () => undefined,
+					release: async () => undefined
 				}
 			}
 		});
@@ -701,11 +895,12 @@ describe('defineApi: idempotency', () => {
 		const { audits } = setup({
 			deps: {
 				idempotency: {
-					get: async () => {
+					claim: async () => {
 						reads += 1;
-						return null;
+						return { kind: 'claimed' };
 					},
-					put: async () => undefined
+					put: async () => undefined,
+					release: async () => undefined
 				}
 			}
 		});
@@ -747,14 +942,108 @@ describe('defineApi: idempotency', () => {
 		expect((await call()).headers.get('idempotency-replayed')).toBe('true');
 	});
 
+	it('answers 409 with a retry hint while the first request still holds the key', async () => {
+		let release: () => void = () => undefined;
+		const held = new Promise<void>((resolve) => (release = resolve));
+		let started: () => void = () => undefined;
+		const running = new Promise<void>((resolve) => (started = resolve));
+		const slow = defineApi(
+			{
+				...base,
+				scope: 'site',
+				action: 'site.deploy',
+				tags: ['sites'],
+				rateClass: 'write',
+				params: z.object({ id: z.string() })
+			},
+			async () => {
+				started();
+				await held;
+				return { ok: true };
+			}
+		);
+		setup();
+		const init = {
+			method: 'POST',
+			path: `/api/v1/sites/${SITE}/deploys`,
+			headers: { ...asUser, 'idempotency-key': 'key-12345678' }
+		};
+		const first = send(slow, DEPLOY_ROUTE, init);
+		await running;
+		const second = await send(slow, DEPLOY_ROUTE, init);
+		expect(second.status).toBe(409);
+		expectEnvelope(second, 'conflict');
+		expect(second.json).toMatchObject({
+			details: { reason: 'idempotency_pending', retryAfterSeconds: 1 }
+		});
+		expect(second.headers.get('retry-after')).toBe('1');
+		release();
+		expect((await first).status).toBe(200);
+		expect((await send(slow, DEPLOY_ROUTE, init)).headers.get('idempotency-replayed')).toBe(
+			'true'
+		);
+	});
+
+	it('frees the key when the audit write fails before the handler runs', async () => {
+		let failAudit = true;
+		setup({
+			deps: {
+				audit: async () => {
+					if (failAudit) throw new Error('audit down');
+				}
+			}
+		});
+		const headers = { ...asUser, 'idempotency-key': 'key-12345678' };
+		expect((await deploy(headers)).status).toBe(500);
+		expect(deploys).toEqual([]);
+		failAudit = false;
+		expect((await deploy(headers)).status).toBe(202);
+		expect(deploys).toHaveLength(1);
+	});
+
+	it('logs a failed release and still answers with the original error', async () => {
+		const route = defineApi(
+			{
+				...base,
+				scope: 'site',
+				action: 'site.deploy',
+				tags: ['sites'],
+				rateClass: 'write',
+				params: z.object({ id: z.string() })
+			},
+			() => {
+				throw new ApiError('conflict', 'busy');
+			}
+		);
+		const { errors } = setup({
+			deps: {
+				idempotency: {
+					claim: async () => ({ kind: 'claimed' }),
+					put: async () => undefined,
+					release: async () => {
+						throw new Error('store down');
+					}
+				}
+			}
+		});
+		const reply = await send(route, DEPLOY_ROUTE, {
+			method: 'POST',
+			path: `/api/v1/sites/${SITE}/deploys`,
+			headers: { ...asUser, 'idempotency-key': 'key-12345678' }
+		});
+		expect(reply.status).toBe(409);
+		expect(errors).toHaveLength(1);
+	});
+
 	it('still answers when storing the result fails, and logs it', async () => {
 		const { errors } = setup({
 			deps: {
 				idempotency: {
-					get: async () => null,
+					claim: async () => ({ kind: 'claimed' }),
 					put: async () => {
 						throw new Error('kv down');
-					}
+					},
+					release: async () => undefined
 				}
 			}
 		});
@@ -872,6 +1161,90 @@ describe('defineApi: errors', () => {
 			expect(reply.json).toMatchObject({ details: expected });
 			expectEnvelope(reply, 'conflict');
 		}
+	});
+});
+
+describe('defineApi: denial audit', () => {
+	const deploy = (headers = asUser) =>
+		send(deployPost, DEPLOY_ROUTE, {
+			method: 'POST',
+			path: `/api/v1/sites/${SITE}/deploys`,
+			headers,
+			json: { ref: 'main' }
+		});
+
+	it('records a refusal with its reason, resource and request, and no secret', async () => {
+		const { denials } = setup({ role: 'viewer' });
+		const reply = await deploy({ ...asUser, cookie: 'session=token-a' });
+		expect(reply.status).toBe(403);
+		expect(denials).toEqual([
+			{
+				requestId: 'req_test1',
+				principal: { kind: 'user', userId: 'user-1' },
+				action: 'site.deploy',
+				reason: 'forbidden',
+				resource: { orgId: ORG, siteId: SITE, departmentId: 'dept-1' },
+				method: 'POST',
+				path: `/api/v1/sites/${SITE}/deploys`
+			}
+		]);
+		expect(JSON.stringify(denials)).not.toContain('token-a');
+	});
+
+	it('records the rule that stopped a request that needed a fresh sign-in', async () => {
+		const { denials } = setup({ facts: () => facts({ ...member('owner') }) });
+		const reply = await send(siteDelete, SITE_ROUTE, {
+			method: 'DELETE',
+			path: `/api/v1/sites/${SITE}`,
+			headers: asUser
+		});
+		expect(reply.status).toBe(403);
+		expect(denials[0]).toMatchObject({
+			reason: 'step_up_required',
+			detail: { policy: 'built-in', rule: 'step-up' }
+		});
+	});
+
+	it('records a key refused on a session-only action, with no organisation', async () => {
+		const { denials } = setup();
+		const reply = await send(
+			defineApi(
+				{ ...base, scope: 'session', action: 'account.security.manage', tags: ['me'] },
+				() => ({})
+			),
+			'/api/v1/me/security',
+			{ path: '/api/v1/me/security', headers: asKey }
+		);
+		expect(reply.status).toBe(403);
+		expect(denials).toHaveLength(1);
+		expect(denials[0]).toMatchObject({
+			principal: { kind: 'key', keyId: 'key-1' },
+			reason: 'session_only',
+			resource: {}
+		});
+	});
+
+	it('writes nothing for an allowed request, an unknown resource or an unauthenticated one', async () => {
+		const { denials } = setup();
+		await send(siteGet, SITE_ROUTE, { path: `/api/v1/sites/${SITE}`, headers: asUser });
+		await send(siteGet, SITE_ROUTE, { path: '/api/v1/sites/site-9', headers: asUser });
+		await send(siteGet, SITE_ROUTE, { path: `/api/v1/sites/${SITE}` });
+		expect(denials).toEqual([]);
+	});
+
+	it('still answers the refusal when the audit writer fails, and logs the failure', async () => {
+		const { errors } = setup({
+			role: 'viewer',
+			deps: {
+				auditDenied: async () => {
+					throw new Error('audit store is down');
+				}
+			}
+		});
+		const reply = await deploy();
+		expect(reply.status).toBe(403);
+		expectEnvelope(reply, 'forbidden');
+		expect(errors.map((error) => (error as Error).message)).toEqual(['audit store is down']);
 	});
 });
 
@@ -1066,8 +1439,9 @@ describe('defineApi: production defaults', () => {
 					action: 'account.read',
 					params: {}
 				}),
-			() => deps.idempotency.get('k'),
+			() => deps.idempotency.claim('k', 'f'),
 			() => deps.idempotency.put('k', { fingerprint: 'f', status: 200, body: null }),
+			() => deps.idempotency.release('k'),
 			() => deps.audit({} as never),
 			() => deps.notifyOwners({} as never)
 		]) {
