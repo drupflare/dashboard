@@ -1,0 +1,94 @@
+{
+	"name": "drupflare-engine",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": { "enabled": true },
+	"d1_databases": [{ "binding": "DB", "database_name": "drupflare-dashboard-db" }],
+	"kv_namespaces": [{ "binding": "KV" }, { "binding": "HOSTS_KV" }],
+	"r2_buckets": [{ "binding": "BLOB", "bucket_name": "drupflare-dashboard-blob" }],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "SITE_LEASE", "class_name": "SiteLease" },
+			{ "name": "SITE_AUTH", "class_name": "SiteAuth", "script_name": "drupflare-dispatch" },
+			{ "name": "NAMES", "class_name": "Names", "script_name": "drupflare-dispatch" }
+		]
+	},
+	"workflows": [
+		{ "name": "site-create", "binding": "SITE_CREATE", "class_name": "SiteCreate" },
+		{ "name": "site-delete", "binding": "SITE_DELETE", "class_name": "SiteDelete" },
+		{ "name": "site-purge", "binding": "SITE_PURGE", "class_name": "SitePurge" },
+		{ "name": "backup-create", "binding": "BACKUP_CREATE", "class_name": "BackupCreate" },
+		{ "name": "backup-restore", "binding": "BACKUP_RESTORE", "class_name": "BackupRestore" }
+	],
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] }],
+	"vars": {
+		"DISPATCH_NAMESPACE": "drupflare-prod",
+		"LEASE_TTL_MS": "600000",
+		"ASSET_CHUNK_BYTES": "8388608",
+		"LIMIT_MODULE_BYTES": "67108864",
+		"LIMIT_TOTAL_BYTES": "67108864",
+		"LIMIT_ASSET_BYTES": "26214400",
+		"LIMIT_ASSETS": "20000",
+		"SITE_TIMEOUT_MS": "60000",
+		"PENDING_SECRET_TTL_MS": "86400000"
+	},
+	"env": {
+		"stage": {
+			"name": "drupflare-engine-stage",
+			"d1_databases": [{ "binding": "DB", "database_name": "drupflare-dashboard-db-stage" }],
+			"kv_namespaces": [{ "binding": "KV" }, { "binding": "HOSTS_KV" }],
+			"r2_buckets": [{ "binding": "BLOB", "bucket_name": "drupflare-dashboard-blob-stage" }],
+			"durable_objects": {
+				"bindings": [
+					{ "name": "SITE_LEASE", "class_name": "SiteLease" },
+					{
+						"name": "SITE_AUTH",
+						"class_name": "SiteAuth",
+						"script_name": "drupflare-dispatch-stage"
+					},
+					{
+						"name": "NAMES",
+						"class_name": "Names",
+						"script_name": "drupflare-dispatch-stage"
+					}
+				]
+			},
+			"workflows": [
+				{
+					"name": "site-create-stage",
+					"binding": "SITE_CREATE",
+					"class_name": "SiteCreate"
+				},
+				{
+					"name": "site-delete-stage",
+					"binding": "SITE_DELETE",
+					"class_name": "SiteDelete"
+				},
+				{ "name": "site-purge-stage", "binding": "SITE_PURGE", "class_name": "SitePurge" },
+				{
+					"name": "backup-create-stage",
+					"binding": "BACKUP_CREATE",
+					"class_name": "BackupCreate"
+				},
+				{
+					"name": "backup-restore-stage",
+					"binding": "BACKUP_RESTORE",
+					"class_name": "BackupRestore"
+				}
+			],
+			"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] }],
+			"vars": {
+				"DISPATCH_NAMESPACE": "drupflare-stage",
+				"LEASE_TTL_MS": "600000",
+				"ASSET_CHUNK_BYTES": "8388608",
+				"LIMIT_MODULE_BYTES": "67108864",
+				"LIMIT_TOTAL_BYTES": "67108864",
+				"LIMIT_ASSET_BYTES": "26214400",
+				"LIMIT_ASSETS": "20000",
+				"SITE_TIMEOUT_MS": "60000",
+				"PENDING_SECRET_TTL_MS": "86400000"
+			}
+		}
+	}
+}
