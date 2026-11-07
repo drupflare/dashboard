@@ -1,6 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import type { Operation } from '@contracts/operations';
-import type { SiteCategory, SiteConfig } from '@contracts/sites';
+import type { SiteCategory, SiteConfig, SitePlane } from '@contracts/sites';
 import type { ResourceKind } from '../provision-plan';
 import { OPEN_STATUSES, OperationError, resolveIdempotent, type OperationStep } from './state';
 
@@ -37,6 +37,16 @@ export type SiteRecord = {
 
 export type SiteRowState = 'active' | 'suspended' | 'tombstoned' | 'purge-eligible' | 'deleted';
 
+// a create that failed and whose site never became ready; the account is null until activation
+export interface StrandedCreateRow {
+	operationId: string;
+	siteId: string;
+	accountId: string | null;
+	plane: SitePlane;
+	config: SiteConfig;
+	hostname: string | null;
+}
+
 export interface OperationStore {
 	begin(record: NewOperationRecord): Promise<{ operation: Operation; created: boolean }>;
 	get(id: string): Promise<Operation | null>;
@@ -51,6 +61,7 @@ export interface OperationStore {
 	activateSite(site: SiteRecord, now: number): Promise<void>;
 	setSiteState(siteId: string, state: SiteRowState, now: number): Promise<void>;
 	siteState(siteId: string): Promise<SiteRowState | null>;
+	strandedCreates(failedBefore: number, limit: number): Promise<StrandedCreateRow[]>;
 }
 
 export class StaleWriteError extends OperationError {
@@ -445,5 +456,35 @@ export class D1OperationStore implements OperationStore {
 			.bind(siteId)
 			.first<{ state: SiteRowState }>();
 		return row === null ? null : row.state;
+	}
+
+	// oldest first, so a backlog clears in the order it formed
+	async strandedCreates(failedBefore: number, limit: number): Promise<StrandedCreateRow[]> {
+		const { results } = await this.db
+			.prepare(
+				`SELECT o.id AS operation_id, s.id AS site_id, s.account_id, s.plane, s.config,
+				 s.primary_hostname FROM operations o
+				 JOIN sites s ON s.id = json_extract(o.target_ids, '$[0]')
+				 WHERE o.type = 'site.create' AND o.status = 'failed' AND o.updated_at < ?
+				 AND s.ready_at IS NULL AND s.state <> 'deleted'
+				 ORDER BY o.updated_at LIMIT ?`
+			)
+			.bind(failedBefore, limit)
+			.all<{
+				operation_id: string;
+				site_id: string;
+				account_id: string | null;
+				plane: SitePlane;
+				config: SiteConfig;
+				primary_hostname: string | null;
+			}>();
+		return results.map((row) => ({
+			operationId: row.operation_id,
+			siteId: row.site_id,
+			accountId: row.account_id,
+			plane: row.plane,
+			config: row.config,
+			hostname: row.primary_hostname
+		}));
 	}
 }

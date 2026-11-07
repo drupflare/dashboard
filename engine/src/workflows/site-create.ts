@@ -1,4 +1,4 @@
-import { canonicalJson } from '@contracts/common';
+import { canonicalJson, sha256Hex, toBase64Url } from '@contracts/common';
 import type { Plan } from '@contracts/operations';
 import type { AuthorityState, RiskClass } from '@contracts/site-auth';
 import {
@@ -392,9 +392,11 @@ async function firstRun(ctx: Ctx, input: SiteCreateInput, call: SiteCall): Promi
 	const { reads } = call;
 	return runStep(ctx, 'first-run', 'first-run', async () => {
 		await fenced(ctx);
+		let keptPending: string | null = null;
 		if (reads !== undefined) {
 			refuseSuppliedPassword(call.body, reads);
 			const kept = await custody.sealed(input.site.id);
+			keptPending = kept.pendingSecretId;
 			const sealed =
 				reads.ownerToken === undefined
 					? kept.pendingSecretId !== null
@@ -402,6 +404,9 @@ async function firstRun(ctx: Ctx, input: SiteCreateInput, call: SiteCall): Promi
 			if (sealed) return { status: null, ...kept };
 		}
 		const { status, secrets } = await site.firstRun(input.hostname, call);
+		if (status === 409 && reads?.ownerToken !== undefined) {
+			return recoverClaim(ctx, input, keptPending);
+		}
 		const ok =
 			call.expectStatus === undefined
 				? status >= 200 && status < 300
@@ -438,6 +443,50 @@ async function firstRun(ctx: Ctx, input: SiteCreateInput, call: SiteCall): Promi
 	});
 }
 
+// The claim is one-shot: the site answers 409 once an earlier call ran it. That call was ours and its
+// answer was lost (the engine was stopped mid-call), since nothing else knows the hostname yet. The
+// owner token comes back through the site's own KV, by writing the proof record the worker
+// documents and posting its nonce. The admin password was shown once; one an earlier run sealed is
+// kept, and otherwise it is gone, the operation says so, and the person resets it from the site's
+// sign-in page.
+async function recoverClaim(
+	ctx: Ctx,
+	input: SiteCreateInput,
+	keptPending: string | null
+): Promise<FirstRunSealed> {
+	const { custody, kv, ledger, site, now } = ctx.deps;
+	const row = (await ledger.live(input.site.id)).find((entry) => entry.binding === 'CONFIG_KV');
+	if (row === undefined || row.providerId === null) {
+		throw new PermanentError('recover_no_kv', 'the site has no CONFIG_KV to prove access with');
+	}
+	const nonce = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+	const key = `recover:${input.hostname}:${await sha256Hex(nonce)}`;
+	await kv.put(
+		row.providerId,
+		key,
+		JSON.stringify({ host: input.hostname, exp: now() + RECOVER_PROOF_MS })
+	);
+	try {
+		const { status, ownerToken } = await site.recoverOwnerToken(input.hostname, nonce);
+		// KV is eventually consistent, so a record that has not arrived yet is worth another try
+		if (status === 404) throw new SiteCheckError('the owner token recovery', status, '200');
+		if (status !== 200 || ownerToken === null) {
+			throw new PermanentError(
+				'recover_refused',
+				`the site answered ${status} to the owner token recovery`
+			);
+		}
+		const ownerTokenId = await sealing('the owner token', () =>
+			custody.sealOwnerToken(input.site.id, ownerToken)
+		);
+		return { status: 409, ownerTokenId, pendingSecretId: keptPending };
+	} finally {
+		await kv.delete(row.providerId, key).catch(() => undefined);
+	}
+}
+
+// the worker refuses a proof record more than two minutes ahead
+const RECOVER_PROOF_MS = 60_000;
 // the owner token is opened from custody for this one call and is not kept anywhere else
 async function probeSite(
 	ctx: Ctx,
@@ -568,6 +617,21 @@ function rollbackActions(
 			() => rollbackRow(deps, claimOf(ctx, input), (row) => row.binding === resource.binding)
 		]);
 	}
+	// whatever this operation recorded and the plan did not name still goes with it
+	const planned = new Set(resources.rollback.map((resource) => resource.binding));
+	actions.push([
+		'recorded',
+		async () => {
+			const claim = claimOf(ctx, input);
+			for (const row of [...(await deps.ledger.live(siteId))].reverse()) {
+				const named =
+					planned.has(row.binding) || row.kind === 'script' || row.kind === 'route';
+				if (!named && row.createdByOperation === ctx.operationId) {
+					await rollbackRow(deps, claim, (candidate) => candidate.id === row.id);
+				}
+			}
+		}
+	]);
 	actions.push(['name', async () => void (await deps.names.release(input.subdomain, siteId, 0))]);
 	return actions;
 }
@@ -585,11 +649,26 @@ async function rollback(
 		const epoch = ctx.epoch ?? (await deps.store.get(ctx.operationId))?.fencingEpoch ?? 0;
 		if (epoch === 0) return { state: 'none' as const, epoch };
 		const verdict = await deps.leases.check(input.site.id, { holder: ctx.operationId, epoch });
-		return { state: verdict.ok ? ('held' as const) : ('lost' as const), epoch };
+		if (verdict.ok) return { state: 'held' as const, epoch };
+		// an expired lease nobody took is ours to take back; one a live holder has is not
+		const regained = await deps.leases.acquire(input.site.id, {
+			holder: ctx.operationId,
+			purpose: ctx.purpose,
+			ttlMs: deps.config.leaseTtlMs
+		});
+		return regained.ok
+			? { state: 'held' as const, epoch: regained.epoch }
+			: { state: 'lost' as const, epoch };
 	});
 	ctx.epoch = fence.epoch === 0 ? null : fence.epoch;
 	const closed = await closeFailed(ctx, failure);
 	if (fence.state === 'none') {
+		// nothing was made, but the site row the request wrote would stay behind as active
+		await plainStep(ctx, 'rollback.site', async () => {
+			if ((await deps.store.siteState(input.site.id)) !== null) {
+				await deps.store.setSiteState(input.site.id, 'deleted', deps.now());
+			}
+		});
 		return closed === 'cancelled'
 			? { status: 'cancelled', reason }
 			: { status: 'failed', reason, leaked: [] };
@@ -639,6 +718,40 @@ async function rollback(
 
 // #endregion
 
+export interface StrandedCreate {
+	operationId: string;
+	site: Pick<SiteCreateInput['site'], 'id' | 'accountId' | 'plane' | 'config'>;
+	hostname: string;
+}
+
+// finishes the rollback of a create that failed without one, as when its lease ran out and the
+// failure left what it had made in place; the same actions run and the same guards hold
+export async function recoverCreate(
+	step: StepRunner,
+	deps: EngineDeps,
+	stranded: StrandedCreate
+): Promise<Outcome> {
+	const { site } = stranded;
+	const ctx: Ctx = {
+		deps,
+		step,
+		operationId: stranded.operationId,
+		siteId: site.id,
+		accountId: site.accountId,
+		purpose: 'site.create',
+		epoch: null
+	};
+	const input = {
+		operationId: stranded.operationId,
+		site,
+		subdomain: stranded.hostname.split('.')[0],
+		hostname: stranded.hostname
+	} as SiteCreateInput;
+	const resources = planResources(site, site.config, { database: true });
+	const failure = new StepFailed('recover', new Error('recovering a create that failed'));
+	return rollback(ctx, input, resources, failure);
+}
+
 export async function runSiteCreate(
 	step: StepRunner,
 	deps: EngineDeps,
@@ -654,6 +767,7 @@ export async function runSiteCreate(
 		epoch: null
 	};
 	const resources = planResources(input.site, input.site.config, { database: input.database });
+	let sealed: FirstRunSealed | null = null;
 	try {
 		await startOperation(ctx);
 		await acquireLease(ctx, 'lease');
@@ -665,8 +779,7 @@ export async function runSiteCreate(
 		await uploadScript(ctx, input, token);
 		await applyAuthority(ctx, input);
 		await putRoute(ctx, input);
-		const sealed =
-			input.firstRun === undefined ? null : await firstRun(ctx, input, input.firstRun);
+		sealed = input.firstRun === undefined ? null : await firstRun(ctx, input, input.firstRun);
 		await verify(ctx, input, sealed);
 		await activate(ctx, input);
 	} catch (error) {
@@ -674,7 +787,11 @@ export async function runSiteCreate(
 		return rollback(ctx, input, resources, error);
 	}
 	// a failure past this point leaves a working site, so it never triggers a rollback
-	await finishSuccess(ctx, `${input.site.id} is active at ${input.hostname}`);
+	const note =
+		sealed?.status === 409 && sealed.pendingSecretId === null
+			? '; the first admin password was lost with an answer that never arrived, so reset it from the sign-in page'
+			: '';
+	await finishSuccess(ctx, `${input.site.id} is active at ${input.hostname}${note}`);
 	await releaseLease(ctx);
 	return { status: 'succeeded' };
 }

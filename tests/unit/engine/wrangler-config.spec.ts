@@ -17,6 +17,7 @@ interface Config {
 	workflows?: { name: string; binding: string; class_name: string }[];
 	migrations?: { tag: string; new_sqlite_classes?: string[] }[];
 	vars?: Record<string, string>;
+	triggers?: { crons?: string[] };
 	env?: Record<string, Config>;
 }
 
@@ -230,6 +231,13 @@ describe('the engine and the dispatch unit agree', () => {
 				target.dispatch_namespaces?.[0]?.namespace
 			);
 		}
+	});
+
+	it('schedules the recovery sweep in every environment, since triggers are not inherited', () => {
+		for (const [, config] of environments('engine')) {
+			expect(config.triggers?.crons).toEqual(['*/15 * * * *']);
+		}
+		expect(sourcesOfFile('engine')).toContain('scheduled');
 	});
 
 	it('bundles the engine with its own tsconfig, since shared code imports @contracts', () => {

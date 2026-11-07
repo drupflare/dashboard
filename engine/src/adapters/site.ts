@@ -26,6 +26,18 @@ export class SiteAnswered extends Error {
 // a site that is still coming up can answer these: the route or script has not reached every colo
 const COMING_UP = new Set([404, 408, 425, 429]);
 
+// one line per call to a site: the route, the answer and how long it took, never a body, a header
+// value other than the replay progress, or a query string
+function logCall(
+	hostname: string,
+	path: string,
+	status: number | 'no answer',
+	ms: number,
+	replay: string | null
+): void {
+	console.log(JSON.stringify({ event: 'engine.site-call', hostname, path, status, ms, replay }));
+}
+
 function siteFetcher(fetcher: typeof fetch, timeoutMs: number) {
 	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
 		throw new ConfigError('SITE_TIMEOUT_MS');
@@ -41,6 +53,7 @@ function siteFetcher(fetcher: typeof fetch, timeoutMs: number) {
 			throw new PermanentError('invalid_site_call', `${path} does not stay on ${hostname}`);
 		}
 		let response: Response;
+		const began = Date.now();
 		try {
 			response = await fetcher(url, {
 				...init,
@@ -48,9 +61,17 @@ function siteFetcher(fetcher: typeof fetch, timeoutMs: number) {
 				signal: AbortSignal.timeout(timeoutMs)
 			});
 		} catch (error) {
+			logCall(hostname, url.pathname, 'no answer', Date.now() - began, null);
 			throw new SiteUnreachable(hostname, error);
 		}
 		const { status } = response;
+		logCall(
+			hostname,
+			url.pathname,
+			status,
+			Date.now() - began,
+			response.headers.get('x-cfw-migrate')
+		);
 		let text: string | null = null;
 		if (readWhen(status)) {
 			try {
@@ -65,14 +86,26 @@ function siteFetcher(fetcher: typeof fetch, timeoutMs: number) {
 	};
 }
 
+const recoveredToken = z.looseObject({ ownerToken: z.string().min(1) });
+
+function safeJson(text: string): unknown {
+	try {
+		return JSON.parse(text);
+	} catch {
+		return null;
+	}
+}
+
 export function siteOf(fetcher: typeof fetch, timeoutMs: number): Site {
 	const fetchSite = siteFetcher(fetcher, timeoutMs);
+	// a status the caller handles itself comes back as an answer and not as a refusal
 	const call = async (
 		hostname: string,
 		path: string,
 		init: RequestInit,
 		expectStatus: number | undefined,
-		readBody = false
+		readBody = false,
+		handled: readonly number[] = []
 	) => {
 		const accepted = (status: number) =>
 			expectStatus === undefined ? status >= 200 && status < 300 : status === expectStatus;
@@ -82,7 +115,13 @@ export function siteOf(fetcher: typeof fetch, timeoutMs: number): Site {
 			init,
 			(code) => readBody && accepted(code)
 		);
-		if (status >= 400 && status < 500 && status !== expectStatus && !COMING_UP.has(status)) {
+		if (
+			status >= 400 &&
+			status < 500 &&
+			status !== expectStatus &&
+			!COMING_UP.has(status) &&
+			!handled.includes(status)
+		) {
 			throw new PermanentError('site_rejected', `${hostname}${path} answered ${status}`);
 		}
 		return { status, text };
@@ -109,10 +148,30 @@ export function siteOf(fetcher: typeof fetch, timeoutMs: number): Site {
 				request.path,
 				{ method: request.method, body: request.body },
 				request.expectStatus,
-				reads !== undefined
+				reads !== undefined,
+				// the claim is one-shot: 409 says an earlier call already ran it
+				[409]
 			);
 			if (reads === undefined || text === null) return { status };
 			return { status, secrets: readFirstRunSecrets(text, reads) };
+		},
+		async recoverOwnerToken(hostname, nonce) {
+			const { status, text } = await call(
+				hostname,
+				'/recover-token',
+				{
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ nonce })
+				},
+				200,
+				true,
+				// KV may not have the record yet (404); the step retries
+				[409, 410]
+			);
+			if (status !== 200 || text === null) return { status, ownerToken: null };
+			const parsed = recoveredToken.safeParse(safeJson(text));
+			return { status, ownerToken: parsed.success ? parsed.data.ownerToken : null };
 		}
 	};
 }
@@ -124,10 +183,34 @@ const healthAnswer = z.looseObject({
 	import: z
 		.looseObject({
 			generation: z.string(),
-			state: z.enum(['pending', 'applied', 'failed'])
+			state: z.enum(['pending', 'applied', 'failed']),
+			chunk: z.number().int().nullish(),
+			chunks: z.number().int().nullish(),
+			error: z.string().nullish()
 		})
 		.nullish()
 });
+
+const REASON_CHARS = 300;
+
+// the site's own words for why an import stopped, bounded and with no control characters, since it
+// is text from outside the engine that lands in an operation record
+export function importReason(stored: {
+	chunk?: number | null;
+	chunks?: number | null;
+	error?: string | null;
+}): string {
+	const where =
+		stored.chunk != null && stored.chunks != null
+			? `chunk ${stored.chunk} of ${stored.chunks}`
+			: '';
+	const why = (stored.error ?? '')
+		// eslint-disable-next-line no-control-regex
+		.replace(/[\u0000-\u001f\u007f]+/g, ' ')
+		.trim()
+		.slice(0, REASON_CHARS);
+	return [where, why].filter(Boolean).join(': ');
+}
 const statsAnswer = z.looseObject({
 	storage: z.looseObject({ adopting: z.number().int().nonnegative() })
 });
@@ -155,6 +238,18 @@ function parseBody<T>(text: string | null, schema: z.ZodType<T>, what: string): 
 
 export function backupWorkerOf(fetcher: typeof fetch, timeoutMs: number): BackupWorker {
 	const fetchSite = siteFetcher(fetcher, timeoutMs);
+	// the worker's /health reports the stored import, whichever label it carries
+	const readImport = async (hostname: string, auth: { bearer: string }) => {
+		const { status, text } = await fetchSite(
+			hostname,
+			'/health',
+			{ method: 'GET', headers: bearer(auth.bearer) },
+			(code) => code === 200
+		);
+		refusedToken(status);
+		if (status !== 200) throw new SiteAnswered(hostname, '/health', status);
+		return parseBody(text, healthAnswer, 'the health answer').import;
+	};
 	return {
 		async exportPage(hostname, cursor, auth) {
 			const path = `/export?cursor=${encodeURIComponent(cursor)}&body=1`;
@@ -208,16 +303,13 @@ export function backupWorkerOf(fetcher: typeof fetch, timeoutMs: number): Backup
 
 		// the worker's /health reports the stored import; an import under another label is not ours
 		async importState(hostname, label, auth): Promise<ImportState> {
-			const { status, text } = await fetchSite(
-				hostname,
-				'/health',
-				{ method: 'GET', headers: bearer(auth.bearer) },
-				(code) => code === 200
-			);
-			refusedToken(status);
-			if (status !== 200) throw new SiteAnswered(hostname, '/health', status);
-			const { import: stored } = parseBody(text, healthAnswer, 'the health answer');
+			const stored = await readImport(hostname, auth);
 			return stored?.generation === label ? stored.state : 'absent';
+		},
+
+		async importReason(hostname, label, auth) {
+			const stored = await readImport(hostname, auth);
+			return stored?.generation === label ? importReason(stored) : '';
 		},
 
 		async adopting(hostname, auth) {

@@ -1,5 +1,6 @@
-import type { EngineEnv } from './env';
+import { buildDeps, type EngineEnv } from './env';
 import { handleStart } from './start';
+import { sweepAndLog } from './sweep';
 
 export { SiteLease } from './site-lease';
 export {
@@ -22,5 +23,10 @@ export default {
 				'backup-create': env.BACKUP_CREATE,
 				'backup-restore': env.BACKUP_RESTORE
 			}
-		})
+		}),
+	scheduled: (_controller, env, ctx) => {
+		ctx.waitUntil(
+			buildDeps(env).then((deps) => sweepAndLog(deps, { accountId: env.CF_ACCOUNT_ID }))
+		);
+	}
 } satisfies ExportedHandler<EngineEnv>;

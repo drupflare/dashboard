@@ -369,6 +369,25 @@ describe('a failed create', () => {
 		expect(world.leases.stateOf(world.siteId).epoch).toBe(1);
 	});
 
+	it('takes an expired lease back to roll back when no one else holds the site', async () => {
+		const world = await start();
+		const real = world.deps.cloudflare;
+		world.deps.cloudflare = {
+			...real,
+			createResource: (kind, name) => {
+				world.clock.advance(world.deps.config.leaseTtlMs + 1);
+				return real.createResource(kind, name);
+			}
+		};
+		const outcome = await attempt(world, new Map()).done;
+		expect(outcome.status).toBe('rolled-back');
+		if (outcome.status !== 'rolled-back') return;
+		expect(outcome.reason).toContain('lease_lost');
+		world.deps.cloudflare = real;
+		await expectClean(world, 'expired lease');
+		expect(world.leases.stateOf(world.siteId).epoch).toBe(2);
+	});
+
 	it('does not roll back when the lease was lost mid-run, and leaves the new holder alone', async () => {
 		const world = await start();
 		const real = world.deps.cloudflare;

@@ -273,6 +273,52 @@ describe('no plaintext secret outside custody', () => {
 		}
 	});
 
+	it('recovers the owner token when the answer to the claim was lost, and says the password is gone', async () => {
+		const logs = captureLogs();
+		const world = await start();
+		world.site.lose.next = true;
+		const memo: Memo = new Map();
+		const outcome = await attempt(world, memo, { retries: 3 }).done;
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(world.site.calls.firstRun).toBe(2);
+		expect(world.site.calls.recover).toBe(1);
+		expect(custodyRows(world)).toEqual({ ownerToken: true, pending: [] });
+		const operation = await world.store.get(world.operationId);
+		expect(operation?.finalObservation?.summary).toContain('reset it from the sign-in page');
+		expect(world.site.bearers).toEqual([FAKE_OWNER_TOKEN]);
+		await expectNoSecrets('lost answer', await artefacts(world, memo, logs, [outcome]));
+	});
+
+	it('writes the proof record into the site KV before it asks, and removes it after', async () => {
+		const world = await start();
+		world.site.lose.next = true;
+		await attempt(world, new Map(), { retries: 3 }).done;
+		const puts = world.kvStore.log.filter((line) => line.startsWith('put:'));
+		const deletes = world.kvStore.log.filter((line) => line.startsWith('delete:'));
+		expect(puts).toHaveLength(1);
+		expect(puts[0]).toMatch(/^put:recover:quiet-otter\.drupflare\.app:[0-9a-f]{64}$/);
+		expect(deletes).toEqual([puts[0]!.replace('put:', 'delete:')]);
+		expect(world.kvStore.log.indexOf(puts[0]!)).toBeLessThan(
+			world.kvStore.log.indexOf(deletes[0]!)
+		);
+		const [space] = [...world.kvStore.spaces.values()];
+		expect(space?.size).toBe(0);
+	});
+
+	it('gives up with a typed refusal when the site will not hand the token back', async () => {
+		const world = await start();
+		world.site.lose.next = true;
+		world.deps.site = {
+			...world.deps.site,
+			recoverOwnerToken: async () => ({ status: 410, ownerToken: null })
+		};
+		const outcome = await attempt(world, new Map(), { retries: 3 }).done;
+		expect(outcome.status).toBe('rolled-back');
+		if (outcome.status !== 'rolled-back') return;
+		expect(outcome.reason).toContain('recover_refused');
+		expect(world.kvStore.log.filter((line) => line.startsWith('delete:'))).toHaveLength(1);
+	});
+
 	it('holds when a run died between the two seals and the retry finds the site already claimed', async () => {
 		const logs = captureLogs();
 		const world = await start();
@@ -289,11 +335,16 @@ describe('no plaintext secret outside custody', () => {
 		});
 		const memo: Memo = new Map();
 		const outcome = await attempt(world, memo).done;
-		expect(outcome.status).toBe('rolled-back');
-		if (outcome.status !== 'rolled-back') return;
-		expect(outcome.reason).toContain('answered 409');
-		expect(custodyRows(world)).toEqual({ ownerToken: false, pending: [] });
+		// the token comes back through the site KV and the password sealed earlier stays
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(custodyRows(world)).toEqual({
+			ownerToken: true,
+			pending: [`${world.siteId}:admin-password`]
+		});
 		expect(world.site.calls.firstRun).toBe(2);
+		expect(world.site.calls.recover).toBe(1);
+		const operation = await world.store.get(world.operationId);
+		expect(operation?.finalObservation?.summary).not.toContain('reset it');
 		await expectNoSecrets('between seals', await artefacts(world, memo, logs, [outcome]));
 	});
 });
@@ -516,11 +567,50 @@ describe('the site adapter and secrets', () => {
 				status: 200
 			}
 		);
-		answer.status = 409;
+		answer.status = 403;
 		const refused = await failure(site.firstRun('a.example.com', call));
 		expect(refused).toBeInstanceOf(PermanentError);
 		expect((refused as PermanentError).code).toBe('site_rejected');
 		expect(refused.message).not.toContain('tok');
+	});
+
+	it('reports a 409 as an answer, since it means an earlier call already ran the claim', async () => {
+		const { answer, site } = make();
+		answer.status = 409;
+		answer.body = JSON.stringify({ error: 'already configured' });
+		expect(await site.firstRun('a.example.com', call)).toEqual({ status: 409 });
+	});
+
+	it('recovers the owner token with the nonce in the body and never in the address', async () => {
+		const { answer, site } = make();
+		answer.body = JSON.stringify({ ok: true, ownerToken: 'tok-recovered' });
+		const result = await site.recoverOwnerToken('a.example.com', 'n'.repeat(43));
+		expect(result).toEqual({ status: 200, ownerToken: 'tok-recovered' });
+		expect(answer.calls).toEqual(['POST https://a.example.com/recover-token']);
+	});
+
+	it('hands back the status when the proof has not arrived, was spent or the site is unclaimed', async () => {
+		for (const status of [404, 409, 410]) {
+			const { answer, site } = make();
+			answer.status = status;
+			expect(await site.recoverOwnerToken('a.example.com', 'n'.repeat(43))).toEqual({
+				status,
+				ownerToken: null
+			});
+		}
+	});
+
+	it('refuses a recovery the site rejects outright, and reads no token from a body of the wrong shape', async () => {
+		const rejected = make();
+		rejected.answer.status = 403;
+		const refusal = await failure(rejected.site.recoverOwnerToken('a.example.com', 'n'));
+		expect((refusal as PermanentError).code).toBe('site_rejected');
+		const odd = make();
+		odd.answer.body = 'not json';
+		expect(await odd.site.recoverOwnerToken('a.example.com', 'n')).toEqual({
+			status: 200,
+			ownerToken: null
+		});
 	});
 
 	it('fails with the typed error for a body that is not json, without quoting it', async () => {

@@ -64,7 +64,6 @@ export async function buildBackupDeps(env: EngineEnv): Promise<BackupDeps> {
 		worker: backupWorkerOf(fetch, Number(env.SITE_TIMEOUT_MS)),
 		blobs: r2BackupBlobs(env.BLOB),
 		backups: new D1BackupLedger(env.DB),
-		kv: namespaceKvOf(plane),
 		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 	};
 }
@@ -96,6 +95,7 @@ export async function buildDeps(env: EngineEnv): Promise<EngineDeps> {
 		}),
 		releases: releasesOf(env.BLOB),
 		leases: leasesOf((siteId) => stub<LeaseStub>(env.SITE_LEASE, siteId)),
+		kv: namespaceKvOf(plane),
 		now: Date.now,
 		config: readConfig(
 			env as unknown as Record<string, unknown>,

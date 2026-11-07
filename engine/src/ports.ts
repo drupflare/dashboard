@@ -130,6 +130,12 @@ export interface Site {
 		hostname: string,
 		call: SiteCall
 	): Promise<{ status: number; secrets?: FirstRunSecrets }>;
+	// posts a nonce whose hash record the caller has already written to the site's CONFIG_KV; the
+	// token is set only when the site answered 200
+	recoverOwnerToken(
+		hostname: string,
+		nonce: string
+	): Promise<{ status: number; ownerToken: string | null }>;
 }
 
 export interface Releases {
@@ -179,6 +185,8 @@ export interface BackupWorker {
 		auth: OwnerAuth
 	): Promise<{ chunks: number; statements: number }>;
 	importState(hostname: string, label: string, auth: OwnerAuth): Promise<ImportState>;
+	// where an import stopped and the site's reason, empty when it carries none
+	importReason(hostname: string, label: string, auth: OwnerAuth): Promise<string>;
 	adopting(hostname: string, auth: OwnerAuth): Promise<number>;
 }
 
@@ -214,7 +222,6 @@ export interface BackupDeps extends EngineDeps {
 	worker: BackupWorker;
 	blobs: BackupBlobs;
 	backups: BackupLedger;
-	kv: NamespaceKv;
 	sleep(ms: number): Promise<void>;
 }
 
@@ -238,6 +245,7 @@ export interface EngineDeps {
 	custody: Custody;
 	releases: Releases;
 	leases: Leases;
+	kv: NamespaceKv;
 	now(): number;
 	config: EngineConfig;
 }

@@ -578,6 +578,46 @@ describe('the site adapter', () => {
 		]);
 	});
 
+	it('logs the route, the answer and the time of each call, and never the query, the body or a token', async () => {
+		const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+		try {
+			const { answer, site } = make();
+			answer.status = 503;
+			answer.body = 'secret-body';
+			await site
+				.probe('a.example.com', '/health?token=hunter2', 200, {
+					bearer: 'owner-token-value'
+				})
+				.catch(() => undefined);
+			expect(log).toHaveBeenCalledOnce();
+			const line = JSON.parse(String(log.mock.calls[0]?.[0]));
+			expect(line).toMatchObject({
+				event: 'engine.site-call',
+				hostname: 'a.example.com',
+				path: '/health',
+				status: 503
+			});
+			expect(typeof line.ms).toBe('number');
+			expect(JSON.stringify(line)).not.toMatch(/hunter2|secret-body|owner-token-value/);
+		} finally {
+			log.mockRestore();
+		}
+	});
+
+	it('logs a call that got no answer', async () => {
+		const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+		try {
+			const { answer, site } = make();
+			answer.fail = true;
+			await site.probe('a.example.com', '/').catch(() => undefined);
+			expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
+				status: 'no answer'
+			});
+		} finally {
+			log.mockRestore();
+		}
+	});
+
 	it('maps a transport failure to a retryable error', async () => {
 		const { answer, site } = make();
 		answer.fail = true;

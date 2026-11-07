@@ -31,6 +31,7 @@ import type {
 	HostRoute,
 	Leases,
 	Names,
+	NamespaceKv,
 	RateHeadroom,
 	Releases,
 	Site
@@ -433,13 +434,47 @@ export function fakeLeases(now: () => number) {
 export const FAKE_OWNER_TOKEN = 'otk-Zq8mR4vN2xLw9HcT7pYs3KdA6eJb5UfG';
 export const FAKE_ADMIN_PASSWORD = 'pw-Xv7Lq2Rn8Tz4Wm9Hd3Ks6Bc5Yj1Pf';
 
-export function fakeSite() {
-	const calls = { probe: 0, firstRun: 0 };
+export function fakeKv() {
+	const spaces = new Map<string, Map<string, string>>();
+	const log: string[] = [];
+	const kv: NamespaceKv = {
+		async put(namespaceId, key, value) {
+			log.push(`put:${key}`);
+			if (!spaces.has(namespaceId)) spaces.set(namespaceId, new Map());
+			spaces.get(namespaceId)!.set(key, value);
+		},
+		async delete(namespaceId, key) {
+			log.push(`delete:${key}`);
+			return spaces.get(namespaceId)?.delete(key) ? 'deleted' : 'absent';
+		}
+	};
+	return { kv, spaces, log };
+}
+
+export type FakeKv = ReturnType<typeof fakeKv>;
+
+export function fakeSite(store: FakeKv = fakeKv()) {
+	const calls = { probe: 0, firstRun: 0, recover: 0 };
 	const answers = { probe: 200, firstRun: 200 };
 	// what the site was handed on each probe, kept here and nowhere a workflow can store it
 	const bearers: (string | null)[] = [];
 	let claimed = false;
+	// the call that ran the claim and then lost its answer, as when the engine was stopped mid-call
+	const lose = { next: false };
 	const site: Site = {
+		// the worker reads the proof record from the site's own KV, spends it once and never mints
+		async recoverOwnerToken(hostname, nonce) {
+			calls.recover++;
+			if (!claimed) return { status: 409, ownerToken: null };
+			const key = `recover:${hostname}:${await sha256Hex(nonce)}`;
+			for (const space of store.spaces.values()) {
+				if (space.has(key)) {
+					space.delete(key);
+					return { status: 200, ownerToken: FAKE_OWNER_TOKEN };
+				}
+			}
+			return { status: 404, ownerToken: null };
+		},
 		async probe(_hostname, _path, _expectStatus, auth) {
 			calls.probe++;
 			bearers.push(auth?.bearer ?? null);
@@ -455,6 +490,10 @@ export function fakeSite() {
 			}
 			if (claimed) return { status: 409 };
 			claimed = true;
+			if (lose.next) {
+				lose.next = false;
+				throw new Error('the engine was stopped before the answer arrived');
+			}
 			return {
 				status: answers.firstRun,
 				secrets: {
@@ -464,7 +503,7 @@ export function fakeSite() {
 			};
 		}
 	};
-	return { site, calls, answers, bearers };
+	return { site, calls, answers, bearers, lose, store };
 }
 
 export interface FakeBundle {
@@ -636,7 +675,8 @@ export async function makeWorld(
 	const authority = await fakeAuthority(clock.now);
 	const names = fakeNames(clock.now);
 	const leases = fakeLeases(clock.now);
-	const site = fakeSite();
+	const kvStore = fakeKv();
+	const site = fakeSite(kvStore);
 	const bundle = await makeBundle('v1.0.4', options.assetCount ?? 5);
 	const deps: EngineDeps = {
 		store,
@@ -653,6 +693,7 @@ export async function makeWorld(
 		}),
 		releases: releasesOf(bundle),
 		leases: leases.leases,
+		kv: kvStore.kv,
 		now: clock.now,
 		config: {
 			leaseTtlMs: 120_000,
@@ -707,6 +748,7 @@ export async function makeWorld(
 		names,
 		leases,
 		site,
+		kvStore,
 		bundle,
 		clock,
 		input,
