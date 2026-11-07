@@ -1,11 +1,11 @@
 import { setResponseHeader } from 'h3';
 import { z } from 'zod';
 import {
-	OAUTH_CONSENT_TEXT,
 	OAUTH_PROVIDERS,
 	OAUTH_STATE_COOKIE,
 	OAUTH_STATE_TTL_MS,
 	beginOAuth,
+	consentTextFor,
 	setShortCookie
 } from '../../../../../integrations/oauth';
 import { identityDeps } from '../../../../../services/identities';
@@ -27,6 +27,6 @@ export default defineApi(
 		const { url, state } = await beginOAuth(identityDeps(), params.provider);
 		setShortCookie(event, OAUTH_STATE_COOKIE, state, OAUTH_STATE_TTL_MS);
 		setResponseHeader(event, 'cache-control', 'no-store');
-		return { url, consent: OAUTH_CONSENT_TEXT };
+		return { url, consent: consentTextFor(params.provider) };
 	}
 );

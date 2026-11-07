@@ -638,7 +638,13 @@
 											"type": "array",
 											"items": {
 												"type": "string",
-												"enum": ["github", "gitlab", "google", "microsoft"]
+												"enum": [
+													"github",
+													"gitlab",
+													"cloudflare",
+													"google",
+													"microsoft"
+												]
 											}
 										}
 									},
@@ -669,7 +675,7 @@
 						"required": true,
 						"schema": {
 							"type": "string",
-							"enum": ["github", "gitlab", "google", "microsoft"]
+							"enum": ["github", "gitlab", "cloudflare", "google", "microsoft"]
 						}
 					},
 					{
@@ -748,6 +754,7 @@
 													"enum": [
 														"github",
 														"gitlab",
+														"cloudflare",
 														"google",
 														"microsoft"
 													]
@@ -784,7 +791,7 @@
 						"required": true,
 						"schema": {
 							"type": "string",
-							"enum": ["github", "gitlab", "google", "microsoft"]
+							"enum": ["github", "gitlab", "cloudflare", "google", "microsoft"]
 						}
 					},
 					{ "$ref": "#/components/parameters/ContractHeader" }
@@ -1428,6 +1435,161 @@
 								"$ref": "#/components/headers/RateLimitRemaining"
 							},
 							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/me/identities/connect/{provider}/callback": {
+			"get": {
+				"operationId": "getApiV1MeIdentitiesConnectProviderCallback",
+				"summary": "Finish connecting a provider account",
+				"description": "Checks the state against the cookie and against this session, exchanges the code and connects the provider account to the signed-in account. It needs a fresh authentication. A provider account that is already connected, here or to another account, is a conflict.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "provider",
+						"in": "path",
+						"required": true,
+						"schema": {
+							"type": "string",
+							"enum": ["github", "gitlab", "cloudflare", "google", "microsoft"]
+						}
+					},
+					{
+						"name": "code",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "maxLength": 2048 }
+					},
+					{
+						"name": "state",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "maxLength": 256 }
+					},
+					{
+						"name": "error",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "maxLength": 256 }
+					},
+					{
+						"name": "error_description",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "maxLength": 1024 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"201": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"identity": {
+											"type": "object",
+											"properties": {
+												"id": { "type": "string" },
+												"provider": { "type": "string" },
+												"email": { "type": ["string", "null"] },
+												"verified": { "type": "boolean" },
+												"createdAt": {
+													"type": "string",
+													"format": "date-time",
+													"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+												}
+											},
+											"required": [
+												"id",
+												"provider",
+												"email",
+												"verified",
+												"createdAt"
+											]
+										}
+									},
+									"required": ["identity"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/me/identities/connect/{provider}/start": {
+			"post": {
+				"operationId": "postApiV1MeIdentitiesConnectProviderStart",
+				"summary": "Start connecting a provider account",
+				"description": "Returns the provider address to send the browser to, and sets a short-lived cookie that ties the callback to this browser. The state records who started it, so only this session can finish the connection. It needs a fresh authentication.",
+				"tags": ["me"],
+				"x-action": "account.security.manage",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "provider",
+						"in": "path",
+						"required": true,
+						"schema": {
+							"type": "string",
+							"enum": ["github", "gitlab", "cloudflare", "google", "microsoft"]
+						}
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"url": { "type": "string", "format": "uri" },
+										"consent": { "type": "string" }
+									},
+									"required": ["url", "consent"]
+								}
+							}
 						}
 					},
 					"400": { "$ref": "#/components/responses/BadRequest" },

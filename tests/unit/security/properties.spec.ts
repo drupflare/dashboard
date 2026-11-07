@@ -80,7 +80,7 @@ describe('route table', () => {
 		}
 	});
 
-	it('lets only the two OAuth hops use GET with a write class', async () => {
+	it('lets only the OAuth hops use GET with a write class', async () => {
 		const { routes } = await scanRoutes();
 		const odd = routes
 			.filter((route) => route.method === 'get' && route.meta.rateClass !== 'read')
@@ -88,7 +88,8 @@ describe('route table', () => {
 			.sort();
 		expect(odd).toEqual([
 			'v1/auth/oauth/[provider]/callback.get.ts',
-			'v1/auth/oauth/[provider]/start.get.ts'
+			'v1/auth/oauth/[provider]/start.get.ts',
+			'v1/me/identities/connect/[provider]/callback.get.ts'
 		]);
 	});
 

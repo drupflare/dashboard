@@ -7,6 +7,7 @@ import type {
 } from '@simplewebauthn/server';
 import { z } from 'zod';
 import { ApiError } from '../../shared/errors';
+import { CONNECT_ONLY_PROVIDERS } from '../../shared/oauth';
 import { STEP_UP_WINDOW_MS } from '../../shared/permissions';
 import { nowUtc } from '../../shared/utils/time';
 import { DuplicateRowError } from '../db/collegedb';
@@ -273,6 +274,14 @@ const unverifiedEmail = () =>
 		requires: 'verified-email'
 	});
 
+// the provider gives no email to start an account from, so it only signs in one it was connected to
+const notConnected = (provider: OAuthProvider) =>
+	new ApiError(
+		'forbidden',
+		'This account is not connected to a Drupflare account. Sign in another way, then connect it from Account.',
+		{ requires: 'connected-account', provider }
+	);
+
 // a provider identity never joins an account on its own: a matching email asks for a confirmed link
 export async function signInWithProvider(
 	deps: IdentityDeps,
@@ -287,6 +296,7 @@ export async function signInWithProvider(
 		await healAccount(deps.directory, user);
 		return signedIn(deps, user, false, context);
 	}
+	if (CONNECT_ONLY_PROVIDERS.includes(provider)) throw notConnected(provider);
 	if (profile.email === null || !profile.emailVerified) throw unverifiedEmail();
 	const email = normalizeEmail(profile.email);
 	const needsLink = async (): Promise<ProviderSignIn> => ({
@@ -340,6 +350,45 @@ export async function confirmLink(
 		action: 'account.identity.link',
 		target: identity.id,
 		detail: { provider: identity.provider }
+	});
+	return identity;
+}
+
+// connecting from a signed-in session needs no email match: the session proves the Drupflare side,
+// the provider callback proved the other, and a fresh authentication stands behind both
+export async function connectIdentity(
+	deps: IdentityDeps,
+	input: {
+		userId: string;
+		stepUpAt: number | undefined;
+		provider: OAuthProvider;
+		profile: ProviderProfile;
+	}
+): Promise<Identity> {
+	requireFresh(input.stepUpAt);
+	const user = await deps.directory.findUserById(input.userId);
+	if (!user) throw new ApiError('unauthenticated', 'Authentication is required');
+	const orgId = await auditOrg(deps, user.id);
+	let identity: Identity;
+	try {
+		identity = await deps.store.createIdentity({
+			userId: user.id,
+			provider: input.provider,
+			providerSubject: input.profile.subject,
+			email: input.profile.email === null ? null : normalizeEmail(input.profile.email),
+			verified: input.profile.emailVerified
+		});
+	} catch (error) {
+		if (error instanceof DuplicateRowError) {
+			throw new ApiError('conflict', 'This provider account is already connected');
+		}
+		throw error;
+	}
+	await deps.directory.appendAudit(orgId, {
+		actor: user.id,
+		action: 'account.identity.link',
+		target: identity.id,
+		detail: { provider: identity.provider, via: 'session' }
 	});
 	return identity;
 }

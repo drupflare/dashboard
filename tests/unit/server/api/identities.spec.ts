@@ -8,6 +8,8 @@ import passkeyOptions from '../../../../src/server/api/v1/auth/passkey/options.p
 import passkeyVerify from '../../../../src/server/api/v1/auth/passkey/verify.post';
 import identitiesGet from '../../../../src/server/api/v1/me/identities.get';
 import identityDelete from '../../../../src/server/api/v1/me/identities/[id].delete';
+import connectCallback from '../../../../src/server/api/v1/me/identities/connect/[provider]/callback.get';
+import connectStart from '../../../../src/server/api/v1/me/identities/connect/[provider]/start.post';
 import identityLink from '../../../../src/server/api/v1/me/identities/link.post';
 import me from '../../../../src/server/api/v1/me/index.get';
 import passkeysGet from '../../../../src/server/api/v1/me/passkeys.get';
@@ -50,6 +52,8 @@ const R = {
 	me: '/api/v1/me',
 	identities: '/api/v1/me/identities',
 	link: '/api/v1/me/identities/link',
+	connectStart: '/api/v1/me/identities/connect/:provider/start',
+	connectCallback: '/api/v1/me/identities/connect/:provider/callback',
 	identity: '/api/v1/me/identities/:id',
 	passkeys: '/api/v1/me/passkeys',
 	register: '/api/v1/me/passkeys/register',
@@ -128,7 +132,7 @@ async function signedInSession(userId: string, stepUp = true) {
 
 // start, then call back with the browser's cookie, as the callback page does
 async function oauthRoundTrip(
-	provider: 'github' | 'google' | 'gitlab' | 'microsoft',
+	provider: 'github' | 'google' | 'gitlab' | 'microsoft' | 'cloudflare',
 	over: { query?: string; cookie?: string | null; profile?: typeof PROFILE } = {}
 ) {
 	h.tokens[provider] = primeProfile(h.fetchLog, provider, over.profile ?? PROFILE);
@@ -430,6 +434,135 @@ describe('link confirmation through the routes', () => {
 			headers: { authorization: `Bearer ${generated.token}` }
 		});
 		expect(reply.status).toBe(403);
+	});
+});
+
+describe('connecting a provider account through the routes', () => {
+	const cloudflare = {
+		subject: 'acct-1',
+		email: 'ada@cf.test',
+		emailVerified: false,
+		name: null
+	};
+
+	async function start(session: string | undefined, provider = 'cloudflare') {
+		return send(connectStart, R.connectStart, {
+			method: 'POST',
+			path: `/api/v1/me/identities/connect/${provider}/start`,
+			headers: jar({ [SESSION_COOKIE_NAME]: session })
+		});
+	}
+
+	async function finish(
+		session: string | undefined,
+		state: string | undefined,
+		cookie: string | undefined = state,
+		provider = 'cloudflare'
+	) {
+		return send(connectCallback, R.connectCallback, {
+			path: `/api/v1/me/identities/connect/${provider}/callback?code=abc&state=${state}`,
+			headers: jar({ [SESSION_COOKIE_NAME]: session, [OAUTH_STATE_COOKIE]: cookie })
+		});
+	}
+
+	it('answers 403 for a sign-in with a Cloudflare account that was never connected', async () => {
+		const reply = await oauthRoundTrip('cloudflare', { profile: cloudflare as never });
+		expect(reply.status).toBe(403);
+		expect(reply.json).toMatchObject({ details: { requires: 'connected-account' } });
+		expect(h.directory.users).toEqual([]);
+	});
+
+	it('connects from a fresh session, then signs that account in', async () => {
+		const owner = await existingUser();
+		const session = await signedInSession(owner.id);
+		h.tokens.cloudflare = primeProfile(h.fetchLog, 'cloudflare', cloudflare);
+		const started = await start(session);
+		expect(started.status).toBe(200);
+		expect(started.json).toMatchObject({ consent: expect.stringContaining('reads no zones') });
+		expect(new URL((started.json as { url: string }).url).host).toBe('dash.cloudflare.com');
+		expect(started.headers.get('cache-control')).toBe('no-store');
+		const state = cookieValue(started, OAUTH_STATE_COOKIE) as string;
+		expect(state.startsWith('cloudflare.link.')).toBe(true);
+
+		const done = await finish(session, state);
+		expect(done.status).toBe(201);
+		expect(done.json).toMatchObject({
+			identity: { provider: 'cloudflare', email: 'ada@cf.test', verified: false }
+		});
+		expect(cookies(done).find((c) => c.startsWith(`${OAUTH_STATE_COOKIE}=`))).toMatch(
+			/Max-Age=0/
+		);
+		expect(h.store.identities).toHaveLength(1);
+
+		const again = await oauthRoundTrip('cloudflare', { profile: cloudflare as never });
+		expect(again.json).toMatchObject({ status: 'signed_in', isNew: false });
+		expect(h.directory.users).toHaveLength(1);
+	});
+
+	it('answers 403 with the step-up requirement and sets no state for a stale session', async () => {
+		const owner = await existingUser();
+		const reply = await start(await signedInSession(owner.id, false));
+		expect(reply.status).toBe(403);
+		expect(reply.json).toMatchObject({ details: { requires: 'step-up' } });
+		expect(cookieValue(reply, OAUTH_STATE_COOKIE)).toBeUndefined();
+	});
+
+	it('answers 401 with no session, at both ends', async () => {
+		expect((await start(undefined)).status).toBe(401);
+		expect((await finish(undefined, 'cloudflare.link.abc')).status).toBe(401);
+	});
+
+	it('answers 400 for an unknown provider and 501 for one with no client', async () => {
+		const owner = await existingUser();
+		const session = await signedInSession(owner.id);
+		expect((await start(session, 'facebook')).status).toBe(400);
+		install({ clients: {} });
+		expect((await start(session)).status).toBe(501);
+	});
+
+	it('refuses a callback from another session, and connects nothing', async () => {
+		const owner = await existingUser('owner@example.com');
+		const other = await existingUser('other@example.com');
+		h.tokens.cloudflare = primeProfile(h.fetchLog, 'cloudflare', cloudflare);
+		const started = await start(await signedInSession(owner.id));
+		const state = cookieValue(started, OAUTH_STATE_COOKIE) as string;
+		const reply = await finish(await signedInSession(other.id), state);
+		expect(reply.status).toBe(401);
+		expect(h.store.identities).toEqual([]);
+	});
+
+	it('refuses a sign-in state, and a state that does not match this browser', async () => {
+		const owner = await existingUser();
+		const session = await signedInSession(owner.id);
+		h.tokens.cloudflare = primeProfile(h.fetchLog, 'cloudflare', cloudflare);
+		const signIn = await send(oauthStart, R.start, {
+			path: '/api/v1/auth/oauth/cloudflare/start'
+		});
+		const signInState = cookieValue(signIn, OAUTH_STATE_COOKIE) as string;
+		expect((await finish(session, signInState)).status).toBe(401);
+
+		const started = await start(session);
+		const state = cookieValue(started, OAUTH_STATE_COOKIE) as string;
+		expect((await finish(session, state, 'someone-elses')).status).toBe(401);
+		expect(h.store.identities).toEqual([]);
+	});
+
+	it('answers 409 for a provider account that belongs to another account', async () => {
+		const first = await existingUser('first@example.com');
+		const second = await existingUser('second@example.com');
+		h.tokens.cloudflare = primeProfile(h.fetchLog, 'cloudflare', cloudflare);
+		const one = await start(await signedInSession(first.id));
+		expect(
+			(await finish(await signedInSession(first.id), cookieValue(one, OAUTH_STATE_COOKIE)))
+				.status
+		).toBe(201);
+		const two = await start(await signedInSession(second.id));
+		const reply = await finish(
+			await signedInSession(second.id),
+			cookieValue(two, OAUTH_STATE_COOKIE)
+		);
+		expect(reply.status).toBe(409);
+		expect(h.store.identities).toHaveLength(1);
 	});
 });
 

@@ -20,7 +20,8 @@ export default defineNitroPlugin((nitroApp) => {
 				baseUrl: config.baseUrl as string,
 				oauthClientIds: {
 					github: config.public.githubClientId as string,
-					gitlab: config.public.gitlabClientId as string
+					gitlab: config.public.gitlabClientId as string,
+					cloudflare: config.public.cloudflareClientId as string
 				}
 			});
 		} catch (error) {

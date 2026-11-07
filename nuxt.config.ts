@@ -24,7 +24,8 @@ export default defineNuxtConfig({
 		baseUrl: process.env.NUXT_BASE_URL || 'https://app.drupflare.com',
 		public: {
 			githubClientId: process.env.NUXT_PUBLIC_GITHUB_CLIENT_ID || '',
-			gitlabClientId: process.env.NUXT_PUBLIC_GITLAB_CLIENT_ID || ''
+			gitlabClientId: process.env.NUXT_PUBLIC_GITLAB_CLIENT_ID || '',
+			cloudflareClientId: process.env.NUXT_PUBLIC_CLOUDFLARE_CLIENT_ID || ''
 		},
 		turnstile: {
 			secretKey: process.env.NUXT_TURNSTILE_SECRET_KEY || ''

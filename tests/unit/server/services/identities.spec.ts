@@ -7,6 +7,7 @@ import {
 import {
 	LINK_TTL_MS,
 	confirmLink,
+	connectIdentity,
 	finishPasskeyRegistration,
 	listIdentities,
 	removePasskey,
@@ -19,6 +20,7 @@ import {
 } from '../../../../src/server/services/identities';
 import { getSession, listSessions } from '../../../../src/server/services/sessions';
 import { ApiError } from '../../../../src/shared/errors';
+import { CONNECT_ONLY_PROVIDERS } from '../../../../src/shared/oauth';
 import { STEP_UP_WINDOW_MS } from '../../../../src/shared/permissions';
 import { makeAuthenticator, type Authenticator } from '../integrations/webauthn-support';
 import { useClock } from './auth-support';
@@ -63,7 +65,12 @@ async function expectFailure(run: Promise<unknown>, code: string, message?: stri
 
 const sessionKeys = () => h.kv.keys().filter((name) => name.startsWith('session:'));
 
-describe.each(OAUTH_PROVIDERS)('%s sign-in', (provider: OAuthProvider) => {
+// a provider that gives no address to start an account from is covered on its own below
+const EMAIL_PROVIDERS = OAUTH_PROVIDERS.filter(
+	(provider) => !CONNECT_ONLY_PROVIDERS.includes(provider)
+);
+
+describe.each(EMAIL_PROVIDERS)('%s sign-in', (provider: OAuthProvider) => {
 	it('creates an account with its personal organisation, owner, identity and audit row', async () => {
 		const result = await signInWithProvider(h, provider, profile());
 		expect(result.status).toBe('signed_in');
@@ -202,8 +209,150 @@ describe('sign-up races', () => {
 	});
 });
 
+describe('a provider that only connects', () => {
+	it('never starts an account, even for an address no one has', async () => {
+		await expectFailure(
+			signInWithProvider(h, 'cloudflare', profile({ emailVerified: true })),
+			'forbidden'
+		);
+		expect(h.directory.users).toEqual([]);
+		expect(h.store.identities).toEqual([]);
+		expect(sessionKeys()).toEqual([]);
+	});
+
+	it('names what to do, and never asks for a link by address', async () => {
+		await existingUser();
+		const error = await expectFailure(
+			signInWithProvider(h, 'cloudflare', profile()),
+			'forbidden'
+		);
+		expect(error.message).toContain('connect it from Account');
+		expect(error.details).toMatchObject({
+			requires: 'connected-account',
+			provider: 'cloudflare'
+		});
+		expect(h.once.keys().filter((name) => name.startsWith('link:'))).toEqual([]);
+		expect(h.store.identities).toEqual([]);
+	});
+
+	it('signs in the account it was connected to, whatever address it now reports', async () => {
+		const owner = await existingUser('owner@example.com');
+		await connectIdentity(h, {
+			userId: owner.id,
+			stepUpAt: clock.now,
+			provider: 'cloudflare',
+			profile: profile({ email: 'someone@elsewhere.test', emailVerified: false })
+		});
+		const result = await signInWithProvider(h, 'cloudflare', profile({ email: null }));
+		expect(result.status).toBe('signed_in');
+		if (result.status !== 'signed_in') return;
+		expect(result.user.id).toBe(owner.id);
+		expect(result.isNew).toBe(false);
+	});
+});
+
+describe('connecting from a signed-in session', () => {
+	it('adds the identity without an address match and writes an audit row', async () => {
+		const owner = await existingUser('owner@example.com');
+		const identity = await connectIdentity(h, {
+			userId: owner.id,
+			stepUpAt: clock.now,
+			provider: 'cloudflare',
+			profile: profile({ email: 'Other@Elsewhere.test', emailVerified: false })
+		});
+		expect(identity).toMatchObject({
+			userId: owner.id,
+			provider: 'cloudflare',
+			providerSubject: '4242',
+			email: 'other@elsewhere.test',
+			verified: false
+		});
+		expect(h.directory.audits.at(-1)?.input).toEqual({
+			actor: owner.id,
+			action: 'account.identity.link',
+			target: identity.id,
+			detail: { provider: 'cloudflare', via: 'session' }
+		});
+	});
+
+	it('keeps no address when the provider gave none', async () => {
+		const owner = await existingUser();
+		const identity = await connectIdentity(h, {
+			userId: owner.id,
+			stepUpAt: clock.now,
+			provider: 'cloudflare',
+			profile: profile({ email: null, emailVerified: false })
+		});
+		expect(identity.email).toBeNull();
+	});
+
+	it('needs a fresh authentication, and changes nothing without one', async () => {
+		const owner = await existingUser();
+		for (const stepUpAt of [undefined, clock.now - STEP_UP_WINDOW_MS - 1]) {
+			await expectFailure(
+				connectIdentity(h, {
+					userId: owner.id,
+					stepUpAt,
+					provider: 'github',
+					profile: profile()
+				}),
+				'forbidden'
+			);
+		}
+		expect(h.store.identities).toEqual([]);
+	});
+
+	it('refuses a provider account that is already connected, here or to another account', async () => {
+		const first = await existingUser('first@example.com');
+		const second = await existingUser('second@example.com');
+		await connectIdentity(h, {
+			userId: first.id,
+			stepUpAt: clock.now,
+			provider: 'github',
+			profile: profile()
+		});
+		for (const userId of [first.id, second.id]) {
+			await expectFailure(
+				connectIdentity(h, {
+					userId,
+					stepUpAt: clock.now,
+					provider: 'github',
+					profile: profile()
+				}),
+				'conflict'
+			);
+		}
+		expect(h.store.identities).toHaveLength(1);
+	});
+
+	it('refuses a user that no longer exists', async () => {
+		await expectFailure(
+			connectIdentity(h, {
+				userId: 'usr_gone',
+				stepUpAt: clock.now,
+				provider: 'github',
+				profile: profile()
+			}),
+			'unauthenticated'
+		);
+	});
+
+	it('lets one account hold two accounts of the same provider', async () => {
+		const owner = await existingUser();
+		for (const subject of ['1', '2']) {
+			await connectIdentity(h, {
+				userId: owner.id,
+				stepUpAt: clock.now,
+				provider: 'cloudflare',
+				profile: profile({ subject, email: null, emailVerified: false })
+			});
+		}
+		expect(await listIdentities(h, owner.id)).toHaveLength(2);
+	});
+});
+
 describe('provider sign-in and existing accounts', () => {
-	it.each(OAUTH_PROVIDERS)(
+	it.each(EMAIL_PROVIDERS)(
 		'%s never creates an account or claims one for an unverified address',
 		async (provider) => {
 			const owner = await existingUser();
@@ -221,7 +370,7 @@ describe('provider sign-in and existing accounts', () => {
 		}
 	);
 
-	it.each(OAUTH_PROVIDERS)(
+	it.each(EMAIL_PROVIDERS)(
 		'%s with the address of an account asks for a link and signs no one in',
 		async (provider) => {
 			await existingUser();

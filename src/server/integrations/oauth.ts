@@ -14,8 +14,10 @@ import { ApiError } from '../../shared/errors';
 import {
 	OAUTH_CONSENT_TEXT,
 	OAUTH_PROVIDERS,
+	consentTextFor,
 	stateFor,
-	type OAuthProvider
+	type OAuthProvider,
+	type OAuthPurpose
 } from '../../shared/oauth';
 import { nowUtc } from '../../shared/utils/time';
 import { randomToken, timingSafeEqual } from '../services/crypto';
@@ -68,11 +70,12 @@ export type OAuthClients = Partial<Record<OAuthProvider, OAuthClient>>;
 export const OAUTH_SCOPES = {
 	github: ['user:email'],
 	gitlab: ['openid', 'profile', 'email'],
+	cloudflare: ['openid', 'user-details.read'],
 	google: ['openid', 'profile', 'email'],
 	microsoft: ['openid', 'profile', 'email']
 } as const satisfies Record<OAuthProvider, readonly string[]>;
 
-export { OAUTH_CONSENT_TEXT };
+export { OAUTH_CONSENT_TEXT, consentTextFor };
 
 export const signInFailed = () =>
 	new ApiError('unauthenticated', 'The sign-in could not be completed');
@@ -152,6 +155,34 @@ function userinfoProfile(url: string) {
 	};
 }
 
+const cloudflareUser = z.object({
+	result: z.object({ email: z.string().nullish() })
+});
+
+// the account id is the userinfo sub. The address comes from the user-details read and is shown,
+// never trusted: Cloudflare does not say it is verified, so it is not proof of an address
+async function cloudflareProfile(
+	tokens: ProviderTokens,
+	fetchFn: FetchLike
+): Promise<ProviderProfile> {
+	const info = await getJson(
+		fetchFn,
+		'https://dash.cloudflare.com/oauth2/userinfo',
+		tokens.accessToken,
+		oidcUserinfo
+	);
+	const email = await getJson(
+		fetchFn,
+		'https://api.cloudflare.com/client/v4/user',
+		tokens.accessToken,
+		cloudflareUser
+	).then(
+		(user) => user.result.email ?? null,
+		() => null
+	);
+	return { subject: info.sub, email, emailVerified: false, name: null };
+}
+
 // the claim arrives as a boolean or as the strings 1 and true; anything else, or nothing, is false
 export function edovVerified(claim: boolean | string | null | undefined): boolean {
 	return claim === true || claim === '1' || claim === 'true';
@@ -189,9 +220,10 @@ function tokensOf(tokens: OAuth2Tokens): ProviderTokens {
 
 const trimSlash = (url: string) => url.replace(/\/+$/, '');
 
-// arctic's own GitHub and GitLab classes send no PKCE challenge, so these two use its OAuth2Client
+// arctic's own GitHub and GitLab classes send no PKCE challenge, and it has none for Cloudflare, so
+// these use its OAuth2Client
 function pkceClient(
-	provider: 'github' | 'gitlab',
+	provider: 'github' | 'gitlab' | 'cloudflare',
 	creds: ProviderCredentials,
 	authorizeUrl: string,
 	tokenUrl: string,
@@ -236,6 +268,14 @@ export function oauthClient(provider: OAuthProvider, creds: ProviderCredentials)
 				userinfoProfile(`${base}/oauth/userinfo`)
 			);
 		}
+		case 'cloudflare':
+			return pkceClient(
+				'cloudflare',
+				creds,
+				'https://dash.cloudflare.com/oauth2/auth',
+				'https://dash.cloudflare.com/oauth2/token',
+				cloudflareProfile
+			);
 		case 'google': {
 			const google = new Google(creds.clientId, creds.clientSecret, creds.redirectUri);
 			const scopes = OAUTH_SCOPES.google;
@@ -291,7 +331,9 @@ const stateKey = (hash: string) => `oauth:state:${hash}`;
 const stateRecord = z.object({
 	provider: z.enum(OAUTH_PROVIDERS),
 	verifier: z.string(),
-	createdAt: z.number()
+	createdAt: z.number(),
+	purpose: z.enum(['sign-in', 'link']).default('sign-in'),
+	userId: z.string().optional()
 });
 
 export interface OAuthDeps {
@@ -306,15 +348,27 @@ function clientFor(deps: OAuthDeps, provider: OAuthProvider): OAuthClient {
 	return client;
 }
 
+// a link starts from a signed-in session, and the state remembers whose, so only that person's
+// callback can finish it
+export type OAuthIntent = { purpose: 'sign-in' } | { purpose: 'link'; userId: string };
+
 export async function beginOAuth(
 	deps: OAuthDeps,
-	provider: OAuthProvider
+	provider: OAuthProvider,
+	intent: OAuthIntent = { purpose: 'sign-in' }
 ): Promise<{ url: string; state: string }> {
 	const client = clientFor(deps, provider);
-	const state = stateFor(provider, randomToken());
+	const purpose: OAuthPurpose = intent.purpose;
+	const state = stateFor(provider, randomToken(), purpose);
 	const verifier = generateCodeVerifier();
 	const now = nowUtc().toMillis();
-	const record = { provider, verifier, createdAt: now };
+	const record = {
+		provider,
+		verifier,
+		createdAt: now,
+		purpose,
+		...(intent.purpose === 'link' ? { userId: intent.userId } : {})
+	};
 	await deps.once.put(
 		stateKey(await sha256Hex(state)),
 		JSON.stringify(record),
@@ -350,7 +404,8 @@ export interface CallbackInput {
 export async function completeOAuth(
 	deps: OAuthDeps,
 	provider: OAuthProvider,
-	input: CallbackInput
+	input: CallbackInput,
+	expect: OAuthIntent = { purpose: 'sign-in' }
 ): Promise<ProviderProfile> {
 	const client = clientFor(deps, provider);
 	const { state, cookieState } = input;
@@ -358,6 +413,9 @@ export async function completeOAuth(
 	if (!state || !cookieState || !timingSafeEqual(state, cookieState)) throw signInFailed();
 	const record = await takeState(deps.once, state);
 	if (record === null || record.provider !== provider) throw signInFailed();
+	// a sign-in state never finishes a link, and a link finishes only for the person who began it
+	if (record.purpose !== expect.purpose) throw signInFailed();
+	if (expect.purpose === 'link' && record.userId !== expect.userId) throw signInFailed();
 	if (input.error) throw signInFailed();
 	if (!input.code) throw new ApiError('validation', 'The provider did not return a code');
 	try {

@@ -165,6 +165,8 @@ export const PROFILE_URLS = {
 	githubUser: 'https://api.github.com/user',
 	githubEmails: 'https://api.github.com/user/emails',
 	gitlab: 'https://gitlab.com/oauth/userinfo',
+	cloudflare: 'https://dash.cloudflare.com/oauth2/userinfo',
+	cloudflareUser: 'https://api.cloudflare.com/client/v4/user',
 	google: 'https://openidconnect.googleapis.com/v1/userinfo'
 };
 
@@ -197,6 +199,15 @@ export function primeProfile(
 				}
 			});
 			return { accessToken: `${provider}-token`, idToken: null };
+		// the userinfo answer is the sub, and the address comes from the user-details read
+		case 'cloudflare':
+			f.replies.set(PROFILE_URLS.cloudflare, { body: { sub: profile.subject } });
+			if (profile.email !== null) {
+				f.replies.set(PROFILE_URLS.cloudflareUser, {
+					body: { success: true, result: { email: profile.email } }
+				});
+			}
+			return { accessToken: 'cloudflare-token', idToken: null };
 		case 'microsoft':
 			return {
 				accessToken: 'ms-token',

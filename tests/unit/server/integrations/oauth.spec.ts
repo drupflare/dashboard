@@ -16,7 +16,12 @@ import {
 	type ProviderProfile
 } from '../../../../src/server/integrations/oauth';
 import { ApiError } from '../../../../src/shared/errors';
-import { providerOfState } from '../../../../src/shared/oauth';
+import {
+	CONNECT_ONLY_PROVIDERS,
+	consentTextFor,
+	providerOfState,
+	purposeOfState
+} from '../../../../src/shared/oauth';
 import { memoryOnce, useClock, type MemoryOnce } from '../services/auth-support';
 import {
 	CREDS,
@@ -32,6 +37,10 @@ let once: MemoryOnce;
 let net: FakeFetch;
 let tokens: Record<string, ReturnType<typeof primeProfile>>;
 let deps: OAuthDeps;
+
+const EMAIL_PROVIDERS = OAUTH_PROVIDERS.filter(
+	(provider) => !CONNECT_ONLY_PROVIDERS.includes(provider)
+);
 
 const PROFILE = { subject: '4242', email: 'Ada@Example.com', emailVerified: true, name: 'Ada' };
 
@@ -123,6 +132,7 @@ describe('start url', () => {
 		expect(hosts).toEqual([
 			'github.com',
 			'gitlab.com',
+			'dash.cloudflare.com',
 			'accounts.google.com',
 			'login.microsoftonline.com'
 		]);
@@ -172,7 +182,7 @@ describe('start url', () => {
 });
 
 describe('callback', () => {
-	it.each(OAUTH_PROVIDERS)('%s returns the provider profile', async (provider) => {
+	it.each(EMAIL_PROVIDERS)('%s returns the provider profile', async (provider) => {
 		tokens[provider] = primeProfile(net, provider, PROFILE);
 		const { state, cookieState } = await begin(provider);
 		const profile = await completeOAuth(deps, provider, { code: 'c', state, cookieState });
@@ -338,13 +348,13 @@ describe('email verification by provider', () => {
 		return completeOAuth(deps, provider, { code: 'c', state, cookieState });
 	}
 
-	it.each(OAUTH_PROVIDERS)('%s reports an unverified email as unverified', async (provider) => {
+	it.each(EMAIL_PROVIDERS)('%s reports an unverified email as unverified', async (provider) => {
 		const profile = await run(provider, { ...PROFILE, emailVerified: false });
 		expect(profile.emailVerified).toBe(false);
 		expect(profile.email).toBe('Ada@Example.com');
 	});
 
-	it.each(OAUTH_PROVIDERS)('%s reports no email as null', async (provider) => {
+	it.each(EMAIL_PROVIDERS)('%s reports no email as null', async (provider) => {
 		const profile = await run(provider, { ...PROFILE, email: null, emailVerified: false });
 		expect(profile.email).toBeNull();
 		expect(profile.emailVerified).toBe(false);
@@ -449,6 +459,110 @@ describe('email verification by provider', () => {
 		const { state, cookieState } = await begin('microsoft');
 		await expectFailure(
 			completeOAuth(deps, 'microsoft', { code: 'c', state, cookieState }),
+			'unauthenticated'
+		);
+	});
+});
+
+describe('cloudflare', () => {
+	it('returns the account id and the address it shows, and never calls the address verified', async () => {
+		tokens.cloudflare = primeProfile(net, 'cloudflare', PROFILE);
+		const { state, cookieState } = await begin('cloudflare');
+		const profile = await completeOAuth(deps, 'cloudflare', { code: 'c', state, cookieState });
+		expect(profile).toEqual({
+			subject: '4242',
+			email: 'Ada@Example.com',
+			emailVerified: false,
+			name: null
+		});
+		expect(net.calls.map((call) => call.url)).toEqual([
+			PROFILE_URLS.cloudflare,
+			PROFILE_URLS.cloudflareUser
+		]);
+	});
+
+	it('still returns the account id when the user-details read is refused', async () => {
+		tokens.cloudflare = primeProfile(net, 'cloudflare', { ...PROFILE, email: null });
+		const { state, cookieState } = await begin('cloudflare');
+		const profile = await completeOAuth(deps, 'cloudflare', { code: 'c', state, cookieState });
+		expect(profile).toMatchObject({ subject: '4242', email: null, emailVerified: false });
+	});
+
+	it('asks for the account id and the user details, nothing that writes', () => {
+		expect(OAUTH_SCOPES.cloudflare).toEqual(['openid', 'user-details.read']);
+	});
+
+	it('says what it reads before the handoff', () => {
+		expect(consentTextFor('cloudflare')).toContain('reads no zones');
+		expect(consentTextFor('github')).toBe(OAUTH_CONSENT_TEXT);
+	});
+});
+
+describe('a link started from a signed-in session', () => {
+	const intent = { purpose: 'link' as const, userId: 'usr_1' };
+
+	async function beginLink(provider: OAuthProvider = 'github') {
+		const started = await beginOAuth(deps, provider, intent);
+		return { ...started, cookieState: started.state };
+	}
+
+	it('marks the state as a link and remembers whose it is', async () => {
+		const { state } = await beginLink();
+		expect(purposeOfState(state)).toBe('link');
+		expect(providerOfState(state)).toBe('github');
+		const record = JSON.parse(once.dump()[`oauth:state:${await sha256Hex(state)}`] as string);
+		expect(record).toMatchObject({ purpose: 'link', userId: 'usr_1' });
+	});
+
+	it('finishes for the person who began it', async () => {
+		tokens.github = primeProfile(net, 'github', PROFILE);
+		const { state, cookieState } = await beginLink();
+		const profile = await completeOAuth(
+			deps,
+			'github',
+			{ code: 'c', state, cookieState },
+			intent
+		);
+		expect(profile.subject).toBe('4242');
+	});
+
+	it('refuses another person and burns the state', async () => {
+		tokens.github = primeProfile(net, 'github', PROFILE);
+		const { state, cookieState } = await beginLink();
+		await expectFailure(
+			completeOAuth(
+				deps,
+				'github',
+				{ code: 'c', state, cookieState },
+				{ purpose: 'link', userId: 'usr_2' }
+			),
+			'unauthenticated'
+		);
+		await expectFailure(
+			completeOAuth(deps, 'github', { code: 'c', state, cookieState }, intent),
+			'unauthenticated'
+		);
+	});
+
+	it('is not accepted as a sign-in, and a sign-in state does not finish a link', async () => {
+		tokens.github = primeProfile(net, 'github', PROFILE);
+		const link = await beginLink();
+		await expectFailure(
+			completeOAuth(deps, 'github', {
+				code: 'c',
+				state: link.state,
+				cookieState: link.cookieState
+			}),
+			'unauthenticated'
+		);
+		const signIn = await begin('github');
+		await expectFailure(
+			completeOAuth(
+				deps,
+				'github',
+				{ code: 'c', state: signIn.state, cookieState: signIn.cookieState },
+				intent
+			),
 			'unauthenticated'
 		);
 	});
