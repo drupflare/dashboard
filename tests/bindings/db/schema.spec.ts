@@ -35,6 +35,23 @@ describe('applySchema on D1', () => {
 		expect(await storedVersion()).toBe(String(SCHEMA_VERSION));
 	});
 
+	it('skips the DDL while the stored hash matches and runs it again when the hash differs', async () => {
+		const exists = async () =>
+			(await env.DB.prepare(
+				`SELECT 1 FROM sqlite_master WHERE name = 'single_use'`
+			).first()) !== null;
+		const db = createCollegeDB(env);
+		await applySchema(db);
+		await env.DB.prepare('DROP TABLE single_use').run();
+		await applySchema(db);
+		expect(await exists()).toBe(false);
+		await env.DB.prepare(
+			`UPDATE schema_meta SET value = 'old' WHERE key = 'schema_hash'`
+		).run();
+		await applySchema(db);
+		expect(await exists()).toBe(true);
+	});
+
 	it('gives every table exactly the columns its Drizzle definition names', async () => {
 		for (const table of TABLES) {
 			const { name, columns } = getTableConfig(table);

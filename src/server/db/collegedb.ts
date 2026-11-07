@@ -1,4 +1,5 @@
 import type { D1Database, KVNamespace } from '@cloudflare/workers-types';
+import { sha256Hex } from '@contracts/common';
 import { type CollegeDBClient, createClient, createWorkersKVProvider } from '@earth-app/collegedb';
 import {
 	SCHEMA_META_STATEMENT,
@@ -73,7 +74,55 @@ export function createCollegeDB(env: CollegeDBEnv): CollegeDBClient {
 	});
 }
 
+const TRIGGER_NAMES = SCHEMA_TRIGGERS.map(
+	(sql) => /CREATE TRIGGER (?:IF NOT EXISTS )?(\w+)/.exec(sql)?.[1] ?? ''
+);
+
+async function schemaHashOf(): Promise<string> {
+	return sha256Hex(
+		new TextEncoder().encode(
+			[SCHEMA_META_STATEMENT, ...SCHEMA_STATEMENTS, ...SCHEMA_TRIGGERS, SCHEMA_VERSION].join(
+				'\n'
+			)
+		)
+	);
+}
+
+// one read per shard; a missing table or row, or any difference, sends the caller down the full path
+async function schemaCurrent(db: CollegeDBClient, hash: string): Promise<boolean> {
+	let shards;
+	try {
+		shards = await db.allAllShards<{ key: string; value: string }>(
+			`SELECT key, value FROM schema_meta WHERE key IN ('schema_version', 'schema_hash')`
+		);
+	} catch {
+		return false;
+	}
+	let current = true;
+	for (const shard of shards) {
+		const rows = new Map(shard.results.map((row) => [row.key, row.value]));
+		checkSchemaVersion(rows.get('schema_version') ?? null);
+		if (
+			rows.get('schema_version') !== String(SCHEMA_VERSION) ||
+			rows.get('schema_hash') !== hash
+		) {
+			current = false;
+		}
+	}
+	if (!current) return false;
+	// the append-only triggers guard the audit trail, so a dropped one is put back
+	const present = await db.allAllShards<{ name: string }>(
+		`SELECT name FROM sqlite_master WHERE type = 'trigger'`
+	);
+	return present.every((shard) => {
+		const names = new Set(shard.results.map((row) => row.name));
+		return TRIGGER_NAMES.every((name) => names.has(name));
+	});
+}
+
 export async function applySchema(db: CollegeDBClient): Promise<void> {
+	const hash = await schemaHashOf();
+	if (await schemaCurrent(db, hash)) return;
 	await db.runAllShards(SCHEMA_META_STATEMENT);
 	const stored = await db.allAllShards<{ value: string }>(
 		`SELECT value FROM schema_meta WHERE key = 'schema_version'`
@@ -85,6 +134,11 @@ export async function applySchema(db: CollegeDBClient): Promise<void> {
 		`INSERT INTO schema_meta (key, value) VALUES ('schema_version', ?)
 		 ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
 		[String(SCHEMA_VERSION)]
+	);
+	await db.runAllShards(
+		`INSERT INTO schema_meta (key, value) VALUES ('schema_hash', ?)
+		 ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+		[hash]
 	);
 }
 
