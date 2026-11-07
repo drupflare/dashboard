@@ -18,7 +18,7 @@ export function registerApi(routes: Record<string, Route>): () => void {
 	const cleanups = Object.entries(routes).map(([key, route]) => {
 		const [method, path] = key.split(' ') as [string, string];
 		return registerEndpoint(path, {
-			method: method as 'GET' | 'POST',
+			method: method as 'GET' | 'POST' | 'DELETE',
 			handler: defineEventHandler(async (event) => {
 				const call: Call = {
 					method,

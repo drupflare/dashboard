@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { toApiClientError, useApi } from '~/composables/useApi';
-import { providerOfState } from '~/shared/oauth';
+import { providerOfState, purposeOfState } from '~/shared/oauth';
 
 definePageMeta({ layout: 'auth' });
 useHead({ title: 'Signing In' });
@@ -14,6 +14,7 @@ const session = useSessionStore();
 const phase = ref<'working' | 'link' | 'failed'>('working');
 const message = ref('');
 const linkEmail = ref('');
+const connecting = ref(false);
 
 function fail(text: string) {
 	message.value = text;
@@ -36,6 +37,16 @@ onMounted(async () => {
 	const query: Record<string, string> = { state };
 	if (code) query.code = code;
 	if (error) query.error = error;
+	if (purposeOfState(state) === 'link') {
+		connecting.value = true;
+		try {
+			await useApi().get(`/me/identities/connect/${provider}/callback`, query);
+			await navigateTo(`/account?connected=${provider}`);
+		} catch (cause) {
+			fail(toApiClientError(cause).message);
+		}
+		return;
+	}
 	try {
 		const result = await useApi().get<Result>(`/auth/oauth/${provider}/callback`, query);
 		if (result.status === 'link_required') {
@@ -54,12 +65,18 @@ onMounted(async () => {
 <template>
 	<div class="flex flex-col gap-4">
 		<template v-if="phase === 'working'">
-			<h1 class="text-xl font-bold text-highlighted">Signing You In</h1>
+			<h1 class="text-xl font-bold text-highlighted">
+				{{ connecting ? 'Connecting Your Account' : 'Signing You In' }}
+			</h1>
 			<p
 				role="status"
 				class="text-muted"
 			>
-				Finishing the sign-in with your provider.
+				{{
+					connecting
+						? 'Finishing the connection with your provider.'
+						: 'Finishing the sign-in with your provider.'
+				}}
 			</p>
 		</template>
 		<template v-else-if="phase === 'link'">
@@ -76,7 +93,9 @@ onMounted(async () => {
 			>
 		</template>
 		<template v-else>
-			<h1 class="text-xl font-bold text-highlighted">Sign-In Did Not Finish</h1>
+			<h1 class="text-xl font-bold text-highlighted">
+				{{ connecting ? 'Connection Did Not Finish' : 'Sign-In Did Not Finish' }}
+			</h1>
 			<p
 				role="alert"
 				class="text-muted"
@@ -84,9 +103,9 @@ onMounted(async () => {
 				{{ message }}
 			</p>
 			<UButton
-				to="/login"
+				:to="connecting ? '/account' : '/login'"
 				block
-				>Back to Sign In</UButton
+				>{{ connecting ? 'Back to Account' : 'Back to Sign In' }}</UButton
 			>
 		</template>
 	</div>

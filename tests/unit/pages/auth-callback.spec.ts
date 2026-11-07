@@ -88,6 +88,53 @@ describe('auth callback page', () => {
 		expect(navigate).not.toHaveBeenCalled();
 	});
 
+	it('finishes a connection started from Account and returns there, never signing in', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/me/identities/connect/cloudflare/callback': {
+				status: 201,
+				body: {
+					identity: {
+						id: 'id_1',
+						provider: 'cloudflare',
+						email: null,
+						verified: false,
+						createdAt: '2026-11-07T00:00:00.000Z'
+					}
+				}
+			}
+		});
+		const wrapper = await mountAt('?code=abc&state=cloudflare.link.token');
+		await vi.waitFor(() =>
+			expect(navigate).toHaveBeenCalledWith('/account?connected=cloudflare')
+		);
+		expect(calls.map((call) => call.path)).toEqual([
+			'/api/v1/me/identities/connect/cloudflare/callback'
+		]);
+		expect(calls[0]?.query).toMatchObject({ code: 'abc', state: 'cloudflare.link.token' });
+		expect(wrapper.text()).toContain('Connecting Your Account');
+	});
+
+	it('sends a failed connection back to Account with the server message', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/me/identities/connect/github/callback': {
+				status: 409,
+				body: {
+					code: 'conflict',
+					message: 'This provider account is already connected',
+					details: {},
+					requestId: 'req_cn'
+				}
+			}
+		});
+		const wrapper = await mountAt('?code=abc&state=github.link.token');
+		await vi.waitFor(() =>
+			expect(wrapper.find('[role="alert"]').text()).toContain('already connected')
+		);
+		expect(wrapper.text()).toContain('Connection Did Not Finish');
+		expect(wrapper.find('a[href="/account"]').exists()).toBe(true);
+		expect(navigate).not.toHaveBeenCalled();
+	});
+
 	it('asks to start again, without calling the server, when the link is incomplete', async () => {
 		cleanup = registerApi({});
 		const wrapper = await mountAt('?code=abc&state=nobody.token');

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useApi } from '~/composables/useApi';
-import { OAUTH_CONSENT_TEXT, type OAuthProvider } from '~/shared/oauth';
+import { CLOUDFLARE_CONSENT_TEXT, OAUTH_CONSENT_TEXT, type OAuthProvider } from '~/shared/oauth';
 
 // the server names the providers that have both a client id and a secret, so every button works
 const providers = ref<OAuthProvider[]>([]);
@@ -34,7 +34,18 @@ onMounted(async () => {
 					:key="provider"
 					:provider="provider"
 				/>
-				<p class="text-xs text-muted">{{ OAUTH_CONSENT_TEXT }}</p>
+				<p
+					v-if="providers.some((provider) => provider !== 'cloudflare')"
+					class="text-xs text-muted"
+				>
+					{{ OAUTH_CONSENT_TEXT }}
+				</p>
+				<p
+					v-if="providers.includes('cloudflare')"
+					class="text-xs text-muted"
+				>
+					{{ CLOUDFLARE_CONSENT_TEXT }} Connect it from Account first.
+				</p>
 			</div>
 		</template>
 	</div>

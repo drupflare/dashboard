@@ -39,6 +39,8 @@ beforeEach(() => {
 							requestId: 'r'
 						}
 					},
+		'GET /api/v1/me/identities': { body: { items: [], nextCursor: null } },
+		'GET /api/v1/auth/oauth': { body: { providers: ['github', 'cloudflare'] } },
 		'POST /api/v1/auth/logout': () => {
 			signedIn = false;
 			return { status: 204, body: null };

@@ -40,6 +40,27 @@ describe('sign-in methods', () => {
 		expect(wrapper.text()).toContain('It does not read your repositories');
 	});
 
+	it('names Cloudflare, says what it reads and says to connect it first', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/auth/oauth': { body: { providers: ['cloudflare'] } }
+		});
+		const wrapper = await mountSuspended(Methods);
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Continue with Cloudflare'));
+		expect(wrapper.text()).toContain('reads no zones');
+		expect(wrapper.text()).toContain('Connect it from Account first');
+		expect(wrapper.text()).not.toContain('It does not read your repositories');
+	});
+
+	it('shows both texts when Cloudflare sits beside a provider that shares an email', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/auth/oauth': { body: { providers: ['github', 'cloudflare'] } }
+		});
+		const wrapper = await mountSuspended(Methods);
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Continue with GitHub'));
+		expect(wrapper.text()).toContain('It does not read your repositories');
+		expect(wrapper.text()).toContain('reads no zones');
+	});
+
 	it('shows only the providers the server lists', async () => {
 		cleanup = registerApi({ 'GET /api/v1/auth/oauth': { body: { providers: ['gitlab'] } } });
 		const wrapper = await mountSuspended(Methods);

@@ -4,7 +4,11 @@ useHead({ title: 'Account' });
 
 const session = useSessionStore();
 const colorMode = useColorMode();
+const route = useRoute();
 const signingOut = ref(false);
+const connected = computed(() =>
+	typeof route.query.connected === 'string' ? route.query.connected : undefined
+);
 
 const themes = [
 	{
@@ -67,6 +71,8 @@ async function signOut() {
 					</label>
 				</fieldset>
 			</section>
+
+			<AccountConnections :just-connected="connected" />
 
 			<section class="flex flex-col gap-4">
 				<h2 class="text-lg font-semibold text-highlighted">Sign-In</h2>

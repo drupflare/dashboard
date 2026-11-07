@@ -1,17 +1,18 @@
 <script setup lang="ts">
 import { toApiClientError, useApi } from '~/composables/useApi';
-import type { OAuthProvider } from '~/shared/oauth';
+import { OAUTH_LABELS, type OAuthProvider } from '~/shared/oauth';
 
 const props = defineProps<{ provider: OAuthProvider }>();
 
-const NAMES: Record<OAuthProvider, { label: string; icon: string }> = {
-	github: { label: 'GitHub', icon: 'i-lucide-github' },
-	gitlab: { label: 'GitLab', icon: 'i-lucide-gitlab' },
-	google: { label: 'Google', icon: 'i-lucide-log-in' },
-	microsoft: { label: 'Microsoft', icon: 'i-lucide-log-in' }
+const ICONS: Record<OAuthProvider, string> = {
+	github: 'i-lucide-github',
+	gitlab: 'i-lucide-gitlab',
+	cloudflare: 'i-lucide-cloud',
+	google: 'i-lucide-log-in',
+	microsoft: 'i-lucide-log-in'
 };
 
-const meta = computed(() => NAMES[props.provider]);
+const label = computed(() => OAUTH_LABELS[props.provider]);
 const busy = ref(false);
 const error = ref<string | null>(null);
 
@@ -35,11 +36,11 @@ async function start() {
 			color="neutral"
 			variant="outline"
 			block
-			:icon="meta.icon"
+			:icon="ICONS[provider]"
 			:loading="busy"
 			@click="start"
 		>
-			Continue with {{ meta.label }}
+			Continue with {{ label }}
 		</UButton>
 		<p
 			v-if="error"

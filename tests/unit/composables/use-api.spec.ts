@@ -31,6 +31,16 @@ describe('useApi', () => {
 		expect(session.me).not.toBeNull();
 	});
 
+	it('sends a DELETE and treats the empty answer as success', async () => {
+		cleanup = registerApi({
+			'DELETE /api/v1/me/identities/abc': { status: 204, body: undefined }
+		});
+		await expect(useApi().delete('/me/identities/abc')).resolves.toBeFalsy();
+		expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual([
+			'DELETE /api/v1/me/identities/abc'
+		]);
+	});
+
 	it('clears the session and throws a typed error on a 401', async () => {
 		cleanup = registerApi({
 			'GET /api/v1/me': {
