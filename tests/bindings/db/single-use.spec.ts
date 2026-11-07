@@ -1,5 +1,5 @@
 import type { CollegeDBClient } from '@earth-app/collegedb';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ensureCollegeDB } from '../../../src/server/db/collegedb';
 import {
 	collegeAttemptStore,
@@ -7,8 +7,11 @@ import {
 	issueCode
 } from '../../../src/server/services/email-codes';
 import { collegeOnceStore, type OnceStore } from '../../../src/server/services/single-use';
+import { purgeSingleUse } from '../../../src/server/tasks/single-use-purge';
 import { SECRET, memoryMail } from '../../unit/server/services/auth-support';
 import { openBindings, type Bindings, type OpenBindings } from '../support';
+
+vi.mock('nitropack/runtime', () => ({ defineTask: (task: unknown) => task }));
 
 let open: OpenBindings;
 let env: Bindings;
@@ -90,6 +93,24 @@ describe('single-use records on D1', () => {
 		await once.put(key(), 'new', Date.now() + 60_000);
 		const left = await env.DB.prepare('SELECT count(*) AS n FROM single_use WHERE key = ?')
 			.bind(stale)
+			.first<{ n: number }>();
+		expect(left?.n).toBe(0);
+	});
+
+	it('purges expired records from every shard without touching live ones', async () => {
+		const expired = key();
+		const live = key();
+		const insert = env.DB.prepare(
+			'INSERT INTO single_use (key, value, expires_at) VALUES (?, ?, ?)'
+		);
+		await env.DB.batch([
+			insert.bind(expired, 'old', 1000),
+			insert.bind(live, 'new', Date.now() + 60_000)
+		]);
+		expect(await purgeSingleUse(db, Date.now())).toBeGreaterThanOrEqual(1);
+		expect(await once.get(live, Date.now())).toBe('new');
+		const left = await env.DB.prepare('SELECT count(*) AS n FROM single_use WHERE key = ?')
+			.bind(expired)
 			.first<{ n: number }>();
 		expect(left?.n).toBe(0);
 	});
