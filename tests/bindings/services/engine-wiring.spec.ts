@@ -14,10 +14,13 @@ import {
 	runSiteCreate,
 	type SiteCreateInput
 } from '../../../engine/src/workflows/site-create';
+import { runSiteDelete, type SiteDeleteInput } from '../../../engine/src/workflows/site-delete';
 import reveal from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/first-run-secret.post';
 import sitesCreate from '../../../src/server/api/v1/orgs/[orgId]/sites/index.post';
 import siteRead from '../../../src/server/api/v1/sites/[id]/index.get';
+import { DIRECTORY_KEY } from '../../../src/server/db/collegedb';
 import { ensurePersonalOrganization } from '../../../src/server/db/repos/accounts';
+import { createUser } from '../../../src/server/db/repos/identity';
 import { createSiteOperation } from '../../../src/server/db/repos/operations';
 import { addMember, createOrganization } from '../../../src/server/db/repos/organization';
 import { getReadySite } from '../../../src/server/db/repos/sites';
@@ -29,7 +32,9 @@ import {
 } from '../../../src/server/services/owner-tokens';
 import {
 	collegeBudgets,
+	collegeSiteEntitlements,
 	createSite,
+	deleteSite,
 	resetSiteServices,
 	setSiteServices
 } from '../../../src/server/services/sites';
@@ -106,6 +111,22 @@ const createStarter = {
 	}
 } as unknown as WorkflowStarter;
 
+const deleteStarter = {
+	async create({ id, params }: { id: string; params: unknown }) {
+		if (instances.has(id)) throw new Error('instance exists');
+		instances.add(id);
+		const { runner } = makeRunner(new Map());
+		outcomes.set(
+			id,
+			await runSiteDelete(runner, await engineDeps(), params as SiteDeleteInput)
+		);
+	},
+	async get(id: string) {
+		if (!instances.has(id)) throw new Error('not found');
+		return {};
+	}
+} as unknown as WorkflowStarter;
+
 const engine: EngineBinding = {
 	async fetch(input, init) {
 		const call = new Request(input as string, init);
@@ -115,7 +136,7 @@ const engine: EngineBinding = {
 			now: Date.now(),
 			workflows: {
 				'site-create': createStarter,
-				'site-delete': createStarter,
+				'site-delete': deleteStarter,
 				'site-purge': createStarter,
 				'backup-create': createStarter,
 				'backup-restore': createStarter
@@ -264,6 +285,29 @@ describe('create through the route to a live site', () => {
 			headers: asOtherUser
 		});
 		expect(read.status).toBe(200);
+	});
+
+	it('ends a delete as succeeded and leaves the site tombstoned', async () => {
+		const created = await postCreate(
+			ORG_TWO,
+			{ kind: 'drupal', name: 'doomed-heron' },
+			'wire-delete-create'
+		);
+		const siteId = (created.json as Created).targetIds[0]!;
+		const deleted = await deleteSite(built.sites, {
+			orgId: ORG_TWO,
+			siteId,
+			confirm: 'doomed-heron',
+			idempotencyKey: 'wire-delete'
+		});
+		expect(outcomes.get(deleted.operation.id)).toEqual({ status: 'succeeded' });
+		const row = await rowOf<{ status: string }>(
+			'SELECT status FROM operations WHERE id = ?',
+			deleted.operation.id
+		);
+		expect(row?.status).toBe('succeeded');
+		const site = await rowOf<{ state: string }>('SELECT state FROM sites WHERE id = ?', siteId);
+		expect(site?.state).toBe('tombstoned');
 	});
 
 	it('refuses a replayed start, and a repeated key returns the one operation', async () => {
@@ -437,6 +481,28 @@ describe('free plan limits', () => {
 		);
 		expect(reply.status).toBe(403);
 		expect(reply.json).toMatchObject({ details: { reason: 'free_limit' } });
+	});
+
+	it('does not hold a platform admin to the free limit', async () => {
+		const entitlements = collegeSiteEntitlements(async () => db, {
+			getAccount: async () => null
+		});
+		const admin = await createUser(db, { email: 'cap-admin@example.test' });
+		await db.run(DIRECTORY_KEY, "UPDATE users SET platform_role = 'admin' WHERE id = ?", [
+			admin.id
+		]);
+		const asAdmin = await entitlements.check({
+			orgId: ORG_ONE,
+			userId: admin.id,
+			kind: 'drupal'
+		});
+		expect(asAdmin.allow).toBe(true);
+		const asOwner = await entitlements.check({
+			orgId: ORG_ONE,
+			userId: 'user-1',
+			kind: 'drupal'
+		});
+		expect(asOwner).toMatchObject({ allow: false });
 	});
 });
 

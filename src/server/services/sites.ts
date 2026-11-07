@@ -95,6 +95,7 @@ export function collegeSiteEntitlements(
 		async check({ orgId, userId, kind }) {
 			const db = await getDb();
 			const entitlement = await planOf(orgId);
+			const platformAdmin = (await getUserById(db, userId))?.platformRole === 'admin';
 			const sitesInOrg = await countOrganizationSites(db, orgId);
 			let freeSitesOwnedByUser: number | undefined;
 			if (entitlement.planId === FREE_PLAN_ID) {
@@ -111,6 +112,7 @@ export function collegeSiteEntitlements(
 			const decision = check('site.create', entitlement, {
 				sitesInOrg,
 				freeSitesOwnedByUser,
+				platformAdmin,
 				customWorker: kind === 'custom'
 			});
 			return decision.allow ? { allow: true, entitlement } : decision;
@@ -346,7 +348,7 @@ export async function deleteSite(
 		planDigest: await computePlanDigest(plan),
 		blastRadius: plan.blastRadius,
 		rollbackPoint: plan.rollbackPoint,
-		verification: 'pending',
+		verification: 'not-required',
 		budget: DEFAULT_CHANGE_BUDGET,
 		steps: plan.steps,
 		now: nowUtc().toMillis()

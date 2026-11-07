@@ -141,6 +141,7 @@ describe('POST delete a site', () => {
 		expect(operation).toMatchObject({
 			type: 'site.delete',
 			status: 'planned',
+			verification: 'not-required',
 			targetIds: [siteId]
 		});
 		expect(started).toHaveLength(1);
