@@ -125,6 +125,33 @@ describe('defineApi: definition', () => {
 	});
 });
 
+describe('defineApi: timing', () => {
+	it('logs the stage durations of a request, and the status, without sending them to the client', async () => {
+		setup();
+		const lines: unknown[][] = [];
+		const original = console.info;
+		console.info = (...args: unknown[]) => void lines.push(args);
+		let reply: Reply;
+		try {
+			reply = await send(siteGet, SITE_ROUTE, {
+				path: `/api/v1/sites/${SITE}`,
+				headers: asUser
+			});
+		} finally {
+			console.info = original;
+		}
+		const logged = lines.find((args) => args[0] === 'api.timing');
+		expect(logged).toBeDefined();
+		const entry = JSON.parse(String(logged?.[1]));
+		expect(entry.action).toBe('site.read');
+		expect(entry.status).toBe(reply.status);
+		expect(Object.keys(entry.stages)).toEqual(
+			expect.arrayContaining(['auth', 'throttle', 'load', 'handler'])
+		);
+		expect(JSON.stringify(reply.headers)).not.toContain('stages');
+	});
+});
+
 describe('defineApi: authentication', () => {
 	it('answers 401 with no credential, an unknown cookie and an unknown key', async () => {
 		setup();
@@ -1118,7 +1145,7 @@ describe('defineApi: errors', () => {
 		expect(limits).toHaveLength(3);
 	});
 
-	it('hides an unexpected failure behind Internal error and logs the original', async () => {
+	it('hides an unexpected failure behind fixed text and logs the original', async () => {
 		const route = defineApi({ ...base }, () => {
 			throw new Error('password=hunter2 in db.internal');
 		});
@@ -1126,7 +1153,10 @@ describe('defineApi: errors', () => {
 		const reply = await send(route, '/api/v1/me', { path: '/api/v1/me', headers: asUser });
 		expect(reply.status).toBe(500);
 		expectEnvelope(reply, 'internal');
-		expect(reply.json).toMatchObject({ message: 'Internal error', details: {} });
+		expect(reply.json).toMatchObject({
+			message: 'Something went wrong on our side. Try again.',
+			details: {}
+		});
 		expect(reply.text).not.toContain('hunter2');
 		expect(errors).toHaveLength(1);
 		expect((errors[0] as Error).message).toContain('hunter2');

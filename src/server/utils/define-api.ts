@@ -12,6 +12,7 @@ import {
 	getMethod,
 	getRequestHeader,
 	getRequestURL,
+	getResponseStatus,
 	getRouterParams,
 	parseCookies,
 	setResponseHeader,
@@ -521,10 +522,22 @@ async function serve(
 	setResponseHeader(event, 'X-Request-Id', requestId);
 	// only a route marked public may be cached; a handler can still set its own value
 	if (meta.scope !== 'public') setResponseHeader(event, 'Cache-Control', 'no-store');
+	const stages: Record<string, number> = {};
+	const startedAt = Date.now();
+	let status = 0;
 	try {
-		return await pipeline(event, meta, handler, deps, requestId);
+		const result = await pipeline(event, meta, handler, deps, requestId, stages);
+		status = getResponseStatus(event);
+		return result;
 	} catch (error) {
-		return fail(event, error, requestId, deps);
+		const answer = fail(event, error, requestId, deps);
+		status = getResponseStatus(event);
+		return answer;
+	} finally {
+		console.info(
+			'api.timing',
+			JSON.stringify({ action: meta.action, status, totalMs: Date.now() - startedAt, stages })
+		);
 	}
 }
 
@@ -533,16 +546,25 @@ async function pipeline(
 	meta: AnyApiMeta,
 	handler: (ctx: ApiContext<never, never, never>) => unknown,
 	deps: ApiDeps,
-	requestId: string
+	requestId: string,
+	stages: Record<string, number>
 ): Promise<string | null | Response> {
+	const timed = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+		const at = Date.now();
+		try {
+			return await run();
+		} finally {
+			stages[name] = (stages[name] ?? 0) + (Date.now() - at);
+		}
+	};
 	const method = getMethod(event).toUpperCase();
 	const url = getRequestURL(event);
 	const isPublic = meta.scope === 'public';
 
 	negotiateContract(event, deps, requestId);
 
-	const principal = isPublic ? null : await authenticate(event, deps);
-	await throttle(event, meta, principal, deps);
+	const principal = isPublic ? null : await timed('auth', () => authenticate(event, deps));
+	await timed('throttle', () => throttle(event, meta, principal, deps));
 	if (!isPublic && principal === null) {
 		throw new ApiError('unauthenticated', 'Authentication is required');
 	}
@@ -596,13 +618,15 @@ async function pipeline(
 	let facts: Facts | null = null;
 	let decision: AllowDecision | null = null;
 	if (principal !== null && meta.scope !== 'public') {
-		const loaded = await deps.load({
-			principal,
-			scope: meta.scope,
-			action: meta.action,
-			params: rawParams,
-			access: meta.scope === 'admin' ? ((await deps.access?.(event)) ?? null) : null
-		});
+		const loaded = await timed('load', async () =>
+			deps.load({
+				principal,
+				scope: meta.scope,
+				action: meta.action,
+				params: rawParams,
+				access: meta.scope === 'admin' ? ((await deps.access?.(event)) ?? null) : null
+			})
+		);
 		if (loaded === null) throw new ApiError('not_found', 'Not found');
 		({ resource, facts } = loaded);
 		const result = authorize({ principal, action: meta.action, resource, facts });
@@ -637,16 +661,18 @@ async function pipeline(
 				decision.via === 'support-grant' ||
 				decision.via === 'break-glass';
 			if (audited && decision.audit.length > 0) {
-				await deps.audit({
-					requestId,
-					principal,
-					action: meta.action as Action,
-					via: decision.via,
-					orgIds: decision.audit,
-					resource,
-					method,
-					path: url.pathname
-				});
+				await timed('audit', () =>
+					deps.audit({
+						requestId,
+						principal,
+						action: meta.action as Action,
+						via: decision.via,
+						orgIds: decision.audit,
+						resource,
+						method,
+						path: url.pathname
+					})
+				);
 			}
 			if (decision.notifyOwners !== undefined) {
 				await deps.notifyOwners({
@@ -660,18 +686,20 @@ async function pipeline(
 		}
 
 		const status = meta.successStatus ?? 200;
-		const result = await handler({
-			event,
-			requestId,
-			principal,
-			params,
-			query,
-			body,
-			resource,
-			facts,
-			decision,
-			idempotencyKey
-		} as ApiContext<never, never, never>);
+		const result = await timed('handler', async () =>
+			handler({
+				event,
+				requestId,
+				principal,
+				params,
+				query,
+				body,
+				resource,
+				facts,
+				decision,
+				idempotencyKey
+			} as ApiContext<never, never, never>)
+		);
 		if (result instanceof Response) {
 			if (storeKey !== undefined) {
 				throw new Error('defineApi: a raw response cannot be stored for replay');
