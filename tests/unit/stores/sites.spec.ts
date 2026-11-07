@@ -17,6 +17,7 @@ const site = (id: string, orgId: string): SiteSummary => ({
 	ring: 'R1',
 	primaryHostname: null,
 	hostnames: [],
+	admin: { username: null, email: null, password: 'unknown' },
 	createdAt: '2026-01-01T00:00:00Z',
 	updatedAt: '2026-01-01T00:00:00Z'
 });
@@ -101,7 +102,7 @@ describe('sites store', () => {
 });
 
 describe('sites store remove', () => {
-	const deletePath = 'DELETE /api/v1/orgs/org_a/sites/site_1';
+	const deletePath = 'POST /api/v1/orgs/org_a/sites/site_1/delete';
 	const started = {
 		id: 'op_del1',
 		type: 'site.delete',
@@ -120,7 +121,7 @@ describe('sites store remove', () => {
 		const operation = await sites.remove('org_a', 'site_1', 'Site site_1', 'key-delete-1');
 
 		expect(operation).toMatchObject({ id: 'op_del1', type: 'site.delete' });
-		const call = calls.find((entry) => entry.method === 'DELETE');
+		const call = calls.find((entry) => entry.path.endsWith('/delete'));
 		expect(call?.body).toEqual({ confirm: 'Site site_1' });
 		expect(call?.headers['idempotency-key']).toBe('key-delete-1');
 		expect(sites.lists.get('org_a')).toBeUndefined();

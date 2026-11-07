@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import siteDelete from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/index.delete';
+import siteDelete from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/delete.post';
 import { ensureCollegeDB } from '../../../src/server/db/collegedb';
 import { withAtomicBatch } from '../../../src/server/db/repos/atomic-shards';
 import { getReadySite, markSiteReady, setSiteState } from '../../../src/server/db/repos/sites';
@@ -40,7 +40,7 @@ afterEach(() => {
 	resetApiDeps();
 });
 
-const ROUTE = '/api/v1/orgs/:orgId/sites/:id';
+const ROUTE = '/api/v1/orgs/:orgId/sites/:id/delete';
 
 // the caller is an owner of ORG with a fresh sign-in; the site is read from the path like the real loader does
 function asOwner(orgId = ORG) {
@@ -106,8 +106,8 @@ const remove = (
 	options: { orgId?: string; confirm?: string; key?: string | null; headers?: object } = {}
 ): Promise<Reply> =>
 	sendRequest(siteDelete, ROUTE, {
-		method: 'DELETE',
-		path: `/api/v1/orgs/${options.orgId ?? ORG}/sites/${siteId}`,
+		method: 'POST',
+		path: `/api/v1/orgs/${options.orgId ?? ORG}/sites/${siteId}/delete`,
 		headers: {
 			...(options.headers ?? asUser),
 			...(options.key === null ? {} : { 'idempotency-key': options.key ?? key() })
@@ -124,7 +124,7 @@ const operationRows = async (siteId: string) =>
 			.all<{ id: string; type: string; status: string }>()
 	).results;
 
-describe('DELETE a site', () => {
+describe('POST delete a site', () => {
 	it('answers 202 with a site.delete operation and starts the workflow once with the hostnames', async () => {
 		const started = acceptingPort();
 		const { siteId } = await readySite(ORG, 'delete-start-site');

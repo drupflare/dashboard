@@ -28,6 +28,7 @@ import {
 import { PLACEHOLDER_RATES, resetApiDeps } from '../../../src/server/utils/define-api';
 import { LIMIT_CLASSES, ROUTE_CLASSES } from '../../../src/server/utils/rate-limit';
 import { isSessionOnly, type Action } from '../../../src/shared/permissions';
+import { SESSION_HINT_COOKIE } from '../../../src/shared/session-hint';
 import { facts, fresh } from '../domain/fixtures';
 import { asKey, send as sendRoute, setup, type Reply } from '../server/fixtures/harness';
 import { SECRET, harness, useClock, type Harness } from '../server/services/auth-support';
@@ -83,6 +84,14 @@ describe('route table', () => {
 		};
 		walk(API_ROOT);
 		expect(clashes).toEqual([]);
+	});
+
+	it('sends no body on a DELETE route, since the Cloudflare entry never reads one', async () => {
+		const { routes } = await scanRoutes();
+		const withBody = routes
+			.filter((route) => route.method === 'delete' && route.meta.body !== undefined)
+			.map((route) => route.rel);
+		expect(withBody).toEqual([]);
 	});
 
 	it('gives every route a rate class that has a rule', async () => {
@@ -273,7 +282,7 @@ describe('secrets stay out of replies, cookies, audit rows and storage', () => {
 		expect(Object.keys(h.kv.dump()).join('\n')).not.toContain(token);
 	});
 
-	it('sets only __Host- cookies, each secure, http-only, rooted and without a domain', async () => {
+	it('sets __Host- cookies that are secure, http-only, rooted and host-only, plus the hint', async () => {
 		const replies: Reply[] = [];
 		await call(codeRequest, '/api/v1/auth/code/request', {
 			method: 'POST',
@@ -287,8 +296,15 @@ describe('secrets stay out of replies, cookies, audit rows and storage', () => {
 				json: { email: 'ada@example.com', code: h.mail.lastCode() }
 			})
 		);
-		const lines = replies.flatMap((reply) => reply.headers.getSetCookie());
+		const all = replies.flatMap((reply) => reply.headers.getSetCookie());
+		const hint = all.filter((line) => line.startsWith(`${SESSION_HINT_COOKIE}=`));
+		const lines = all.filter((line) => !line.startsWith(`${SESSION_HINT_COOKIE}=`));
 		expect(lines.length).toBeGreaterThan(0);
+		expect(hint).toHaveLength(1);
+		expect(hint[0]).toMatch(/^[^;]+=1(;|$)/);
+		expect(hint[0]).toMatch(/;\s*Secure/i);
+		expect(hint[0]).not.toMatch(/;\s*HttpOnly/i);
+		expect(hint[0]).not.toMatch(/;\s*Domain=/i);
 		for (const line of lines) {
 			expect(line.startsWith('__Host-'), line).toBe(true);
 			expect(line).toMatch(/;\s*Secure/i);

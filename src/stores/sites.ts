@@ -1,5 +1,6 @@
 import type { Operation } from '@contracts/operations';
 import type {
+	AdminPasswordState,
 	SITE_STATES,
 	SiteCategory,
 	SiteConfig,
@@ -27,6 +28,7 @@ export interface SiteSummary {
 	primaryHostname: string | null;
 	hostnames: string[];
 	release?: { current: string | null; available: string | null };
+	admin: { username: string | null; email: string | null; password: AdminPasswordState };
 	createdAt: string;
 	updatedAt: string;
 }
@@ -143,16 +145,16 @@ export const useSitesStore = defineStore('sites', {
 			const fetcher = $fetch as unknown as (
 				url: string,
 				options: {
-					method: 'DELETE';
+					method: 'POST';
 					headers: Record<string, string>;
 					body: Record<string, unknown>;
 				}
 			) => Promise<Operation>;
 			try {
 				const operation = await fetcher(
-					`/api/v1/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}`,
+					`/api/v1/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/delete`,
 					{
-						method: 'DELETE',
+						method: 'POST',
 						headers: { 'Idempotency-Key': idempotencyKey },
 						body: { confirm }
 					}

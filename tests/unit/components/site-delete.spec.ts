@@ -20,7 +20,7 @@ mockNuxtImport('navigateTo', () => navigate);
 const ORG = 'org_personal';
 const SITE = 'site_1';
 const NAME = 'quiet-oak-harbor';
-const path = `DELETE /api/v1/orgs/${ORG}/sites/${SITE}`;
+const path = `POST /api/v1/orgs/${ORG}/sites/${SITE}/delete`;
 
 const soon = () => new Date(Date.now() + 5 * 60 * 1000).toISOString();
 const operation = { id: 'op_del1', type: 'site.delete', status: 'planned', targetIds: [SITE] };
@@ -89,10 +89,10 @@ describe('delete a site', () => {
 		const wrapper = await mountDelete();
 		await openDialog(wrapper);
 		const text = dialog()!.textContent ?? '';
-		expect(text).toContain(`This deletes ${NAME}.`);
+		expect(text).toContain(`Delete ${NAME} from this organization.`);
 		expect(text).toContain('stops serving');
 		expect(text).toContain('reserved for 90 days');
-		expect(text).toContain('Backups are kept');
+		expect(text).toContain('its backups are kept');
 		expect(text).toContain('no undo');
 	});
 
@@ -154,7 +154,7 @@ describe('delete a site', () => {
 		await type(NAME);
 		inDialog('Delete Site')!.click();
 
-		await vi.waitFor(() => expect(dialog()?.textContent).toContain('Confirm It Is You'));
+		await vi.waitFor(() => expect(dialog()?.textContent).toContain('Confirm Your Identity'));
 		expect(calls).toHaveLength(0);
 	});
 
@@ -175,7 +175,7 @@ describe('delete a site', () => {
 		await type(NAME);
 		inDialog('Delete Site')!.click();
 
-		await vi.waitFor(() => expect(dialog()?.textContent).toContain('Confirm It Is You'));
+		await vi.waitFor(() => expect(dialog()?.textContent).toContain('Confirm Your Identity'));
 		expect(navigate).not.toHaveBeenCalled();
 	});
 
