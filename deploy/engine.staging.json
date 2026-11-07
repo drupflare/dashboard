@@ -1,0 +1,14 @@
+{
+	"workers_dev": false,
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "drupflare-dashboard-db-stage",
+			"database_id": "488f6f94-d254-4074-abf7-a55f67aa2ffe"
+		}
+	],
+	"kv_namespaces": [
+		{ "binding": "KV", "id": "a453c48bd2784736befe9ce372fe5807" },
+		{ "binding": "HOSTS_KV", "id": "dd28ab148af84001ac883c96b4b5042b" }
+	]
+}

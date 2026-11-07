@@ -1,0 +1,30 @@
+{
+	"name": "drupflare-dashboard-stage",
+	"workers_dev": false,
+	"preview_urls": false,
+	"routes": [{ "pattern": "staging-app.drupflare.com", "custom_domain": true }],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "drupflare-dashboard-db-stage",
+			"database_id": "488f6f94-d254-4074-abf7-a55f67aa2ffe"
+		}
+	],
+	"kv_namespaces": [
+		{ "binding": "KV", "id": "a453c48bd2784736befe9ce372fe5807" },
+		{ "binding": "CACHE", "id": "ab4fc32143bf4dcf8968ae6fa8157010" },
+		{ "binding": "HOSTS_KV", "id": "dd28ab148af84001ac883c96b4b5042b" }
+	],
+	"r2_buckets": [{ "binding": "BLOB", "bucket_name": "drupflare-dashboard-blob-stage" }],
+	"services": [{ "binding": "ENGINE", "service": "drupflare-engine-stage" }],
+	"vars": {
+		"MANAGED_ACCOUNT_ID": "2bba2ae752a5bb611580fdccbce6d200",
+		"MANAGED_HOST_SUFFIX": "drupflare.app",
+		"RELEASE_DRUPAL": "v1.0.5",
+		"WEBAUTHN_RP_ID": "staging-app.drupflare.com",
+		"WEBAUTHN_ORIGIN": "https://staging-app.drupflare.com",
+		"NUXT_BASE_URL": "https://staging-app.drupflare.com",
+		"ACCESS_TEAM": "gmitch215",
+		"ACCESS_AUD": "48648928e71eb13546e39a4633352e23f3fbd4348545f92b25db1467fc4c4d9e"
+	}
+}

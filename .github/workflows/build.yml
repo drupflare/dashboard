@@ -92,3 +92,67 @@ jobs:
           for s in test:api; do
             jq -e --arg s "$s" '.scripts[$s]' package.json > /dev/null || echo "::notice::$s is not in package.json, so this lane ran nothing"
           done
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [check, api]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+
+    concurrency:
+      group: deploy-staging
+      cancel-in-progress: false
+
+    permissions:
+      contents: read
+      packages: read
+
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 'latest'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Cache the Bun Install Cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Build
+        run: bun run build
+      - name: Render the Deploy Configs
+        run: |
+          bun scripts/render-deploy.ts dispatch staging
+          bun scripts/render-deploy.ts engine staging
+          bun scripts/render-deploy.ts dashboard staging
+      - name: Deploy the Dispatch Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: dispatch
+          command: deploy -c wrangler.deploy.json
+      - name: Deploy the Engine Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: engine
+          command: deploy -c wrangler.deploy.json
+      - name: Deploy the Dashboard
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy -c .output/server/wrangler.deploy.json

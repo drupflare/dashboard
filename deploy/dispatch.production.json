@@ -1,0 +1,4 @@
+{
+	"workers_dev": false,
+	"kv_namespaces": [{ "binding": "HOSTS_KV", "id": "1b85258201cc47c4bd00ce53a4aabf11" }]
+}

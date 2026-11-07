@@ -116,11 +116,31 @@ jobs:
         run: bun run build
       - name: Check the Wrangler Bindings
         run: bun run check:wrangler
-      - name: Deploy to Production
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: ./node_modules/.bin/wrangler deploy -c .output/server/wrangler.json
+      - name: Render the Deploy Configs
+        run: |
+          bun scripts/render-deploy.ts dispatch production
+          bun scripts/render-deploy.ts engine production
+          bun scripts/render-deploy.ts dashboard production
+      - name: Deploy the Dispatch Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: dispatch
+          command: deploy -c wrangler.deploy.json
+      - name: Deploy the Engine Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: engine
+          command: deploy -c wrangler.deploy.json
+      - name: Deploy the Dashboard
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy -c .output/server/wrangler.deploy.json
 
   publish:
     name: Publish the Release
