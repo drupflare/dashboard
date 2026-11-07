@@ -150,7 +150,7 @@ function changeEmail() {
 					autocomplete="one-time-code"
 					maxlength="6"
 					required
-					:class="inputClass"
+					:class="[inputClass, 'text-center font-mono text-2xl tracking-widest']"
 					:aria-invalid="codeError ? 'true' : undefined"
 					:aria-describedby="describedBy"
 				/>

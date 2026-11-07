@@ -43,51 +43,47 @@ const chosen = computed(() => props.templates.find((t) => t.id === selected.valu
 			class="flex flex-col gap-3"
 		>
 			<legend class="mb-2 text-sm font-medium text-default">{{ group.title }}</legend>
-			<template
+			<label
 				v-for="template in templates.filter((t) => t.category === group.category)"
 				:key="template.id"
+				:for="`template-${template.id}`"
+				class="flex cursor-pointer items-start gap-3 rounded-lg border border-default p-4 has-checked:border-brand-600 has-checked:bg-muted has-disabled:cursor-default has-disabled:opacity-70 dark:has-checked:border-brand-400"
 			>
-				<div class="flex items-start gap-3 rounded-lg border border-default p-4">
-					<input
-						:id="`template-${template.id}`"
-						v-model="selected"
-						type="radio"
-						name="template"
-						:value="template.id"
-						:disabled="!choosable(template)"
-						class="mt-1 size-4 accent-primary focus-visible:ring-2 focus-visible:ring-primary"
-					/>
-					<div class="flex flex-col gap-1">
-						<label
-							:for="`template-${template.id}`"
-							class="font-medium text-highlighted"
-							>{{ template.name }}</label
-						>
-						<span
-							v-if="!template.free"
-							class="inline-flex items-center gap-1.5 text-sm text-amber-800 dark:text-amber-300"
-						>
-							<UIcon
-								name="i-lucide-tag"
-								class="size-4"
-								aria-hidden="true"
-							/>
-							Paid
-						</span>
-						<span
-							v-if="!choosable(template)"
-							class="inline-flex items-center gap-1.5 text-sm text-muted"
-						>
-							<UIcon
-								name="i-lucide-clock"
-								class="size-4"
-								aria-hidden="true"
-							/>
-							{{ unavailableLabel(template) }}
-						</span>
-					</div>
-				</div>
-			</template>
+				<input
+					:id="`template-${template.id}`"
+					v-model="selected"
+					type="radio"
+					name="template"
+					:value="template.id"
+					:disabled="!choosable(template)"
+					class="mt-1 size-4 accent-primary"
+				/>
+				<span class="flex flex-col gap-1">
+					<span class="font-medium text-highlighted">{{ template.name }}</span>
+					<span
+						v-if="!template.free"
+						class="inline-flex items-center gap-1.5 text-sm text-amber-800 dark:text-amber-300"
+					>
+						<UIcon
+							name="i-lucide-tag"
+							class="size-4"
+							aria-hidden="true"
+						/>
+						Paid
+					</span>
+					<span
+						v-if="!choosable(template)"
+						class="inline-flex items-center gap-1.5 text-sm text-muted"
+					>
+						<UIcon
+							name="i-lucide-clock"
+							class="size-4"
+							aria-hidden="true"
+						/>
+						{{ unavailableLabel(template) }}
+					</span>
+				</span>
+			</label>
 		</fieldset>
 		<p
 			v-if="chosen && !chosen.free"

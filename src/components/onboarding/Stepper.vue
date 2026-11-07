@@ -12,11 +12,11 @@ const steps: readonly OnboardingStep[] = [1, 2, 3];
 			<li
 				v-for="n in steps"
 				:key="n"
-				class="inline-flex items-center gap-1.5"
+				class="inline-flex items-center gap-1.5 border-b-2 border-transparent pb-1"
 				:aria-current="n === step ? 'step' : undefined"
 				:class="
 					n === step
-						? 'font-semibold text-highlighted'
+						? 'border-brand-600 font-semibold text-highlighted dark:border-brand-400'
 						: n < step
 							? 'text-leaf-700 dark:text-leaf-300'
 							: 'text-muted'
@@ -32,7 +32,7 @@ const steps: readonly OnboardingStep[] = [1, 2, 3];
 		</ol>
 		<p
 			role="status"
-			class="text-sm text-muted"
+			class="sr-only"
 		>
 			Step {{ step }} of 3: {{ STEP_TITLES[step] }}
 		</p>

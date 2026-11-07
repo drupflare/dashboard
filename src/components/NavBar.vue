@@ -12,7 +12,7 @@ async function signOut() {
 
 <template>
 	<header class="border-b border-default bg-default">
-		<div class="flex flex-wrap items-center gap-4 px-4 py-3">
+		<div class="mx-auto flex max-w-7xl flex-wrap items-center gap-4 px-4 py-3">
 			<NuxtLink
 				to="/sites"
 				class="rounded-md"

@@ -20,10 +20,11 @@ const planes = [
 <template>
 	<fieldset class="flex flex-col gap-3">
 		<legend class="mb-2 text-sm font-medium text-default">Hosting Location</legend>
-		<div
+		<label
 			v-for="plane in planes"
 			:key="plane.id"
-			class="flex items-start gap-3 rounded-lg border border-default p-4"
+			:for="`plane-${plane.id}`"
+			class="flex cursor-pointer items-start gap-3 rounded-lg border border-default p-4 has-checked:border-brand-600 has-checked:bg-muted has-disabled:cursor-default has-disabled:opacity-70 dark:has-checked:border-brand-400"
 		>
 			<input
 				:id="`plane-${plane.id}`"
@@ -32,15 +33,11 @@ const planes = [
 				:value="plane.id"
 				:checked="plane.id === 'managed'"
 				:disabled="plane.soon"
-				class="mt-1 size-4 accent-primary focus-visible:ring-2 focus-visible:ring-primary"
+				class="mt-1 size-4 accent-primary"
 			/>
-			<div class="flex flex-col gap-1">
-				<label
-					:for="`plane-${plane.id}`"
-					class="font-medium text-highlighted"
-					>{{ plane.name }}</label
-				>
-				<p class="text-sm text-muted">{{ plane.hint }}</p>
+			<span class="flex flex-col gap-1">
+				<span class="font-medium text-highlighted">{{ plane.name }}</span>
+				<span class="text-sm text-muted">{{ plane.hint }}</span>
 				<span
 					v-if="plane.soon"
 					class="inline-flex items-center gap-1.5 text-sm text-muted"
@@ -52,7 +49,7 @@ const planes = [
 					/>
 					Coming Soon
 				</span>
-			</div>
-		</div>
+			</span>
+		</label>
 	</fieldset>
 </template>

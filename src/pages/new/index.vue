@@ -85,10 +85,10 @@ onMounted(() => {
 <template>
 	<ClientOnly>
 		<div class="flex max-w-3xl flex-col gap-6">
-			<div>
-				<h1 class="text-2xl font-semibold text-highlighted">Create a Site</h1>
-				<p class="text-sm text-muted">Three steps. Skip any step that has a default.</p>
-			</div>
+			<UiPageHeader
+				title="Create a Site"
+				text="Three steps. Skip any step that has a default."
+			/>
 
 			<OnboardingStepper :step="step" />
 

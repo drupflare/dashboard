@@ -51,15 +51,17 @@ function retryPage() {
 <template>
 	<ClientOnly>
 		<div class="flex flex-col gap-6">
-			<div>
-				<h1 class="text-2xl font-semibold text-highlighted">Sites</h1>
-				<p
-					v-if="org.current"
-					class="text-sm text-muted"
+			<UiPageHeader
+				title="Sites"
+				:text="org.current?.name"
+			>
+				<UButton
+					v-if="view === 'list'"
+					to="/new"
+					icon="i-lucide-plus"
+					>Create a Site</UButton
 				>
-					{{ org.current.name }}
-				</p>
-			</div>
+			</UiPageHeader>
 
 			<UiErrorState
 				v-if="view === 'session-error'"

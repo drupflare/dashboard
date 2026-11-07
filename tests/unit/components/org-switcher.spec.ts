@@ -1,6 +1,6 @@
 import { mountSuspended } from '@nuxt/test-utils/runtime';
 import { flushPromises } from '@vue/test-utils';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import OrgSwitcher from '~/components/OrgSwitcher.vue';
 import { useOrgStore } from '~/stores/org';
 import { useSessionStore } from '~/stores/session';
@@ -27,6 +27,16 @@ afterEach(() => {
 });
 
 describe('OrgSwitcher', () => {
+	it('loads the organizations itself when the page did not', async () => {
+		const wrapper = await mountSuspended(OrgSwitcher);
+		await vi.waitFor(() =>
+			expect(wrapper.findAll('option').map((option) => option.text())).toEqual([
+				'Personal',
+				'Agency'
+			])
+		);
+	});
+
 	it('lists the organizations and drops a stored id that is no longer one of them', async () => {
 		document.cookie = 'drupflare_org=org_removed; path=/';
 		await useOrgStore().ensure();

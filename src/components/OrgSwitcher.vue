@@ -2,6 +2,11 @@
 const org = useOrgStore();
 const selectId = useId();
 
+// pages without the org middleware, like admin, would otherwise leave the list empty
+onMounted(() => {
+	void org.ensure();
+});
+
 function onChange(event: Event) {
 	org.select((event.target as HTMLSelectElement).value);
 }
