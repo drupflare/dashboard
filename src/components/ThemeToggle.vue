@@ -18,12 +18,23 @@ function next() {
 </script>
 
 <template>
-	<UButton
-		color="neutral"
-		variant="ghost"
-		:icon="current.icon"
-		@click="next"
-	>
-		Theme: {{ current.label }}
-	</UButton>
+	<ClientOnly>
+		<UButton
+			color="neutral"
+			variant="ghost"
+			:icon="current.icon"
+			:aria-label="`Theme: ${current.label}. Switch theme`"
+			:title="`Theme: ${current.label}`"
+			@click="next"
+		/>
+		<template #fallback>
+			<UButton
+				color="neutral"
+				variant="ghost"
+				icon="i-lucide-monitor"
+				aria-label="Theme"
+				disabled
+			/>
+		</template>
+	</ClientOnly>
 </template>

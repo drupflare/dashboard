@@ -4,7 +4,8 @@ export default defineAppConfig({
 	ui: {
 		colors: {
 			primary: 'brand',
-			success: 'leaf'
+			success: 'leaf',
+			neutral: 'ink'
 		},
 		button: {
 			compoundVariants: [
