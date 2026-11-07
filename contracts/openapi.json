@@ -2873,6 +2873,18 @@
 															"pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
 														}
 													},
+													"release": {
+														"type": "object",
+														"properties": {
+															"current": {
+																"type": ["string", "null"]
+															},
+															"available": {
+																"type": ["string", "null"]
+															}
+														},
+														"required": ["current", "available"]
+													},
 													"createdAt": {
 														"type": "string",
 														"format": "date-time",
@@ -2897,6 +2909,7 @@
 													"ring",
 													"primaryHostname",
 													"hostnames",
+													"release",
 													"createdAt",
 													"updatedAt"
 												]
@@ -3240,9 +3253,327 @@
 				}
 			}
 		},
-		"/api/v1/orgs/{orgId}/sites/{siteId}/backups": {
+		"/api/v1/orgs/{orgId}/sites/{id}": {
+			"delete": {
+				"operationId": "deleteApiV1OrgsOrgIdSitesId",
+				"summary": "Delete a site",
+				"description": "Starts the delete of the site in the path and returns its operation. The body names the site: confirm must equal the site's name. The site stops serving once the operation tombstones it, and its address is held for 90 days. Backups are kept. Send an Idempotency-Key header; a repeat returns the same operation. Answers 409 while another change to the site is running.",
+				"tags": ["sites"],
+				"x-action": "site.delete",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }, { "apiKey": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": { "confirm": { "type": "string", "maxLength": 256 } },
+								"required": ["confirm"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^op_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"type": {
+											"type": "string",
+											"enum": [
+												"site.create",
+												"site.adopt",
+												"site.import",
+												"migration.cutover",
+												"estate.assess",
+												"site.upgrade",
+												"site.rollback",
+												"site.delete",
+												"site.restore",
+												"site.purge",
+												"site.transfer",
+												"config.apply",
+												"git.pull",
+												"git.preview",
+												"modify.apply",
+												"module.install",
+												"module.enable",
+												"domain.attach",
+												"backup.create",
+												"backup.verify",
+												"backup.restore",
+												"backup.export",
+												"env.create",
+												"env.fork",
+												"env.promote",
+												"env.delete",
+												"preview.create",
+												"preview.delete",
+												"repair.run",
+												"node.pair",
+												"node.command",
+												"fleet.upgrade",
+												"repo.install"
+											]
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"planned",
+												"awaiting-approval",
+												"running",
+												"verifying",
+												"succeeded",
+												"failed",
+												"cancelled",
+												"rolled-back"
+											]
+										},
+										"idempotencyKey": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 128
+										},
+										"targetIds": {
+											"type": "array",
+											"items": { "type": "string", "minLength": 1 }
+										},
+										"preconditions": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"planDigest": {
+											"type": "string",
+											"pattern": "^sha256:[0-9a-f]{64}$"
+										},
+										"fencingEpoch": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"blastRadius": {
+											"type": "object",
+											"properties": {
+												"sites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"destructiveSites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"productionDeploys": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											},
+											"required": [
+												"sites",
+												"destructiveSites",
+												"productionDeploys"
+											]
+										},
+										"rollbackPoint": { "type": ["string", "null"] },
+										"cursor": { "type": ["string", "null"] },
+										"steps": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"running",
+															"succeeded",
+															"failed",
+															"skipped"
+														]
+													},
+													"attempt": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"startedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"finishedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"error": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"state",
+													"attempt",
+													"startedAt",
+													"finishedAt",
+													"error"
+												]
+											}
+										},
+										"verification": {
+											"type": "string",
+											"enum": ["pending", "passed", "failed", "not-required"]
+										},
+										"finalObservation": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"at": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														"summary": { "type": "string" }
+													},
+													"required": ["at", "summary"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"budget": {
+											"type": "object",
+											"properties": {
+												"maxDestructiveSites": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"maxConcurrentProductionDeploys": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"elevated": { "type": "boolean" },
+												"bulkDeleteConfirmation": {
+													"type": ["string", "null"]
+												}
+											},
+											"required": [
+												"maxDestructiveSites",
+												"maxConcurrentProductionDeploys",
+												"elevated",
+												"bulkDeleteConfirmation"
+											]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"type",
+										"status",
+										"idempotencyKey",
+										"targetIds",
+										"preconditions",
+										"planDigest",
+										"fencingEpoch",
+										"blastRadius",
+										"rollbackPoint",
+										"cursor",
+										"steps",
+										"verification",
+										"finalObservation",
+										"budget",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/backups": {
 			"get": {
-				"operationId": "getApiV1OrgsOrgIdSitesSiteIdBackups",
+				"operationId": "getApiV1OrgsOrgIdSitesIdBackups",
 				"summary": "List the backups of a site",
 				"description": "Lists the backups of the site in the path, newest first. A backup too large for a restore says why and can still be exported.",
 				"tags": ["sites"],
@@ -3257,7 +3588,7 @@
 						"schema": { "type": "string", "minLength": 1 }
 					},
 					{
-						"name": "siteId",
+						"name": "id",
 						"in": "path",
 						"required": true,
 						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
@@ -3353,7 +3684,7 @@
 				}
 			},
 			"post": {
-				"operationId": "postApiV1OrgsOrgIdSitesSiteIdBackups",
+				"operationId": "postApiV1OrgsOrgIdSitesIdBackups",
 				"summary": "Back up a site",
 				"description": "Starts a backup of the site in the path and returns its operation. The dump is stored without secrets. A backup reads verified false until a scratch restore has proved it. Send an Idempotency-Key header; a repeat returns the same operation.",
 				"tags": ["sites"],
@@ -3368,7 +3699,7 @@
 						"schema": { "type": "string", "minLength": 1 }
 					},
 					{
-						"name": "siteId",
+						"name": "id",
 						"in": "path",
 						"required": true,
 						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
@@ -3670,9 +4001,9 @@
 				}
 			}
 		},
-		"/api/v1/orgs/{orgId}/sites/{siteId}/backups/{backupId}/export": {
+		"/api/v1/orgs/{orgId}/sites/{id}/backups/{backupId}/export": {
 			"get": {
-				"operationId": "getApiV1OrgsOrgIdSitesSiteIdBackupsBackupIdExport",
+				"operationId": "getApiV1OrgsOrgIdSitesIdBackupsBackupIdExport",
 				"summary": "Download a backup",
 				"description": "Streams the backup as one SQL file. It needs a signed-in session, so an API key is refused. The dump carries no secrets. A backup of another organisation is not found. An audit row is written before the download starts.",
 				"tags": ["sites"],
@@ -3687,7 +4018,7 @@
 						"schema": { "type": "string", "minLength": 1 }
 					},
 					{
-						"name": "siteId",
+						"name": "id",
 						"in": "path",
 						"required": true,
 						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
@@ -3723,9 +4054,9 @@
 				}
 			}
 		},
-		"/api/v1/orgs/{orgId}/sites/{siteId}/backups/{backupId}/restore": {
+		"/api/v1/orgs/{orgId}/sites/{id}/backups/{backupId}/restore": {
 			"post": {
-				"operationId": "postApiV1OrgsOrgIdSitesSiteIdBackupsBackupIdRestore",
+				"operationId": "postApiV1OrgsOrgIdSitesIdBackupsBackupIdRestore",
 				"summary": "Restore a backup into a site",
 				"description": "Starts a restore of the backup in the path into another site of the same organisation, or the same site, and returns its operation. The restore replaces the target database. A backup that is too large for a restore is refused. Send an Idempotency-Key header; a repeat returns the same operation.",
 				"tags": ["sites"],
@@ -3740,7 +4071,7 @@
 						"schema": { "type": "string", "minLength": 1 }
 					},
 					{
-						"name": "siteId",
+						"name": "id",
 						"in": "path",
 						"required": true,
 						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
@@ -4052,9 +4383,9 @@
 				}
 			}
 		},
-		"/api/v1/orgs/{orgId}/sites/{siteId}/first-run-secret": {
+		"/api/v1/orgs/{orgId}/sites/{id}/first-run-secret": {
 			"post": {
-				"operationId": "postApiV1OrgsOrgIdSitesSiteIdFirstRunSecret",
+				"operationId": "postApiV1OrgsOrgIdSitesIdFirstRunSecret",
 				"summary": "Reveal the first admin password",
 				"description": "Returns the admin password the new site generated, once. It needs a signed-in session, so an API key is refused. A second call, an expired password and a site of another organisation are all not found. Do not send an Idempotency-Key header: a replayed answer would store the password.",
 				"tags": ["sites"],
@@ -4069,7 +4400,7 @@
 						"schema": { "type": "string", "minLength": 1 }
 					},
 					{
-						"name": "siteId",
+						"name": "id",
 						"in": "path",
 						"required": true,
 						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
@@ -4099,6 +4430,639 @@
 									},
 									"required": ["kind", "value"],
 									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/health": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdSitesIdHealth",
+				"summary": "Read the health of a site",
+				"description": "Reads the site live through its own hostname and returns its health tree, whether it answers, and the readiness checks. The answer is kept for 15 seconds per site. A site that does not answer is reported as not responding, not as an error. A site of another organisation is not found.",
+				"tags": ["sites"],
+				"x-action": "site.read",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }, { "apiKey": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"healthy",
+												"attention",
+												"starting",
+												"unreachable",
+												"unreadable"
+											]
+										},
+										"level": {
+											"type": "string",
+											"enum": ["ok", "info", "warn", "error", "critical"]
+										},
+										"reachable": { "type": "boolean" },
+										"reason": { "type": ["string", "null"] },
+										"step": { "type": ["string", "null"] },
+										"nodes": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"source": {
+														"type": "string",
+														"enum": [
+															"reconcile",
+															"supervisor",
+															"repair"
+														]
+													},
+													"level": {
+														"type": "string",
+														"enum": [
+															"ok",
+															"info",
+															"warn",
+															"error",
+															"critical"
+														]
+													},
+													"state": { "type": "string" },
+													"title": { "type": "string" },
+													"detail": { "type": "string" },
+													"handle": { "type": ["string", "null"] },
+													"history": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"state": { "type": "string" },
+																"atMs": { "type": "number" }
+															},
+															"required": ["state", "atMs"],
+															"additionalProperties": false
+														}
+													},
+													"guidance": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"text": { "type": "string" },
+																	"diagnostics": {
+																		"type": "array",
+																		"items": {
+																			"type": "object",
+																			"properties": {
+																				"label": {
+																					"type": "string"
+																				},
+																				"value": {
+																					"type": "string"
+																				}
+																			},
+																			"required": [
+																				"label",
+																				"value"
+																			],
+																			"additionalProperties": false
+																		}
+																	}
+																},
+																"required": ["text", "diagnostics"],
+																"additionalProperties": false
+															},
+															{ "type": "null" }
+														]
+													},
+													"children": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"id": { "type": "string" },
+																"source": {
+																	"type": "string",
+																	"enum": [
+																		"reconcile",
+																		"supervisor",
+																		"repair"
+																	]
+																},
+																"level": {
+																	"type": "string",
+																	"enum": [
+																		"ok",
+																		"info",
+																		"warn",
+																		"error",
+																		"critical"
+																	]
+																},
+																"state": { "type": "string" },
+																"title": { "type": "string" },
+																"detail": { "type": "string" },
+																"handle": {
+																	"type": ["string", "null"]
+																},
+																"history": {
+																	"type": "array",
+																	"items": {
+																		"type": "object",
+																		"properties": {
+																			"state": {
+																				"type": "string"
+																			},
+																			"atMs": {
+																				"type": "number"
+																			}
+																		},
+																		"required": [
+																			"state",
+																			"atMs"
+																		],
+																		"additionalProperties": false
+																	}
+																},
+																"guidance": {
+																	"anyOf": [
+																		{
+																			"type": "object",
+																			"properties": {
+																				"text": {
+																					"type": "string"
+																				},
+																				"diagnostics": {
+																					"type": "array",
+																					"items": {
+																						"type": "object",
+																						"properties": {
+																							"label": {
+																								"type": "string"
+																							},
+																							"value": {
+																								"type": "string"
+																							}
+																						},
+																						"required": [
+																							"label",
+																							"value"
+																						],
+																						"additionalProperties": false
+																					}
+																				}
+																			},
+																			"required": [
+																				"text",
+																				"diagnostics"
+																			],
+																			"additionalProperties": false
+																		},
+																		{ "type": "null" }
+																	]
+																},
+																"children": {
+																	"type": "array",
+																	"prefixItems": [],
+																	"items": false,
+																	"maxItems": 0
+																}
+															},
+															"required": [
+																"id",
+																"source",
+																"level",
+																"state",
+																"title",
+																"detail",
+																"handle",
+																"history",
+																"guidance",
+																"children"
+															],
+															"additionalProperties": false
+														}
+													}
+												},
+												"required": [
+													"id",
+													"source",
+													"level",
+													"state",
+													"title",
+													"detail",
+													"handle",
+													"history",
+													"guidance",
+													"children"
+												],
+												"additionalProperties": false
+											}
+										},
+										"readiness": {
+											"type": "object",
+											"properties": {
+												"level": {
+													"type": "string",
+													"enum": [
+														"pending",
+														"live",
+														"verified",
+														"production-ready"
+													]
+												},
+												"missing": {
+													"type": "array",
+													"items": { "type": "string" }
+												},
+												"checks": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"label": { "type": "string" },
+															"tier": {
+																"type": "string",
+																"enum": [
+																	"live",
+																	"verified",
+																	"production-ready"
+																]
+															},
+															"state": {
+																"type": "string",
+																"enum": [
+																	"done",
+																	"open",
+																	"not-checked"
+																]
+															}
+														},
+														"required": ["label", "tier", "state"],
+														"additionalProperties": false
+													}
+												}
+											},
+											"required": ["level", "missing", "checks"],
+											"additionalProperties": false
+										},
+										"observedAt": { "type": "string" }
+									},
+									"required": [
+										"status",
+										"level",
+										"reachable",
+										"reason",
+										"step",
+										"nodes",
+										"readiness",
+										"observedAt"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/upgrade": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdSitesIdUpgrade",
+				"summary": "Update a site to the current release",
+				"description": "Starts an update of the site in the path to the platform's current release and returns its operation. The platform picks the target; the request has no body. The site keeps serving while the engine uploads the new release, checks the site, and puts the old release back if the check fails. Send an Idempotency-Key header; a repeat returns the same operation. Answers 409 when the site already runs the current release or another change to it is running, and 422 when the site is not live.",
+				"tags": ["sites"],
+				"x-action": "site.upgrade",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }, { "apiKey": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^op_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"type": {
+											"type": "string",
+											"enum": [
+												"site.create",
+												"site.adopt",
+												"site.import",
+												"migration.cutover",
+												"estate.assess",
+												"site.upgrade",
+												"site.rollback",
+												"site.delete",
+												"site.restore",
+												"site.purge",
+												"site.transfer",
+												"config.apply",
+												"git.pull",
+												"git.preview",
+												"modify.apply",
+												"module.install",
+												"module.enable",
+												"domain.attach",
+												"backup.create",
+												"backup.verify",
+												"backup.restore",
+												"backup.export",
+												"env.create",
+												"env.fork",
+												"env.promote",
+												"env.delete",
+												"preview.create",
+												"preview.delete",
+												"repair.run",
+												"node.pair",
+												"node.command",
+												"fleet.upgrade",
+												"repo.install"
+											]
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"planned",
+												"awaiting-approval",
+												"running",
+												"verifying",
+												"succeeded",
+												"failed",
+												"cancelled",
+												"rolled-back"
+											]
+										},
+										"idempotencyKey": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 128
+										},
+										"targetIds": {
+											"type": "array",
+											"items": { "type": "string", "minLength": 1 }
+										},
+										"preconditions": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"planDigest": {
+											"type": "string",
+											"pattern": "^sha256:[0-9a-f]{64}$"
+										},
+										"fencingEpoch": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"blastRadius": {
+											"type": "object",
+											"properties": {
+												"sites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"destructiveSites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"productionDeploys": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											},
+											"required": [
+												"sites",
+												"destructiveSites",
+												"productionDeploys"
+											]
+										},
+										"rollbackPoint": { "type": ["string", "null"] },
+										"cursor": { "type": ["string", "null"] },
+										"steps": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"running",
+															"succeeded",
+															"failed",
+															"skipped"
+														]
+													},
+													"attempt": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"startedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"finishedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"error": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"state",
+													"attempt",
+													"startedAt",
+													"finishedAt",
+													"error"
+												]
+											}
+										},
+										"verification": {
+											"type": "string",
+											"enum": ["pending", "passed", "failed", "not-required"]
+										},
+										"finalObservation": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"at": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														"summary": { "type": "string" }
+													},
+													"required": ["at", "summary"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"budget": {
+											"type": "object",
+											"properties": {
+												"maxDestructiveSites": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"maxConcurrentProductionDeploys": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"elevated": { "type": "boolean" },
+												"bulkDeleteConfirmation": {
+													"type": ["string", "null"]
+												}
+											},
+											"required": [
+												"maxDestructiveSites",
+												"maxConcurrentProductionDeploys",
+												"elevated",
+												"bulkDeleteConfirmation"
+											]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"type",
+										"status",
+										"idempotencyKey",
+										"targetIds",
+										"preconditions",
+										"planDigest",
+										"fencingEpoch",
+										"blastRadius",
+										"rollbackPoint",
+										"cursor",
+										"steps",
+										"verification",
+										"finalObservation",
+										"budget",
+										"createdAt",
+										"updatedAt"
+									]
 								}
 							}
 						}
@@ -4222,6 +5186,14 @@
 												"pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
 											}
 										},
+										"release": {
+											"type": "object",
+											"properties": {
+												"current": { "type": ["string", "null"] },
+												"available": { "type": ["string", "null"] }
+											},
+											"required": ["current", "available"]
+										},
 										"createdAt": {
 											"type": "string",
 											"format": "date-time",
@@ -4246,6 +5218,7 @@
 										"ring",
 										"primaryHostname",
 										"hostnames",
+										"release",
 										"createdAt",
 										"updatedAt"
 									]
