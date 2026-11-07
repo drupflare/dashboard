@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import backupExport from '../../../../src/server/api/v1/orgs/[orgId]/sites/[siteId]/backups/[backupId]/export.get';
-import backupRestore from '../../../../src/server/api/v1/orgs/[orgId]/sites/[siteId]/backups/[backupId]/restore.post';
-import backupsList from '../../../../src/server/api/v1/orgs/[orgId]/sites/[siteId]/backups/index.get';
-import backupsCreate from '../../../../src/server/api/v1/orgs/[orgId]/sites/[siteId]/backups/index.post';
+import backupExport from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/backups/[backupId]/export.get';
+import backupRestore from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/backups/[backupId]/restore.post';
+import backupsList from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/backups/index.get';
+import backupsCreate from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/backups/index.post';
 import { resetBackupServices } from '../../../../src/server/services/backups';
 import { defineApi, resetApiDeps } from '../../../../src/server/utils/define-api';
 import { ACTION_DEFS, isSessionOnly } from '../../../../src/shared/permissions';
@@ -13,7 +13,7 @@ import { asKey, asUser, send, setup } from '../fixtures/harness';
 const SITE = `site_${'a'.repeat(20)}`;
 const BACKUP = `bkp_${'1'.repeat(20)}`;
 const BASE = `/api/v1/orgs/${ORG}/sites/${SITE}/backups`;
-const ROUTE = '/api/v1/orgs/:orgId/sites/:siteId/backups';
+const ROUTE = '/api/v1/orgs/:orgId/sites/:id/backups';
 const idem = { 'idempotency-key': 'key-backups-1' };
 
 afterEach(() => {

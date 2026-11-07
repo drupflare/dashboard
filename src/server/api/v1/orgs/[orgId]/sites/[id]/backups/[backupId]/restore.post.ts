@@ -17,7 +17,7 @@ export default defineApi(
 			'Starts a restore of the backup in the path into another site of the same organisation, or the same site, and returns its operation. The restore replaces the target database. A backup that is too large for a restore is refused. Send an Idempotency-Key header; a repeat returns the same operation.',
 		params: z.object({
 			orgId: z.string().min(1),
-			siteId,
+			id: siteId,
 			backupId: z.string().regex(backupIdPattern)
 		}),
 		body: z.strictObject({ targetSiteId: siteId }),
@@ -34,7 +34,7 @@ export default defineApi(
 		}
 		const { operation } = await startRestore(backupServices(), {
 			orgId,
-			siteId: params.siteId,
+			siteId: params.id,
 			backupId: params.backupId,
 			targetSiteId: body.targetSiteId,
 			idempotencyKey,

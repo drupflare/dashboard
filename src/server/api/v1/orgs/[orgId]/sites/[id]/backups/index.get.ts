@@ -21,7 +21,7 @@ export default defineApi(
 		summary: 'List the backups of a site',
 		description:
 			'Lists the backups of the site in the path, newest first. A backup too large for a restore says why and can still be exported.',
-		params: z.object({ orgId: z.string().min(1), siteId }),
+		params: z.object({ orgId: z.string().min(1), id: siteId }),
 		query: z.object({
 			cursor: z.string().optional(),
 			limit: z.string().regex(/^\d+$/).optional()
@@ -39,7 +39,7 @@ export default defineApi(
 			query.cursor === undefined ? undefined : decodeCursor(query.cursor, cursorShape);
 		const rows = await listSiteBackups(services, {
 			orgId,
-			siteId: params.siteId,
+			siteId: params.id,
 			after,
 			count: limit + 1
 		});

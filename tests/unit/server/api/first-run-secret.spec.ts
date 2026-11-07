@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { toBase64Url } from '../../../../contracts/src/common';
-import firstRunSecret from '../../../../src/server/api/v1/orgs/[orgId]/sites/[siteId]/first-run-secret.post';
+import firstRunSecret from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/first-run-secret.post';
 import type { PendingSecretRow } from '../../../../src/server/db/repos/pending-secrets';
 import {
 	resetPendingSecretDeps,
@@ -18,7 +18,7 @@ const MINE = 'site_aaaaaaaa';
 const THEIRS = 'site_bbbbbbbb';
 const PASSWORD = 'minted-admin-password-0123456789';
 const NOW = 1_000_000;
-const ROUTE = '/api/v1/orgs/:orgId/sites/:siteId/first-run-secret';
+const ROUTE = '/api/v1/orgs/:orgId/sites/:id/first-run-secret';
 
 const kek = (fill: number) => toBase64Url(new Uint8Array(32).fill(fill));
 
@@ -98,7 +98,7 @@ afterEach(() => {
 	resetApiDeps();
 });
 
-describe('POST /api/v1/orgs/:orgId/sites/:siteId/first-run-secret', () => {
+describe('POST /api/v1/orgs/:orgId/sites/:id/first-run-secret', () => {
 	it('gives the password once to a member who can create sites, uncached', async () => {
 		const { audits } = await world();
 		api();

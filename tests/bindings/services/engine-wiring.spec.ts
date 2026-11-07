@@ -14,7 +14,7 @@ import {
 	runSiteCreate,
 	type SiteCreateInput
 } from '../../../engine/src/workflows/site-create';
-import reveal from '../../../src/server/api/v1/orgs/[orgId]/sites/[siteId]/first-run-secret.post';
+import reveal from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/first-run-secret.post';
 import sitesCreate from '../../../src/server/api/v1/orgs/[orgId]/sites/index.post';
 import siteRead from '../../../src/server/api/v1/sites/[id]/index.get';
 import { ensurePersonalOrganization } from '../../../src/server/db/repos/accounts';
@@ -355,7 +355,7 @@ describe('create through the route to a live site', () => {
 		expect((created.json as Created).status).toBe('succeeded');
 		const siteId = (created.json as Created).targetIds[0]!;
 		const path = `/api/v1/orgs/${ORG_TWO}/sites/${siteId}/first-run-secret`;
-		const route = '/api/v1/orgs/:orgId/sites/:siteId/first-run-secret';
+		const route = '/api/v1/orgs/:orgId/sites/:id/first-run-secret';
 		asMember(ORG_TWO);
 		const first = await send(reveal, route, { method: 'POST', path, headers: asOtherUser });
 		expect(first.status).toBe(200);

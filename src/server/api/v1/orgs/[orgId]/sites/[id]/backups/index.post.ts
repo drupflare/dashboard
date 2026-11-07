@@ -14,7 +14,7 @@ export default defineApi(
 		summary: 'Back up a site',
 		description:
 			'Starts a backup of the site in the path and returns its operation. The dump is stored without secrets. A backup reads verified false until a scratch restore has proved it. Send an Idempotency-Key header; a repeat returns the same operation.',
-		params: z.object({ orgId: z.string().min(1), siteId }),
+		params: z.object({ orgId: z.string().min(1), id: siteId }),
 		body: z.strictObject({ label: z.string().min(1).max(100).optional() }),
 		response: operationSchema,
 		successStatus: 202
@@ -29,7 +29,7 @@ export default defineApi(
 		}
 		const { operation } = await startBackup(backupServices(), {
 			orgId,
-			siteId: params.siteId,
+			siteId: params.id,
 			label: body.label ?? null,
 			idempotencyKey,
 			operationId: newId('op')

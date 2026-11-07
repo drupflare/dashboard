@@ -72,6 +72,19 @@ describe('route table', () => {
 		expect(routes.length).toBeGreaterThan(0);
 	});
 
+	it('names the dynamic segment of a path once, so the router can tell routes apart', () => {
+		const clashes: string[] = [];
+		const walk = (dir: string) => {
+			const entries = readdirSync(dir, { withFileTypes: true });
+			const dynamic = entries.filter((e) => e.isDirectory() && /^\[.+\]$/.test(e.name));
+			if (dynamic.length > 1)
+				clashes.push(`${dir}: ${dynamic.map((e) => e.name).join(', ')}`);
+			for (const entry of entries) if (entry.isDirectory()) walk(join(dir, entry.name));
+		};
+		walk(API_ROOT);
+		expect(clashes).toEqual([]);
+	});
+
 	it('gives every route a rate class that has a rule', async () => {
 		const { routes } = await scanRoutes();
 		expect(Object.keys(PLACEHOLDER_RATES).sort()).toEqual([...LIMIT_CLASSES].sort());

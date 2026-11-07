@@ -9,10 +9,10 @@ import {
 	manifestDigest,
 	type BackupRecord
 } from '../../../engine/src/backup-parts';
-import backupExport from '../../../src/server/api/v1/orgs/[orgId]/sites/[siteId]/backups/[backupId]/export.get';
-import backupRestore from '../../../src/server/api/v1/orgs/[orgId]/sites/[siteId]/backups/[backupId]/restore.post';
-import backupsList from '../../../src/server/api/v1/orgs/[orgId]/sites/[siteId]/backups/index.get';
-import backupsCreate from '../../../src/server/api/v1/orgs/[orgId]/sites/[siteId]/backups/index.post';
+import backupExport from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/backups/[backupId]/export.get';
+import backupRestore from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/backups/[backupId]/restore.post';
+import backupsList from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/backups/index.get';
+import backupsCreate from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/backups/index.post';
 import { ensureCollegeDB } from '../../../src/server/db/collegedb';
 import { withAtomicBatch } from '../../../src/server/db/repos/atomic-shards';
 import type { EngineStartRequest } from '../../../src/server/integrations/engine';
@@ -166,7 +166,7 @@ function services(options: { audits?: unknown[]; refuse?: boolean } = {}) {
 const base = (orgId: string, siteId: string) => `/api/v1/orgs/${orgId}/sites/${siteId}/backups`;
 let counter = 0;
 const key = () => ({ 'idempotency-key': `key-${++counter}-${Date.now()}` });
-const ROUTE = '/api/v1/orgs/:orgId/sites/:siteId/backups';
+const ROUTE = '/api/v1/orgs/:orgId/sites/:id/backups';
 
 describe('D1BackupLedger over real D1', () => {
 	it('reads a site, filters a backup by organisation and keeps one row per operation', async () => {
@@ -186,7 +186,7 @@ describe('D1BackupLedger over real D1', () => {
 	});
 });
 
-describe('POST /orgs/:orgId/sites/:siteId/backups', () => {
+describe('POST /orgs/:orgId/sites/:id/backups', () => {
 	it('records a planned operation for the site and starts the engine once per key', async () => {
 		asMember();
 		const { started } = services();
@@ -279,7 +279,7 @@ describe('POST /orgs/:orgId/sites/:siteId/backups', () => {
 	});
 });
 
-describe('GET /orgs/:orgId/sites/:siteId/backups', () => {
+describe('GET /orgs/:orgId/sites/:id/backups', () => {
 	it('lists the site backups newest first and says why one cannot be restored', async () => {
 		asMember();
 		services();
