@@ -22,6 +22,10 @@ export default defineNuxtConfig({
 	},
 	runtimeConfig: {
 		baseUrl: process.env.NUXT_BASE_URL || 'https://app.drupflare.com',
+		public: {
+			githubClientId: process.env.NUXT_PUBLIC_GITHUB_CLIENT_ID || '',
+			gitlabClientId: process.env.NUXT_PUBLIC_GITLAB_CLIENT_ID || ''
+		},
 		turnstile: {
 			secretKey: process.env.NUXT_TURNSTILE_SECRET_KEY || ''
 		}
@@ -38,15 +42,20 @@ export default defineNuxtConfig({
 		shared: 'src/shared'
 	},
 	css: ['~/assets/css/main.css'],
+	fonts: {
+		families: [
+			{ name: 'IBM Plex Sans', provider: 'google', weights: [400, 500, 600] },
+			{ name: 'IBM Plex Mono', provider: 'google', weights: [400, 500] },
+			{ name: 'Archivo', provider: 'google', weights: [600, 700] }
+		]
+	},
 	app: {
 		head: {
 			link: [
-				{ rel: 'preconnect', href: 'https://fonts.googleapis.com' },
-				{ rel: 'dns-prefetch', href: 'https://fonts.googleapis.com' },
-				{ rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: 'anonymous' },
-				{ rel: 'dns-prefetch', href: 'https://fonts.gstatic.com' },
 				{ rel: 'preconnect', href: 'https://drupflare.com' },
-				{ rel: 'dns-prefetch', href: 'https://drupflare.com' }
+				{ rel: 'dns-prefetch', href: 'https://drupflare.com' },
+				{ rel: 'preconnect', href: 'https://drupflare.app' },
+				{ rel: 'dns-prefetch', href: 'https://drupflare.app' }
 			]
 		}
 	},

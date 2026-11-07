@@ -2,15 +2,20 @@ import type { R2Bucket } from '@cloudflare/workers-types';
 import type { CollegeDBClient } from '@earth-app/collegedb';
 import { CryptoError, loadKeyRing, type KeyRing } from '../../shared/custody/envelope';
 import { ApiError } from '../../shared/errors';
+import { PLATFORM_ROLE_PERMISSIONS } from '../../shared/permissions';
 import { ensureCollegeDB, type CollegeDBEnv } from '../db/collegedb';
 import { personalOrganizationId } from '../db/repos/accounts';
 import { withAtomicBatch } from '../db/repos/atomic-shards';
+import { getUserById } from '../db/repos/identity';
 import { findSiteHome } from '../db/repos/site-lookup';
 import type { Principal } from '../domain/authorize';
 import { entitlementKeys } from '../domain/entitlements';
+import { renderMail } from '../emails';
+import { cloudflareEmailSender, type EmailBinding } from '../integrations/email';
 import { engineConfigOf, engineStarter } from '../integrations/engine';
 import { OAUTH_PROVIDERS, oauthClients, type OAuthConfig } from '../integrations/oauth';
 import type { WebAuthnConfig } from '../integrations/webauthn';
+import { accessConfigOf, accessTokenOf, verifyAccessToken } from '../utils/access';
 import {
 	collegeKeyIndex,
 	createPrincipalResolver,
@@ -63,6 +68,8 @@ export interface BootOptions {
 	// the console mail sender prints sign-in codes, so only a development server may ask for it
 	dev?: boolean;
 	baseUrl?: string;
+	// public client ids the build carries in the runtime config, by provider
+	oauthClientIds?: Partial<Record<string, string>>;
 	// the entitlement, budget, policy, suspension and support ports; each defaults to empty
 	facts?: Omit<FactsDeps, 'store'>;
 }
@@ -93,13 +100,24 @@ export function webauthnConfig(env: BootEnv, baseUrl: string): WebAuthnConfig {
 }
 
 // a provider with any of the three missing is left out and answers 501
-export function oauthConfig(env: BootEnv): OAuthConfig {
+// the client id is public and the secret is private; crust names them NUXT_PUBLIC_<P>_CLIENT_ID and
+// NUXT_<P>_CLIENT_SECRET, so one .env and one .dev.vars serve both, and the redirect is /auth/callback
+export function oauthConfig(
+	env: BootEnv,
+	appUrl = 'https://app.drupflare.com',
+	clientIds: Partial<Record<string, string>> = {}
+): OAuthConfig {
 	const config: OAuthConfig = {};
 	for (const provider of OAUTH_PROVIDERS) {
-		const prefix = `OAUTH_${provider.toUpperCase()}`;
-		const clientId = text(env, `${prefix}_CLIENT_ID`);
-		const clientSecret = text(env, `${prefix}_CLIENT_SECRET`);
-		const redirectUri = text(env, `${prefix}_REDIRECT_URI`);
+		const name = provider.toUpperCase();
+		const prefix = `OAUTH_${name}`;
+		const clientId =
+			text(env, `${prefix}_CLIENT_ID`) ??
+			(clientIds[provider] || undefined) ??
+			text(env, `NUXT_PUBLIC_${name}_CLIENT_ID`);
+		const clientSecret =
+			text(env, `${prefix}_CLIENT_SECRET`) ?? text(env, `NUXT_${name}_CLIENT_SECRET`);
+		const redirectUri = text(env, `${prefix}_REDIRECT_URI`) ?? `${appUrl}/auth/callback`;
 		if (!clientId || !clientSecret || !redirectUri) continue;
 		const baseUrl = provider === 'gitlab' ? text(env, `${prefix}_BASE_URL`) : undefined;
 		const tenant = provider === 'microsoft' ? text(env, `${prefix}_TENANT`) : undefined;
@@ -114,16 +132,50 @@ export function oauthConfig(env: BootEnv): OAuthConfig {
 	return config;
 }
 
-// the sender for this environment: the cloudflare adapter is not built, so a bound EMAIL still
-// answers 501, and only a development server may print codes
+// admin needs both halves: the role on the user record and an Access login for the same address
+export function platformStanding(
+	getDb: () => Promise<CollegeDBClient>
+): NonNullable<FactsDeps['platform']> {
+	return async ({ userId, access }) => {
+		const user = await getUserById(await getDb(), userId);
+		if (!user || user.platformRole === null) return null;
+		return {
+			admin: true,
+			access: access !== null && access.email === user.email,
+			permissions: PLATFORM_ROLE_PERMISSIONS[user.platformRole]
+		};
+	};
+}
+
+// the module and crust name it NUXT_TURNSTILE_SECRET_KEY, so one .dev.vars line serves both
+export const turnstileSecretOf = (env: BootEnv): string | undefined =>
+	text(env, 'TURNSTILE_SECRET_KEY') ?? text(env, 'NUXT_TURNSTILE_SECRET_KEY');
+
+const DEFAULT_MAIL_FROM = 'no-reply@drupflare.com';
+
+function emailBindingOf(value: unknown): EmailBinding | undefined {
+	const send = (value as { send?: unknown } | undefined)?.send;
+	return typeof send === 'function' ? (value as EmailBinding) : undefined;
+}
+
+// a bound EMAIL sends through Email Sending; with none, only a development server may print codes
 export function mailFor(env: BootEnv, options: BootOptions): MailSender {
-	const closed: MailSender = {
+	const binding = emailBindingOf(env.EMAIL);
+	if (binding !== undefined) {
+		const sender = cloudflareEmailSender(binding, {
+			email: text(env, 'MAIL_FROM') ?? DEFAULT_MAIL_FROM,
+			name: 'Drupflare'
+		});
+		return {
+			send: (to, template) => sender.send(to, renderMail({ ...template, purpose: 'sign-in' }))
+		};
+	}
+	if (options.dev === true) return consoleMailSender();
+	return {
 		async send() {
 			throw new ApiError('not_built', 'Mail is not available yet');
 		}
 	};
-	if (env.EMAIL !== undefined) return closed;
-	return options.dev === true ? consoleMailSender() : closed;
 }
 
 // #endregion
@@ -268,14 +320,14 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			attempts: collegeAttemptStore(getDb),
 			directory: collegeDirectory(getDb, heads),
 			mail: mailFor(env, options),
-			turnstile: siteverifyTurnstile(text(env, 'TURNSTILE_SECRET_KEY')),
+			turnstile: siteverifyTurnstile(turnstileSecretOf(env)),
 			codeSecret: text(env, 'AUTH_CODE_SECRET') ?? '',
 			keys: collegeKeyIndex(getDb)
 		},
 		identity: {
 			store: collegeIdentityStore(getDb),
 			webauthn: webauthnConfig(env, baseUrl),
-			clients: oauthClients(oauthConfig(env)),
+			clients: oauthClients(oauthConfig(env, baseUrl, options.oauthClientIds)),
 			fetch: (input, init) => fetch(input, init)
 		},
 		organizations: { getDb },
@@ -285,9 +337,15 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			load: factsLoader({
 				entitlements: async (orgId) => entitlementKeys(await planOf(orgId)),
 				budgets: collegeBudgets(getDb),
+				platform: platformStanding(getDb),
 				...options.facts,
 				store: collegeFactsStore(getDb)
 			}),
+			access: (event) =>
+				verifyAccessToken(
+					accessTokenOf(event),
+					accessConfigOf(text(env, 'ACCESS_TEAM'), text(env, 'ACCESS_AUD'))
+				),
 			...auditWriters(getDb, heads)
 		},
 		ownerTokens: collegeOwnerTokenStore(getDb),

@@ -1,10 +1,12 @@
 import type { CollegeDBClient } from '@earth-app/collegedb';
+import { isPlatformRole, type PlatformRole } from '../../../shared/permissions';
 import { DIRECTORY_KEY, uniqueOrDuplicate, wasChanged } from '../collegedb';
 
 export interface User {
 	id: string;
 	email: string;
 	displayName: string | null;
+	platformRole: PlatformRole | null;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -23,6 +25,7 @@ interface UserRow {
 	id: string;
 	email: string;
 	display_name: string | null;
+	platform_role: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -37,7 +40,7 @@ interface IdentityRow {
 	created_at: number;
 }
 
-const USER_COLUMNS = 'id, email, display_name, created_at, updated_at';
+const USER_COLUMNS = 'id, email, display_name, platform_role, created_at, updated_at';
 const IDENTITY_COLUMNS = 'id, user_id, provider, provider_subject, email, verified, created_at';
 
 export function normalizeEmail(email: string): string {
@@ -49,6 +52,7 @@ function toUser(row: UserRow): User {
 		id: row.id,
 		email: row.email,
 		displayName: row.display_name,
+		platformRole: isPlatformRole(row.platform_role) ? row.platform_role : null,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
 	};
@@ -75,14 +79,16 @@ export async function createUser(
 		id: crypto.randomUUID(),
 		email: normalizeEmail(input.email),
 		displayName: input.displayName ?? null,
+		platformRole: null,
 		createdAt: now,
 		updatedAt: now
 	};
 	await uniqueOrDuplicate(() =>
-		db.run(DIRECTORY_KEY, `INSERT INTO users (${USER_COLUMNS}) VALUES (?, ?, ?, ?, ?)`, [
+		db.run(DIRECTORY_KEY, `INSERT INTO users (${USER_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)`, [
 			user.id,
 			user.email,
 			user.displayName,
+			user.platformRole,
 			user.createdAt,
 			user.updatedAt
 		])

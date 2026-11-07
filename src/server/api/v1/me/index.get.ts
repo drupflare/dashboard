@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { ApiError } from '../../../../shared/errors';
+import { PLATFORM_ROLES } from '../../../../shared/permissions';
 import { stepUpUntil } from '../../../services/auth';
 import { authServices, stepUpAtOf } from '../../../utils/auth';
 import { defineApi } from '../../../utils/define-api';
@@ -17,6 +18,7 @@ export default defineApi(
 			id: z.string(),
 			email: z.string(),
 			displayName: z.string().nullable(),
+			platformRole: z.enum(PLATFORM_ROLES).nullable(),
 			via: z.enum(['session', 'key']),
 			stepUpUntil: z.iso.datetime().nullable()
 		})
@@ -32,6 +34,7 @@ export default defineApi(
 			id: user.id,
 			email: user.email,
 			displayName: user.displayName,
+			platformRole: user.platformRole,
 			via: principal.kind === 'user' ? ('session' as const) : ('key' as const),
 			stepUpUntil: until === null ? null : new Date(until).toISOString()
 		};

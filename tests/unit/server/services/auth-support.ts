@@ -207,6 +207,7 @@ export function memoryDirectory(): MemoryDirectory {
 				id: `user-${++counter}`,
 				email: normalized,
 				displayName: null,
+				platformRole: null,
 				createdAt: now,
 				updatedAt: now
 			};

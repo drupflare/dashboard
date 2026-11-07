@@ -23,6 +23,18 @@ export const PLATFORM_PERMISSIONS = [
 ] as const;
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
 
+// a role on the user record, granted by a database write; Access still has to pass beside it
+export const PLATFORM_ROLES = ['admin'] as const;
+export type PlatformRole = (typeof PLATFORM_ROLES)[number];
+
+export const PLATFORM_ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
+	admin: ['read']
+};
+
+export function isPlatformRole(value: unknown): value is PlatformRole {
+	return typeof value === 'string' && (PLATFORM_ROLES as readonly string[]).includes(value);
+}
+
 export const BUDGET_KEYS = ['destructive-sites', 'production-deploys'] as const;
 export type BudgetKey = (typeof BUDGET_KEYS)[number];
 
@@ -279,6 +291,7 @@ export const PUBLIC_ACTIONS = [
 	'auth.code.verify',
 	'auth.passkey.options',
 	'auth.passkey.verify',
+	'auth.oauth.providers',
 	'auth.oauth.start',
 	'auth.oauth.callback',
 	'auth.logout'

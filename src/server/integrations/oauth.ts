@@ -11,14 +11,19 @@ import {
 import { deleteCookie, setCookie, type H3Event } from 'h3';
 import { z } from 'zod';
 import { ApiError } from '../../shared/errors';
+import {
+	OAUTH_CONSENT_TEXT,
+	OAUTH_PROVIDERS,
+	stateFor,
+	type OAuthProvider
+} from '../../shared/oauth';
 import { nowUtc } from '../../shared/utils/time';
 import { randomToken, timingSafeEqual } from '../services/crypto';
 import type { OnceStore } from '../services/single-use';
 
 // #region providers
 
-export const OAUTH_PROVIDERS = ['github', 'gitlab', 'google', 'microsoft'] as const;
-export type OAuthProvider = (typeof OAUTH_PROVIDERS)[number];
+export { OAUTH_PROVIDERS, type OAuthProvider };
 
 export function isOAuthProvider(value: unknown): value is OAuthProvider {
 	return typeof value === 'string' && (OAUTH_PROVIDERS as readonly string[]).includes(value);
@@ -67,8 +72,7 @@ export const OAUTH_SCOPES = {
 	microsoft: ['openid', 'profile', 'email']
 } as const satisfies Record<OAuthProvider, readonly string[]>;
 
-export const OAUTH_CONSENT_TEXT =
-	'Drupflare asks the provider for your name and email address to sign you in. It does not read your repositories or any other data. Connecting repositories is a separate step you take later.';
+export { OAUTH_CONSENT_TEXT };
 
 export const signInFailed = () =>
 	new ApiError('unauthenticated', 'The sign-in could not be completed');
@@ -307,7 +311,7 @@ export async function beginOAuth(
 	provider: OAuthProvider
 ): Promise<{ url: string; state: string }> {
 	const client = clientFor(deps, provider);
-	const state = randomToken();
+	const state = stateFor(provider, randomToken());
 	const verifier = generateCodeVerifier();
 	const now = nowUtc().toMillis();
 	const record = { provider, verifier, createdAt: now };

@@ -356,6 +356,7 @@ export const SCHEMA_STATEMENTS: string[] = [
 	id TEXT PRIMARY KEY,
 	email TEXT NOT NULL UNIQUE,
 	display_name TEXT,
+	platform_role TEXT,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 )`,

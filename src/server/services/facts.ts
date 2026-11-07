@@ -17,6 +17,7 @@ import type {
 import { isActive, type Delegation } from '../domain/delegation';
 import type { Grant, PolicyGroup } from '../domain/policy';
 import type { ApiKeyFacts } from '../domain/scopes';
+import type { AccessIdentity } from '../utils/access';
 import { keyFactsOf, stepUpAtOf } from '../utils/auth';
 import type { Loaded, LoadInput } from '../utils/define-api';
 
@@ -52,6 +53,11 @@ export interface FactsDeps {
 	policy?(input: { orgId: string; siteId?: string }): Promise<readonly PolicyGroup[]>;
 	suspensions?(input: { orgIds: readonly string[]; userId: string }): Promise<Suspensions>;
 	support?(input: { userId: string; orgId: string }): Promise<SupportStanding | null>;
+	// the platform standing of a signed-in person: their role and whether Access vouched for them
+	platform?(input: {
+		userId: string;
+		access: AccessIdentity | null;
+	}): Promise<NonNullable<Facts['platform']> | null>;
 }
 
 // #endregion
@@ -155,6 +161,16 @@ export async function loadFacts(deps: FactsDeps, input: LoadInput): Promise<Load
 	const { principal, scope, params } = input;
 	const now = nowUtc().toMillis();
 	if (scope === 'session') return sessionFacts(principal, now);
+	if (scope === 'admin') {
+		if (principal.kind !== 'user') return null;
+		const loaded = sessionFacts(principal, now);
+		const platform = await deps.platform?.({
+			userId: principal.userId,
+			access: input.access ?? null
+		});
+		if (loaded && platform) loaded.facts.platform = platform;
+		return loaded;
+	}
 	if (scope !== 'organization' && scope !== 'site') {
 		throw new ApiError('not_built', 'The facts loader is not available for this scope yet');
 	}

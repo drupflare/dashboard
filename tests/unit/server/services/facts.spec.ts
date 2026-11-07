@@ -231,11 +231,31 @@ describe('organization scope', () => {
 		expect(loaded?.facts.key).toBeUndefined();
 	});
 
-	it('refuses the platform scope with not_built', async () => {
+	it('gives the platform scope the standing the platform port reports, and none without it', async () => {
 		const { store } = makeStore(data());
-		await expect(
-			loadFacts({ store }, { ...orgInput(A), scope: 'admin' })
-		).rejects.toMatchObject({ code: 'not_built' });
+		const input = { ...orgInput(A), scope: 'admin' as const };
+		expect((await loadFacts({ store }, input))?.facts.platform).toBeUndefined();
+		const standing = { admin: true, access: true, permissions: ['read'] as const };
+		const withRole = await loadFacts(
+			{
+				store,
+				platform: async ({ userId, access }) => {
+					expect(userId).toBe(ME);
+					expect(access).toEqual({ email: 'a@example.test' });
+					return standing;
+				}
+			},
+			{ ...input, access: { email: 'a@example.test' } }
+		);
+		expect(withRole?.facts.platform).toEqual(standing);
+	});
+
+	it('refuses a key on the platform scope', async () => {
+		const { store } = makeStore(data());
+		const key = { kind: 'key' as const, keyId: 'k', issuerId: ME };
+		expect(
+			await loadFacts({ store }, { ...orgInput(A), principal: key, scope: 'admin' })
+		).toBeNull();
 	});
 });
 

@@ -9,6 +9,7 @@ import {
 	mailFor,
 	oauthConfig,
 	resetBoot,
+	turnstileSecretOf,
 	webauthnConfig,
 	type BootEnv
 } from '../../../../src/server/services/boot';
@@ -42,6 +43,7 @@ describe('buildServices', () => {
 			expect(store).toBeDefined();
 		}
 		expect(Object.keys(built.api).sort()).toEqual([
+			'access',
 			'audit',
 			'auditDenied',
 			'idempotency',
@@ -158,6 +160,23 @@ describe('the pending secret key ring', () => {
 	});
 });
 
+describe('turnstileSecretOf', () => {
+	it('reads the name the Turnstile module uses, so one .dev.vars line serves both', () => {
+		expect(turnstileSecretOf(envWith({ NUXT_TURNSTILE_SECRET_KEY: 'from-module' }))).toBe(
+			'from-module'
+		);
+	});
+
+	it('prefers TURNSTILE_SECRET_KEY and treats an empty value as unset', () => {
+		expect(
+			turnstileSecretOf(
+				envWith({ TURNSTILE_SECRET_KEY: 'plain', NUXT_TURNSTILE_SECRET_KEY: 'module' })
+			)
+		).toBe('plain');
+		expect(turnstileSecretOf(envWith({ TURNSTILE_SECRET_KEY: '' }))).toBeUndefined();
+	});
+});
+
 describe('mailFor', () => {
 	const send = (sender: ReturnType<typeof mailFor>) =>
 		sender.send('a@example.test', { kind: 'login-code', code: '123456', expiresInMinutes: 10 });
@@ -177,12 +196,43 @@ describe('mailFor', () => {
 		expect(log).not.toHaveBeenCalled();
 	});
 
-	it('keeps mail closed when an EMAIL binding exists, because the adapter is not built', async () => {
+	it('sends the code through a bound EMAIL and never prints it', async () => {
 		const log = vi.spyOn(console, 'info').mockImplementation(() => undefined);
-		await expect(send(mailFor(envWith({ EMAIL: {} }), { dev: true }))).rejects.toMatchObject({
+		const sent: Record<string, unknown>[] = [];
+		const EMAIL = { send: async (message: Record<string, unknown>) => void sent.push(message) };
+		await send(mailFor(envWith({ EMAIL }), { dev: true }));
+		expect(sent).toHaveLength(1);
+		expect(sent[0]).toMatchObject({
+			to: 'a@example.test',
+			from: { email: 'no-reply@drupflare.com', name: 'Drupflare' }
+		});
+		expect(String(sent[0]?.text)).toContain('123456');
+		expect(log).not.toHaveBeenCalled();
+	});
+
+	it('sends from MAIL_FROM when it is set', async () => {
+		const sent: Record<string, unknown>[] = [];
+		const EMAIL = { send: async (message: Record<string, unknown>) => void sent.push(message) };
+		await send(mailFor(envWith({ EMAIL, MAIL_FROM: 'codes@drupflare.app' }), {}));
+		expect(sent[0]).toMatchObject({ from: { email: 'codes@drupflare.app' } });
+	});
+
+	it('marks a binding failure with a 5xx status as retryable', async () => {
+		const EMAIL = {
+			send: async () => {
+				throw Object.assign(new Error('unavailable'), { status: 503 });
+			}
+		};
+		await expect(send(mailFor(envWith({ EMAIL }), {}))).rejects.toMatchObject({
+			name: 'MailDeliveryError',
+			retryable: true
+		});
+	});
+
+	it('treats an EMAIL value with no send function as no binding', async () => {
+		await expect(send(mailFor(envWith({ EMAIL: {} }), {}))).rejects.toMatchObject({
 			code: 'not_built'
 		});
-		expect(log).not.toHaveBeenCalled();
 	});
 
 	it('writes one line to the sink it is given', async () => {
@@ -210,7 +260,38 @@ describe('webauthnConfig and oauthConfig', () => {
 		).toMatchObject({ rpId: 'example.test', origin: 'https://id.example.test' });
 	});
 
-	it('configures a provider only when all three of its values are set', () => {
+	it.each(['github', 'gitlab'] as const)(
+		'configures %s from the crust names, with the redirect on /auth/callback',
+		(provider) => {
+			const name = provider.toUpperCase();
+			const config = oauthConfig(
+				envWith({
+					[`NUXT_PUBLIC_${name}_CLIENT_ID`]: 'public-id',
+					[`NUXT_${name}_CLIENT_SECRET`]: 's'
+				}),
+				'https://app.example.test'
+			);
+			expect(config[provider]).toEqual({
+				clientId: 'public-id',
+				clientSecret: 's',
+				redirectUri: 'https://app.example.test/auth/callback'
+			});
+		}
+	);
+
+	it('takes the public client id from the runtime config when the worker has none', () => {
+		const env = envWith({ NUXT_GITHUB_CLIENT_SECRET: 's' });
+		expect(oauthConfig(env, undefined, { github: 'from-build' }).github?.clientId).toBe(
+			'from-build'
+		);
+		expect(oauthConfig(env, undefined, { github: '' })).toEqual({});
+	});
+
+	it('leaves a provider out when its secret is missing', () => {
+		expect(oauthConfig(envWith({ NUXT_PUBLIC_GITHUB_CLIENT_ID: 'id' }))).toEqual({});
+	});
+
+	it('configures a provider when its id and secret are set, and names the callback if none is', () => {
 		const config = oauthConfig(
 			envWith({
 				OAUTH_GITHUB_CLIENT_ID: 'id',
@@ -228,7 +309,8 @@ describe('webauthnConfig and oauthConfig', () => {
 				OAUTH_MICROSOFT_TENANT: 'contoso'
 			})
 		);
-		expect(Object.keys(config).sort()).toEqual(['github', 'gitlab', 'microsoft']);
+		expect(Object.keys(config).sort()).toEqual(['github', 'gitlab', 'google', 'microsoft']);
+		expect(config.google?.redirectUri).toBe('https://app.drupflare.com/auth/callback');
 		expect(config.gitlab?.baseUrl).toBe('https://git.example.test');
 		expect(config.microsoft?.tenant).toBe('contoso');
 		expect(config.github).not.toHaveProperty('baseUrl');
@@ -269,15 +351,22 @@ describe('factsLoader on the account and platform scopes', () => {
 		expect(stepUpAtOf({ kind: 'user', userId: 'u1', stepUpAt: 5 } as never)).toBe(5);
 	});
 
-	it('still refuses the platform scope', async () => {
-		await expect(
-			load({
-				principal: { kind: 'user', userId: 'u1' },
+	it('gives the platform scope no standing without a role, and refuses a key there', async () => {
+		const loaded = await load({
+			principal: { kind: 'user', userId: 'u1' },
+			scope: 'admin',
+			action: 'admin.aggregates.read',
+			params: {}
+		});
+		expect(loaded?.facts.platform).toBeUndefined();
+		expect(
+			await load({
+				principal: { kind: 'key', keyId: 'k', issuerId: 'u1' },
 				scope: 'admin',
-				action: 'site.read',
+				action: 'admin.aggregates.read',
 				params: {}
 			})
-		).rejects.toMatchObject({ code: 'not_built' });
+		).toBeNull();
 	});
 
 	it('finds nothing for a key that did not come through the resolver', async () => {

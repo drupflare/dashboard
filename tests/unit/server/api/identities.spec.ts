@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { API_ROOT, scanRoutes } from '../../../../scripts/gen-openapi';
 import oauthCallback from '../../../../src/server/api/v1/auth/oauth/[provider]/callback.get';
 import oauthStart from '../../../../src/server/api/v1/auth/oauth/[provider]/start.get';
+import oauthProviders from '../../../../src/server/api/v1/auth/oauth/index.get';
 import passkeyOptions from '../../../../src/server/api/v1/auth/passkey/options.post';
 import passkeyVerify from '../../../../src/server/api/v1/auth/passkey/verify.post';
 import identitiesGet from '../../../../src/server/api/v1/me/identities.get';
@@ -41,6 +42,7 @@ import {
 } from '../services/identities-support';
 
 const R = {
+	providers: '/api/v1/auth/oauth',
 	start: '/api/v1/auth/oauth/:provider/start',
 	callback: '/api/v1/auth/oauth/:provider/callback',
 	passkeyOptions: '/api/v1/auth/passkey/options',
@@ -140,6 +142,29 @@ async function oauthRoundTrip(
 		headers: over.cookie === null ? {} : jar({ [OAUTH_STATE_COOKIE]: over.cookie ?? state })
 	});
 }
+
+describe('GET /auth/oauth', () => {
+	it('lists only the providers that have a client, and is never cached', async () => {
+		const reply = await send(oauthProviders, R.providers);
+		expect(reply.status).toBe(200);
+		expect((reply.json as { providers: string[] }).providers.sort()).toEqual(
+			Object.keys(h.clients).sort()
+		);
+		expect(reply.headers.get('cache-control')).toBe('no-store');
+	});
+
+	it('lists nothing when no provider is set up', async () => {
+		install({ clients: {} });
+		const reply = await send(oauthProviders, R.providers);
+		expect(reply.status).toBe(200);
+		expect(reply.json).toEqual({ providers: [] });
+	});
+
+	it('answers 501 before the services are installed', async () => {
+		setIdentityServices(null);
+		expect((await send(oauthProviders, R.providers)).status).toBe(501);
+	});
+});
 
 describe('GET /auth/oauth/:provider/start', () => {
 	it('returns the provider url and the consent text, and sets a host-bound state cookie', async () => {
@@ -718,6 +743,7 @@ describe('route scan', () => {
 		expect(found).toMatchObject({
 			'POST /api/v1/auth/passkey/options': 'auth.passkey.options',
 			'POST /api/v1/auth/passkey/verify': 'auth.passkey.verify',
+			'GET /api/v1/auth/oauth': 'auth.oauth.providers',
 			'GET /api/v1/auth/oauth/{provider}/start': 'auth.oauth.start',
 			'GET /api/v1/auth/oauth/{provider}/callback': 'auth.oauth.callback',
 			'GET /api/v1/me/identities': 'account.security.manage',

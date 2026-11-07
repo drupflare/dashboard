@@ -44,6 +44,7 @@ import {
 } from '../domain/authorize';
 import { sha256Hex } from '../services/crypto';
 import { truncateIp } from '../services/sessions';
+import type { AccessIdentity } from './access';
 import { toApiError } from './errors';
 import {
 	checkIdempotency,
@@ -141,6 +142,8 @@ export interface LoadInput {
 	scope: Exclude<RouteScope, 'public'>;
 	action: Action;
 	params: Record<string, string>;
+	// the identity Cloudflare Access verified for this request, read only on the admin scope
+	access?: AccessIdentity | null;
 }
 
 export interface Loaded {
@@ -187,6 +190,7 @@ export interface ApiDeps {
 	resolvePrincipal(credential: Credential): Promise<Principal | null>;
 	limit: Limiter;
 	load(input: LoadInput): Promise<Loaded | null>;
+	access?(event: H3Event): Promise<AccessIdentity | null>;
 	idempotency: IdempotencyStore;
 	audit(record: AuditRecord): Promise<void>;
 	// a refusal is recorded best effort; a failed write is logged and the refusal still goes out
@@ -596,7 +600,8 @@ async function pipeline(
 			principal,
 			scope: meta.scope,
 			action: meta.action,
-			params: rawParams
+			params: rawParams,
+			access: meta.scope === 'admin' ? ((await deps.access?.(event)) ?? null) : null
 		});
 		if (loaded === null) throw new ApiError('not_found', 'Not found');
 		({ resource, facts } = loaded);

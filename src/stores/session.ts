@@ -7,6 +7,7 @@ export interface Me {
 	id: string;
 	email: string;
 	displayName: string | null;
+	platformRole?: 'admin' | null;
 	via: 'session' | 'key';
 	stepUpUntil: string | null;
 }

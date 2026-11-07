@@ -7,6 +7,7 @@
 	"kv_namespaces": [{ "binding": "KV" }, { "binding": "CACHE" }, { "binding": "HOSTS_KV" }],
 	"r2_buckets": [{ "binding": "BLOB", "bucket_name": "drupflare-dashboard-blob" }],
 	"services": [{ "binding": "ENGINE", "service": "drupflare-engine" }],
+	"send_email": [{ "name": "EMAIL" }],
 	"triggers": { "crons": ["*/15 * * * *"] },
 	"secrets": { "required": ["START_SECRET", "KEK_V1"] }
 }

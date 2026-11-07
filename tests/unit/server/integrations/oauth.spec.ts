@@ -16,6 +16,7 @@ import {
 	type ProviderProfile
 } from '../../../../src/server/integrations/oauth';
 import { ApiError } from '../../../../src/shared/errors';
+import { providerOfState } from '../../../../src/shared/oauth';
 import { memoryOnce, useClock, type MemoryOnce } from '../services/auth-support';
 import {
 	CREDS,
@@ -86,6 +87,7 @@ describe('start url', () => {
 			expect(params.get('client_id')).toBe(CREDS(provider).clientId);
 			expect(params.get('redirect_uri')).toBe(CREDS(provider).redirectUri);
 			expect(params.get('state')).toBe(state);
+			expect(providerOfState(state)).toBe(provider);
 			expect(params.get('code_challenge_method')).toBe('S256');
 			expect(params.get('scope')?.split(' ')).toEqual([...OAUTH_SCOPES[provider]]);
 		}

@@ -14,9 +14,14 @@ export default defineNitroPlugin((nitroApp) => {
 			return;
 		}
 		try {
+			const config = useRuntimeConfig(event);
 			bootOnce(env, {
 				dev: import.meta.dev,
-				baseUrl: useRuntimeConfig(event).baseUrl as string
+				baseUrl: config.baseUrl as string,
+				oauthClientIds: {
+					github: config.public.githubClientId as string,
+					gitlab: config.public.gitlabClientId as string
+				}
 			});
 		} catch (error) {
 			console.error('boot failed; sign-in stays closed', error);

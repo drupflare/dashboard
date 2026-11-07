@@ -41,6 +41,397 @@
 		{ "name": "system", "description": "Liveness and API documentation." }
 	],
 	"paths": {
+		"/api/v1/admin/operations": {
+			"get": {
+				"operationId": "getApiV1AdminOperations",
+				"summary": "List operations",
+				"description": "The newest operations first across every shard: type, status and verification.",
+				"tags": ["admin"],
+				"x-action": "admin.metadata.read",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "limit",
+						"in": "query",
+						"required": false,
+						"schema": { "default": 25, "type": "integer", "minimum": 1, "maximum": 100 }
+					},
+					{
+						"name": "before",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0,
+							"maximum": 9007199254740991
+						}
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"organizationId": { "type": "string" },
+													"siteId": { "type": ["string", "null"] },
+													"type": { "type": "string" },
+													"status": { "type": "string" },
+													"verification": { "type": "string" },
+													"createdAt": { "type": "number" },
+													"updatedAt": { "type": "number" }
+												},
+												"required": [
+													"id",
+													"organizationId",
+													"siteId",
+													"type",
+													"status",
+													"verification",
+													"createdAt",
+													"updatedAt"
+												]
+											}
+										},
+										"nextBefore": { "type": ["number", "null"] }
+									},
+									"required": ["items", "nextBefore"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/admin/organizations": {
+			"get": {
+				"operationId": "getApiV1AdminOrganizations",
+				"summary": "List organizations",
+				"description": "The newest organizations first across every shard.",
+				"tags": ["admin"],
+				"x-action": "admin.metadata.read",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "limit",
+						"in": "query",
+						"required": false,
+						"schema": { "default": 25, "type": "integer", "minimum": 1, "maximum": 100 }
+					},
+					{
+						"name": "before",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0,
+							"maximum": 9007199254740991
+						}
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"name": { "type": "string" },
+													"personal": { "type": "boolean" },
+													"createdBy": { "type": "string" },
+													"createdAt": { "type": "number" }
+												},
+												"required": [
+													"id",
+													"name",
+													"personal",
+													"createdBy",
+													"createdAt"
+												]
+											}
+										},
+										"nextBefore": { "type": ["number", "null"] }
+									},
+									"required": ["items", "nextBefore"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/admin/overview": {
+			"get": {
+				"operationId": "getApiV1AdminOverview",
+				"summary": "Read the platform totals",
+				"description": "Counts of users, organisations, sites by state and operations by status. Needs the admin role and a Cloudflare Access login.",
+				"tags": ["admin"],
+				"x-action": "admin.aggregates.read",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }],
+				"parameters": [{ "$ref": "#/components/parameters/ContractHeader" }],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"users": { "type": "number" },
+										"organizations": { "type": "number" },
+										"sites": {
+											"type": "object",
+											"propertyNames": { "type": "string" },
+											"additionalProperties": { "type": "number" }
+										},
+										"operations": {
+											"type": "object",
+											"propertyNames": { "type": "string" },
+											"additionalProperties": { "type": "number" }
+										}
+									},
+									"required": ["users", "organizations", "sites", "operations"]
+								}
+							}
+						}
+					},
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/admin/sites": {
+			"get": {
+				"operationId": "getApiV1AdminSites",
+				"summary": "List sites",
+				"description": "The newest sites first across every shard. Metadata only, never site content.",
+				"tags": ["admin"],
+				"x-action": "admin.metadata.read",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "limit",
+						"in": "query",
+						"required": false,
+						"schema": { "default": 25, "type": "integer", "minimum": 1, "maximum": 100 }
+					},
+					{
+						"name": "before",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0,
+							"maximum": 9007199254740991
+						}
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"organizationId": { "type": "string" },
+													"name": { "type": "string" },
+													"kind": { "type": "string" },
+													"plane": { "type": "string" },
+													"state": { "type": "string" },
+													"primaryHostname": {
+														"type": ["string", "null"]
+													},
+													"createdAt": { "type": "number" }
+												},
+												"required": [
+													"id",
+													"organizationId",
+													"name",
+													"kind",
+													"plane",
+													"state",
+													"primaryHostname",
+													"createdAt"
+												]
+											}
+										},
+										"nextBefore": { "type": ["number", "null"] }
+									},
+									"required": ["items", "nextBefore"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/admin/users": {
+			"get": {
+				"operationId": "getApiV1AdminUsers",
+				"summary": "List users",
+				"description": "The newest users first: address, name, platform role and when they joined. Never a credential or a session.",
+				"tags": ["admin"],
+				"x-action": "admin.metadata.read",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "limit",
+						"in": "query",
+						"required": false,
+						"schema": { "default": 25, "type": "integer", "minimum": 1, "maximum": 100 }
+					},
+					{
+						"name": "before",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0,
+							"maximum": 9007199254740991
+						}
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"email": { "type": "string" },
+													"displayName": { "type": ["string", "null"] },
+													"platformRole": { "type": ["string", "null"] },
+													"createdAt": { "type": "number" }
+												},
+												"required": [
+													"id",
+													"email",
+													"displayName",
+													"platformRole",
+													"createdAt"
+												]
+											}
+										},
+										"nextBefore": { "type": ["number", "null"] }
+									},
+									"required": ["items", "nextBefore"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/auth/code/request": {
 			"post": {
 				"operationId": "postApiV1AuthCodeRequest",
@@ -210,6 +601,52 @@
 					},
 					"400": { "$ref": "#/components/responses/BadRequest" },
 					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/auth/oauth": {
+			"get": {
+				"operationId": "getApiV1AuthOauth",
+				"summary": "List the provider sign-ins that are set up",
+				"description": "Names the providers whose client id and secret are both configured, so the sign-in screen shows only buttons that can work.",
+				"tags": ["auth"],
+				"x-action": "auth.oauth.providers",
+				"x-rate-class": "read",
+				"security": [],
+				"parameters": [{ "$ref": "#/components/parameters/ContractHeader" }],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"providers": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"enum": ["github", "gitlab", "google", "microsoft"]
+											}
+										}
+									},
+									"required": ["providers"]
+								}
+							}
+						}
+					},
 					"426": { "$ref": "#/components/responses/ContractUnsupported" },
 					"429": { "$ref": "#/components/responses/RateLimited" },
 					"500": { "$ref": "#/components/responses/InternalError" }
@@ -853,6 +1290,12 @@
 										"id": { "type": "string" },
 										"email": { "type": "string" },
 										"displayName": { "type": ["string", "null"] },
+										"platformRole": {
+											"anyOf": [
+												{ "type": "string", "enum": ["admin"] },
+												{ "type": "null" }
+											]
+										},
 										"via": { "type": "string", "enum": ["session", "key"] },
 										"stepUpUntil": {
 											"anyOf": [
@@ -865,7 +1308,14 @@
 											]
 										}
 									},
-									"required": ["id", "email", "displayName", "via", "stepUpUntil"]
+									"required": [
+										"id",
+										"email",
+										"displayName",
+										"platformRole",
+										"via",
+										"stepUpUntil"
+									]
 								}
 							}
 						}
