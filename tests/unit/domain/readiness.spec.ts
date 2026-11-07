@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { readiness, type ReadinessObservations } from '../../../src/server/domain/readiness';
+import {
+	CHECK_LABELS,
+	readiness,
+	readinessChecks,
+	type ReadinessObservations
+} from '../../../src/server/domain/readiness';
 
 const full: ReadinessObservations = {
 	siteResponds: true,
@@ -67,5 +72,34 @@ describe('readiness is derived from observations', () => {
 			'a critical alert configured with a delivered test notification',
 			'a named billing contact'
 		]);
+	});
+});
+
+describe('readiness checks', () => {
+	it('lists every check once, in tier order, with whether it holds', () => {
+		const out = readinessChecks({ ...full, adminAccessVerified: false });
+
+		expect(out.map((check) => check.label)).toEqual(Object.values(CHECK_LABELS));
+		expect(out.map((check) => check.tier)).toEqual([
+			'live',
+			'verified',
+			'verified',
+			'verified',
+			'production-ready',
+			'production-ready',
+			'production-ready',
+			'production-ready',
+			'production-ready'
+		]);
+		expect(out.filter((check) => !check.holds).map((check) => check.label)).toEqual([
+			CHECK_LABELS.admin
+		]);
+	});
+
+	it('agrees with the level about what is missing', () => {
+		const o = { ...full, contacts: { ...full.contacts, billing: false } };
+		const unmet = readinessChecks(o).filter((check) => !check.holds);
+
+		expect(unmet.map((check) => check.label)).toEqual(readiness(o).missing);
 	});
 });
