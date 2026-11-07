@@ -209,6 +209,17 @@ describe('check', () => {
 		});
 	});
 
+	it('does not hold a platform admin to the site count', () => {
+		const free = of(FREE_PLAN_ID);
+		const facts = { sitesInOrg: 9, freeSitesOwnedByUser: 9, platformAdmin: true };
+		expect(check('site.create', free, facts)).toEqual({ allow: true });
+		expect(check('site.create', of('enterprise'), facts)).toEqual({ allow: true });
+		expect(check('site.create', free, { ...facts, platformAdmin: false })).toEqual({
+			allow: false,
+			reason: 'site_limit'
+		});
+	});
+
 	it('refuses site creation when the limit is unknown', () => {
 		expect(check('site.create', of('enterprise'), { sitesInOrg: 0 })).toEqual({
 			allow: false,

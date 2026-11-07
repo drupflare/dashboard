@@ -111,6 +111,8 @@ export interface CheckFacts {
 	// sites on the free plan across every organisation the user owns
 	freeSitesOwnedByUser?: number;
 	customWorker?: boolean;
+	// a platform admin is not held to the site count of a plan
+	platformAdmin?: boolean;
 }
 
 export type CheckDenial =
@@ -139,13 +141,15 @@ export function check(
 	if (entitlement === null) return deny('no_entitlement');
 	if (!entitlement.dashboard) return deny('dashboard_not_included');
 	if (action === 'site.create') {
-		if (entitlement.sites === null) return deny('unknown_limit');
-		if (facts.sitesInOrg >= entitlement.sites) return deny('site_limit');
-		if (
-			entitlement.planId === FREE_PLAN_ID &&
-			(facts.freeSitesOwnedByUser ?? facts.sitesInOrg) >= entitlement.sites
-		) {
-			return deny('free_limit');
+		if (facts.platformAdmin !== true) {
+			if (entitlement.sites === null) return deny('unknown_limit');
+			if (facts.sitesInOrg >= entitlement.sites) return deny('site_limit');
+			if (
+				entitlement.planId === FREE_PLAN_ID &&
+				(facts.freeSitesOwnedByUser ?? facts.sitesInOrg) >= entitlement.sites
+			) {
+				return deny('free_limit');
+			}
 		}
 		if (facts.customWorker === true && !entitlement.features.customCode) {
 			return deny('feature_not_included');
