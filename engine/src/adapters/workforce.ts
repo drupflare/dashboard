@@ -7,6 +7,7 @@ import {
 	Routing,
 	WorkerHandle,
 	type DispatchPlane,
+	type Migration,
 	type ModuleType,
 	type Resources
 } from '@drupflare/workforce';
@@ -16,6 +17,15 @@ import type { Cloudflare } from '../ports';
 const TYPE_OF_CONTENT = Object.fromEntries(
 	Object.entries(MODULE_CONTENT_TYPE).map(([type, content]) => [content, type as ModuleType])
 );
+
+// the upload API takes one stepped object where a wrangler config lists tagged migrations, and
+// workforce types and sends the list as given. A first upload has no old tag to start after
+export function steppedMigrations(migrations: readonly Migration[]): Migration[] | undefined {
+	const last = migrations[migrations.length - 1];
+	if (last === undefined) return undefined;
+	const steps = migrations.map(({ tag: _tag, ...step }) => step);
+	return { new_tag: last.tag, steps } as unknown as Migration[];
+}
 
 // workforce's delete methods send the request and never read the status, so a refused delete would
 // look like a success; this reads it
@@ -138,13 +148,11 @@ export function workforceCloudflare(plane: DispatchPlane, resources: Resources):
 					return type === undefined ? [] : [[module.name, type]];
 				})
 			);
+			const { migrations, ...rest } = upload.metadata;
+			const stepped = migrations === undefined ? undefined : steppedMigrations(migrations);
+			const metadata = stepped === undefined ? rest : { ...rest, migrations: stepped };
 			const result = await paced(() =>
-				new WorkerHandle(plane, name).upload({
-					source,
-					main: upload.main,
-					types,
-					metadata: upload.metadata
-				})
+				new WorkerHandle(plane, name).upload({ source, main: upload.main, types, metadata })
 			);
 			return { versionId: result.versionId };
 		},

@@ -1,4 +1,5 @@
 import {
+	Budget,
 	dispatch,
 	Resources,
 	SESSION_MARGIN_MS,
@@ -16,7 +17,7 @@ import { leasesOf } from '../../../engine/src/adapters/leases';
 import { namesOf } from '../../../engine/src/adapters/names';
 import { releasesOf } from '../../../engine/src/adapters/releases';
 import { siteOf, SiteUnreachable } from '../../../engine/src/adapters/site';
-import { workforceCloudflare } from '../../../engine/src/adapters/workforce';
+import { steppedMigrations, workforceCloudflare } from '../../../engine/src/adapters/workforce';
 import { bundleKeys } from '../../../engine/src/bundle';
 import { CONFIG_VARS, ConfigError, readConfig } from '../../../engine/src/config';
 import { PermanentError } from '../../../engine/src/step';
@@ -62,13 +63,20 @@ function cloudflareWith(
 			headers: { 'content-type': 'application/json', ...headers }
 		});
 	};
+	// the governor waits out a 429's retry-after on its own sleep, so it runs on a clock that sleep advances
+	let clock = 0;
+	const sleep = async (ms: number) => {
+		clock += ms;
+	};
 	const plane: DispatchPlane = dispatch({
 		accountId: ACCOUNT,
 		token: 'fake-token',
 		namespace: 'ns',
 		fetch: fetcher,
 		retries: 0,
-		sleep: async () => undefined
+		sleep,
+		now: () => clock,
+		budget: new Budget({ now: () => clock, sleep })
 	});
 	return { calls, cloudflare: workforceCloudflare(plane, new Resources(plane.http, ACCOUNT)) };
 }
@@ -193,6 +201,43 @@ describe('the workforce adapter', () => {
 		});
 		expect((form.get('index.js') as File).type).toBe('application/javascript+module');
 		expect((form.get('php.wasm') as File).type).toBe('application/wasm');
+	});
+
+	it('sends migrations as the one stepped object the API takes, not a list', async () => {
+		const { calls, cloudflare } = cloudflareWith(() => ({
+			body: { success: true, result: { id: 'x', etag: 'e' } }
+		}));
+		const bundle = await makeBundle();
+		const modules = bundle.manifest.modules.map((module) => ({
+			module,
+			bytes: bundle.parts.get(bundleKeys.module('v1.0.4', module.name))!
+		}));
+		await cloudflare.putScript(scriptName(SITE), {
+			main: 'index.js',
+			metadata: {
+				migrations: [
+					{ tag: 'v1', new_sqlite_classes: ['SitePhpDurableObject'] },
+					{ tag: 'v2', new_sqlite_classes: ['RenderLane'] }
+				]
+			},
+			modules
+		});
+		const sent = JSON.parse(String((calls[0]?.body as FormData).get('metadata')));
+		expect(sent.migrations).toEqual({
+			new_tag: 'v2',
+			steps: [
+				{ new_sqlite_classes: ['SitePhpDurableObject'] },
+				{ new_sqlite_classes: ['RenderLane'] }
+			]
+		});
+	});
+
+	it('leaves out an empty migration list and steps a single one', () => {
+		expect(steppedMigrations([])).toBeUndefined();
+		expect(steppedMigrations([{ tag: 'v1', new_classes: ['A'] }])).toEqual({
+			new_tag: 'v1',
+			steps: [{ new_classes: ['A'] }]
+		});
 	});
 
 	it('uses the same asset session lifetime workforce does', () => {
