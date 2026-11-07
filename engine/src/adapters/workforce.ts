@@ -1,30 +1,71 @@
 import {
 	assetsApi,
 	LimitError,
-	MODULE_CONTENT_TYPE,
 	NotFoundError,
 	readRateHeaders,
 	Routing,
-	WorkerHandle,
 	type DispatchPlane,
 	type Migration,
-	type ModuleType,
 	type Resources
 } from '@drupflare/workforce';
 import { RateLimitedError } from '../account-usage';
 import type { Cloudflare } from '../ports';
+import { PermanentError } from '../step';
+import { multipartBody } from '../stream-body';
 
-const TYPE_OF_CONTENT = Object.fromEntries(
-	Object.entries(MODULE_CONTENT_TYPE).map(([type, content]) => [content, type as ModuleType])
-);
+const encoder = new TextEncoder();
+
+// the upload endpoints answer the usual envelope; a refusal names the reason the API gave
+async function readUpload(response: Response, what: string): Promise<unknown> {
+	let body: {
+		success?: boolean;
+		result?: unknown;
+		errors?: { message?: string; code?: unknown }[];
+	};
+	try {
+		body = await response.json();
+	} catch {
+		throw new Error(`${what}: HTTP ${response.status} with a non-JSON body`);
+	}
+	if (response.status === 401 || response.status === 403) {
+		throw new Error(`${what}: HTTP ${response.status}, the credential was rejected`);
+	}
+	if (body.success === false || body.result === undefined) {
+		const detail = (body.errors ?? []).map((e) => e.message ?? String(e.code)).join('; ');
+		throw new Error(
+			`${what} was refused: ${detail === '' ? `HTTP ${response.status}` : detail}`
+		);
+	}
+	return body.result;
+}
 
 // the upload API takes one stepped object where a wrangler config lists tagged migrations, and
-// workforce types and sends the list as given. A first upload has no old tag to start after
-export function steppedMigrations(migrations: readonly Migration[]): Migration[] | undefined {
+// workforce types and sends the list as given. A first upload has no old tag to start after; an
+// update names the tag the script is at, sends only the steps after it, and sends nothing when
+// the script is already at the last tag
+export function steppedMigrations(
+	migrations: readonly Migration[],
+	oldTag?: string
+): Migration[] | undefined {
 	const last = migrations[migrations.length - 1];
 	if (last === undefined) return undefined;
-	const steps = migrations.map(({ tag: _tag, ...step }) => step);
-	return { new_tag: last.tag, steps } as unknown as Migration[];
+	const strip = (list: readonly Migration[]) => list.map(({ tag: _tag, ...step }) => step);
+	if (oldTag === undefined) {
+		return { new_tag: last.tag, steps: strip(migrations) } as unknown as Migration[];
+	}
+	if (oldTag === last.tag) return undefined;
+	const at = migrations.findIndex((migration) => migration.tag === oldTag);
+	if (at < 0) {
+		throw new PermanentError(
+			'migration_tag_unknown',
+			`the script is at migration ${oldTag}, which the upload does not list`
+		);
+	}
+	return {
+		old_tag: oldTag,
+		new_tag: last.tag,
+		steps: strip(migrations.slice(at + 1))
+	} as unknown as Migration[];
 }
 
 // workforce's delete methods send the request and never read the status, so a refused delete would
@@ -141,20 +182,37 @@ export function workforceCloudflare(plane: DispatchPlane, resources: Resources):
 			checkedDelete(plane, `/zones/${zoneId}/workers/routes/${routeId}`),
 
 		async putScript(name, upload) {
-			const source = new Map(upload.modules.map(({ module, bytes }) => [module.name, bytes]));
-			const types = Object.fromEntries(
-				upload.modules.flatMap(({ module }) => {
-					const type = TYPE_OF_CONTENT[module.contentType];
-					return type === undefined ? [] : [[module.name, type]];
+			if (!upload.modules.some(({ module }) => module.name === upload.main)) {
+				throw new PermanentError(
+					'upload_main_missing',
+					`the entry point ${upload.main} is not in the module set`
+				);
+			}
+			const { migrations, ...rest } = upload.metadata;
+			const stepped =
+				migrations === undefined ? undefined : steppedMigrations(migrations, upload.oldTag);
+			const metadata = {
+				...(stepped === undefined ? rest : { ...rest, migrations: stepped }),
+				main_module: upload.main
+			};
+			const form = multipartBody([
+				{ name: 'metadata', bytes: encoder.encode(JSON.stringify(metadata)) },
+				...upload.modules.map(({ module, bytes }) => ({
+					name: module.name,
+					filename: module.name,
+					contentType: module.contentType,
+					bytes
+				}))
+			]);
+			const response = await paced(() =>
+				plane.http.send(`${plane.base}/scripts/${name}`, {
+					method: 'PUT',
+					headers: { 'content-type': form.contentType },
+					body: form.body
 				})
 			);
-			const { migrations, ...rest } = upload.metadata;
-			const stepped = migrations === undefined ? undefined : steppedMigrations(migrations);
-			const metadata = stepped === undefined ? rest : { ...rest, migrations: stepped };
-			const result = await paced(() =>
-				new WorkerHandle(plane, name).upload({ source, main: upload.main, types, metadata })
-			);
-			return { versionId: result.versionId };
+			await readUpload(response, `uploading ${name}`);
+			return { versionId: null };
 		},
 
 		deleteScript: (name) =>
@@ -170,9 +228,26 @@ export function workforceCloudflare(plane: DispatchPlane, resources: Resources):
 			);
 		},
 
-		uploadAssetBucket(jwt, files) {
-			// the bucket upload path does not depend on the session path
-			return paced(() => assetsApi(plane.http, plane.accountId, '').uploadBucket(jwt, files));
+		async uploadAssetBucket(jwt, files) {
+			const form = multipartBody(
+				files.map((file) => ({
+					name: file.hash,
+					filename: file.hash,
+					contentType: 'application/null',
+					bytes: file.bytes,
+					base64: true
+				}))
+			);
+			const response = await paced(() =>
+				plane.http.send(`${account}/workers/assets/upload`, {
+					method: 'POST',
+					query: { base64: true },
+					headers: { authorization: `Bearer ${jwt}`, 'content-type': form.contentType },
+					body: form.body
+				})
+			);
+			const result = await readUpload(response, 'uploading an asset bucket');
+			return String((result as { jwt?: unknown }).jwt ?? '');
 		}
 	};
 }

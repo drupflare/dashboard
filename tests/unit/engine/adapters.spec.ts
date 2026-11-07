@@ -42,7 +42,14 @@ interface Seen {
 	path: string;
 	body: unknown;
 	auth: string | null;
+	contentType: string | null;
 }
+
+// the streamed body is read back through the same parser a server would use
+const formOf = (seen: Seen | undefined): Promise<FormData> =>
+	new Response(seen?.body as BodyInit, {
+		headers: { 'content-type': seen?.contentType ?? '' }
+	}).formData();
 
 function cloudflareWith(
 	answer: (seen: Seen) => { status?: number; body?: unknown; headers?: Record<string, string> }
@@ -54,7 +61,8 @@ function cloudflareWith(
 			method: init?.method ?? 'GET',
 			path: `${url.pathname}${url.search}`,
 			body: init?.body ?? null,
-			auth: new Headers(init?.headers).get('authorization')
+			auth: new Headers(init?.headers).get('authorization'),
+			contentType: new Headers(init?.headers).get('content-type')
 		};
 		calls.push(seen);
 		const { status = 200, body = { success: true, result: {} }, headers = {} } = answer(seen);
@@ -172,6 +180,8 @@ describe('the workforce adapter', () => {
 			`/client/v4/accounts/${ACCOUNT}/workers/assets/upload?base64=true`
 		);
 		expect(calls[1]?.auth).toBe('Bearer session');
+		const sent = await formOf(calls[1]);
+		expect(atob(await (sent.get('h1') as File).text())).toBe('\u0001');
 	});
 
 	it('uploads a script as multipart with the metadata and one part per module', async () => {
@@ -194,7 +204,7 @@ describe('the workforce adapter', () => {
 		expect(calls[0]?.path).toBe(
 			`/client/v4/accounts/${ACCOUNT}/workers/dispatch/namespaces/ns/scripts/${name}`
 		);
-		const form = calls[0]?.body as FormData;
+		const form = await formOf(calls[0]);
 		expect(JSON.parse(String(form.get('metadata')))).toMatchObject({
 			main_module: 'index.js',
 			compatibility_date: '2026-08-01'
@@ -222,7 +232,7 @@ describe('the workforce adapter', () => {
 			},
 			modules
 		});
-		const sent = JSON.parse(String((calls[0]?.body as FormData).get('metadata')));
+		const sent = JSON.parse(String((await formOf(calls[0])).get('metadata')));
 		expect(sent.migrations).toEqual({
 			new_tag: 'v2',
 			steps: [
