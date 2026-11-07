@@ -14,8 +14,7 @@ export default defineNuxtConfig({
 		'@nuxtjs/robots',
 		'@nuxtjs/sitemap',
 		'@nuxtjs/turnstile',
-		'nuxt-schema-org',
-		'nuxt-api-shield'
+		'nuxt-schema-org'
 	],
 	content: {
 		experimental: { nativeSqlite: true }
@@ -53,6 +52,9 @@ export default defineNuxtConfig({
 	app: {
 		head: {
 			link: [
+				{ rel: 'icon', href: '/favicon.ico', sizes: 'any' },
+				{ rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon-32.png' },
+				{ rel: 'apple-touch-icon', href: '/favicon-180.png' },
 				{ rel: 'preconnect', href: 'https://drupflare.com' },
 				{ rel: 'dns-prefetch', href: 'https://drupflare.com' },
 				{ rel: 'preconnect', href: 'https://drupflare.app' },
@@ -72,9 +74,6 @@ export default defineNuxtConfig({
 				maxAge: 31536000
 			}
 		],
-		storage: {
-			shield: { driver: 'cloudflare-kv-binding', binding: 'CACHE' }
-		},
 		cloudflare: {
 			deployConfig: true,
 			nodeCompat: true
