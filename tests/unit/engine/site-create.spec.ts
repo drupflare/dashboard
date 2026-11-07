@@ -354,6 +354,21 @@ describe('a failed create', () => {
 		expect(world.names.recordOf(world.input.subdomain)).toBeNull();
 	});
 
+	it('keeps the lease through a run longer than its lifetime when every step is shorter', async () => {
+		const world = await start();
+		const real = world.deps.cloudflare;
+		world.deps.cloudflare = {
+			...real,
+			createResource: (kind, name) => {
+				world.clock.advance(Math.floor(world.deps.config.leaseTtlMs * 0.4));
+				return real.createResource(kind, name);
+			}
+		};
+		const outcome = await attempt(world, new Map()).done;
+		expect(outcome.status).toBe('succeeded');
+		expect(world.leases.stateOf(world.siteId).epoch).toBe(1);
+	});
+
 	it('does not roll back when the lease was lost mid-run, and leaves the new holder alone', async () => {
 		const world = await start();
 		const real = world.deps.cloudflare;

@@ -41,12 +41,14 @@ export class SiteBusyError extends PermanentError {
 	}
 }
 
-// every mutating step re-checks the lease first, so a holder that expired writes nothing more
+// every mutating step renews the lease first, so a holder that expired writes nothing more and a
+// long run keeps the site for as long as each step finishes inside one lease time
 export async function fenced(ctx: Ctx): Promise<void> {
 	if (ctx.epoch === null) throw new LeaseLostError(ctx.siteId, 'never acquired');
-	const verdict = await ctx.deps.leases.check(ctx.siteId, {
+	const verdict = await ctx.deps.leases.heartbeat(ctx.siteId, {
 		holder: ctx.operationId,
-		epoch: ctx.epoch
+		epoch: ctx.epoch,
+		ttlMs: ctx.deps.config.leaseTtlMs
 	});
 	if (!verdict.ok) throw new LeaseLostError(ctx.siteId, verdict.code);
 }
