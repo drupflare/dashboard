@@ -27,6 +27,16 @@ afterEach(() => {
 });
 
 describe('OrgSwitcher', () => {
+	it('shows a skeleton in place of the select until the list arrives', async () => {
+		const wrapper = await mountSuspended(OrgSwitcher);
+		expect(wrapper.find('[role="status"]').text()).toBe('Loading organizations');
+		expect(wrapper.find('select').exists()).toBe(false);
+		expect(wrapper.findAll('.animate-pulse').length).toBeGreaterThan(0);
+
+		await vi.waitFor(() => expect(wrapper.find('select').exists()).toBe(true));
+		expect(wrapper.find('[role="status"]').exists()).toBe(false);
+	});
+
 	it('loads the organizations itself when the page did not', async () => {
 		const wrapper = await mountSuspended(OrgSwitcher);
 		await vi.waitFor(() =>

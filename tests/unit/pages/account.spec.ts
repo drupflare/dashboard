@@ -61,6 +61,32 @@ async function mountPage() {
 	return wrapper;
 }
 
+describe('account page states', () => {
+	it('shows skeletons while the account is unknown, then the content', async () => {
+		const wrapper = await mountSuspended(AccountPage);
+		mounted.push(wrapper);
+		const loading = wrapper.find('[role="status"]');
+		expect(loading.text()).toBe('Loading your account');
+		expect(loading.findAll('.animate-pulse').length).toBeGreaterThan(5);
+		expect(wrapper.text()).not.toContain('Loading...');
+		expect(wrapper.text()).not.toContain('Appearance');
+
+		await useSessionStore().ensure();
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Appearance'));
+		expect(wrapper.text()).not.toContain('Loading your account');
+	});
+
+	it('shows an empty state with a way back to sign in when signed out', async () => {
+		useSessionStore().me = null;
+		const wrapper = await mountSuspended(AccountPage);
+		mounted.push(wrapper);
+		await vi.waitFor(() => expect(wrapper.text()).toContain('You Are Signed Out'));
+		expect(wrapper.find('a[href="/login"]').exists()).toBe(true);
+		expect(wrapper.find('[role="status"]').exists()).toBe(false);
+		expect(wrapper.text()).not.toContain('Appearance');
+	});
+});
+
 describe('account page', () => {
 	it('shows the signed-in email and the three theme choices', async () => {
 		const wrapper = await mountPage();

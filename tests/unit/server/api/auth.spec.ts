@@ -19,6 +19,7 @@ import {
 	setAuthServices
 } from '../../../../src/server/utils/auth';
 import { isApiHandler, resetApiDeps } from '../../../../src/server/utils/define-api';
+import { SESSION_HINT_COOKIE } from '../../../../src/shared/session-hint';
 import { facts, fresh } from '../../domain/fixtures';
 import {
 	send as sendRequest,
@@ -70,6 +71,13 @@ const cookieHeader = (token: string) => ({ cookie: `${SESSION_COOKIE_NAME}=${tok
 
 function setCookies(reply: Reply): string[] {
 	return reply.headers.getSetCookie();
+}
+
+function expectHintCleared(reply: Reply): void {
+	const hint = setCookies(reply).find((c) => c.startsWith(`${SESSION_HINT_COOKIE}=`)) as string;
+	expect(hint).toMatch(/Max-Age=0/);
+	expect(hint).toMatch(/Secure/);
+	expect(hint).toMatch(/Path=\//);
 }
 
 function tokenFrom(reply: Reply): string {
@@ -170,6 +178,22 @@ describe('POST /api/v1/auth/code/verify', () => {
 			user: { email: 'ada@example.com', displayName: null },
 			isNew: true
 		});
+	});
+
+	it('sets a readable signed-in hint beside the session cookie, with the same lifetime', async () => {
+		const { reply, token } = await signIn();
+		const line = setCookies(reply).find((c) =>
+			c.startsWith(`${SESSION_HINT_COOKIE}=`)
+		) as string;
+		const parts = line.split(';').map((p) => p.trim());
+		expect(parts[0]).toBe(`${SESSION_HINT_COOKIE}=1`);
+		expect(parts).toContain('Path=/');
+		expect(parts).toContain('Secure');
+		expect(parts).toContain('SameSite=Lax');
+		expect(parts).toContain(`Max-Age=${SESSION_ABSOLUTE_MS / 1000}`);
+		expect(parts).not.toContain('HttpOnly');
+		expect(parts.some((p) => /^domain=/i.test(p))).toBe(false);
+		expect(line).not.toContain(token);
 	});
 
 	it('answers one 401 for every kind of bad code', async () => {
@@ -374,6 +398,7 @@ describe('sessions', () => {
 		expect(cleared).toMatch(/Max-Age=0/);
 		expect(cleared).toMatch(/Secure/);
 		expect(cleared).toMatch(/Path=\//);
+		expectHintCleared(reply);
 		expect((await send(me, ROUTES.me, { headers: cookieHeader(token) })).status).toBe(401);
 	});
 
@@ -444,16 +469,20 @@ describe('POST /api/v1/auth/logout', () => {
 		expect(reply.status).toBe(204);
 		const cleared = setCookies(reply).find((c) => c.startsWith(SESSION_COOKIE_NAME)) as string;
 		expect(cleared).toMatch(/Max-Age=0/);
+		expectHintCleared(reply);
 		expect(h.kv.keys().filter((k) => k.startsWith('session:'))).toEqual([]);
 	});
 
 	it('still answers 204 with no cookie or a dead one', async () => {
-		expect((await send(logout, ROUTES.logout, { method: 'POST' })).status).toBe(204);
+		const none = await send(logout, ROUTES.logout, { method: 'POST' });
+		expect(none.status).toBe(204);
+		expectHintCleared(none);
 		const dead = await send(logout, ROUTES.logout, {
 			method: 'POST',
 			headers: cookieHeader('x'.repeat(43))
 		});
 		expect(dead.status).toBe(204);
+		expectHintCleared(dead);
 	});
 });
 
@@ -479,6 +508,7 @@ describe('POST /api/v1/auth/step-up', () => {
 		const next = tokenFrom(reply);
 		expect(next).not.toBe(token);
 		expect(reply.text).not.toContain(next);
+		expect(setCookies(reply).some((c) => c.startsWith(`${SESSION_HINT_COOKIE}=1`))).toBe(true);
 		expect((reply.json as { stepUpUntil: string }).stepUpUntil).toBe(
 			new Date(clock.now + 10 * 60 * 1000).toISOString()
 		);

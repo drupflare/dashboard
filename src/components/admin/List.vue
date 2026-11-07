@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { toApiClientError, useApi } from '~/composables/useApi';
+import { adminGet } from '~/composables/useAdminApi';
+import { toApiClientError } from '~/composables/useApi';
 
 type Row = Record<string, unknown>;
 interface Column {
@@ -20,10 +21,7 @@ async function load(more: boolean) {
 	try {
 		const query: Record<string, string> = { limit: '25' };
 		if (more && next.value !== null) query.before = String(next.value);
-		const page = await useApi().get<{ items: Row[]; nextBefore: number | null }>(
-			props.path,
-			query
-		);
+		const page = await adminGet<{ items: Row[]; nextBefore: number | null }>(props.path, query);
 		rows.value = more ? [...rows.value, ...page.items] : page.items;
 		next.value = page.nextBefore;
 		status.value = 'ready';
@@ -58,13 +56,11 @@ function cell(row: Row, column: Column): string {
 				>Try Again</UButton
 			>
 		</UiErrorState>
-		<p
+		<UiSkeletonTable
 			v-else-if="status === 'loading' && rows.length === 0"
-			role="status"
-			class="text-sm text-muted"
-		>
-			Loading...
-		</p>
+			label="Loading the list"
+			:columns="columns.length"
+		/>
 		<p
 			v-else-if="rows.length === 0"
 			class="text-muted"

@@ -100,8 +100,8 @@ onMounted(load);
 	<section class="flex flex-col gap-4">
 		<h2 class="text-lg font-semibold text-highlighted">Connected Accounts</h2>
 		<p class="max-w-prose text-muted">
-			Connect a provider account to sign in with it. A connection never gives Drupflare access
-			to your repositories or your Cloudflare resources, and you can remove it at any time.
+			Connect a provider account to sign in with it. A connection gives Drupflare no access to
+			your repositories or Cloudflare resources. You can remove it at any time.
 		</p>
 		<p
 			v-if="props.justConnected"
@@ -122,18 +122,30 @@ onMounted(load);
 			@done="resume"
 			@cancel="waiting = null"
 		/>
-		<p
+		<div
 			v-if="identities === null"
 			role="status"
-			class="text-sm text-muted"
 		>
-			Loading...
-		</p>
+			<span class="sr-only">Loading connected accounts</span>
+			<div
+				aria-hidden="true"
+				class="flex flex-col divide-y divide-default rounded-lg border border-default"
+			>
+				<div
+					v-for="row in 2"
+					:key="row"
+					class="flex items-center justify-between gap-3 p-4"
+				>
+					<USkeleton class="h-5 w-28" />
+					<USkeleton class="h-8 w-24" />
+				</div>
+			</div>
+		</div>
 		<p
 			v-else-if="rows.length === 0"
 			class="text-sm text-muted"
 		>
-			No provider sign-in is set up yet.
+			No sign-in providers are available.
 		</p>
 		<ul
 			v-else

@@ -39,7 +39,7 @@ const lists = {
 		empty: 'No sites yet.',
 		columns: [
 			{ key: 'name', label: 'Name' },
-			{ key: 'kind', label: 'Kind' },
+			{ key: 'kind', label: 'Template' },
 			{ key: 'state', label: 'State' },
 			{ key: 'primaryHostname', label: 'Hostname' },
 			{ key: 'createdAt', label: 'Created', kind: 'date' as const }
@@ -64,13 +64,7 @@ const listFor = computed(() => (tab.value in lists ? lists[tab.value as ListTab]
 
 <template>
 	<ClientOnly>
-		<p
-			v-if="session.me === undefined"
-			role="status"
-			class="text-sm text-muted"
-		>
-			Loading...
-		</p>
+		<AdminSkeleton v-if="session.me === undefined" />
 		<UiEmptyState
 			v-else-if="session.me?.platformRole !== 'admin'"
 			icon="i-lucide-file-question"
@@ -83,7 +77,7 @@ const listFor = computed(() => (tab.value in lists ? lists[tab.value as ListTab]
 		>
 			<UiPageHeader
 				title="Admin"
-				text="Read-only metadata about the platform. Site content is never shown."
+				text="Read-only platform metadata. Site content is never shown."
 			/>
 			<UTabs
 				v-model="tab"
@@ -102,12 +96,7 @@ const listFor = computed(() => (tab.value in lists ? lists[tab.value as ListTab]
 			/>
 		</div>
 		<template #fallback>
-			<p
-				role="status"
-				class="text-sm text-muted"
-			>
-				Loading...
-			</p>
+			<AdminSkeleton />
 		</template>
 	</ClientOnly>
 </template>

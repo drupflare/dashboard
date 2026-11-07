@@ -20,6 +20,9 @@ interface OrgPage {
 
 const COOKIE = 'drupflare_org';
 
+// one request at a time; a second caller waits on the first
+let pending: Promise<void> | null = null;
+
 function readCookie(): string | null {
 	if (typeof document === 'undefined') return null;
 	const match = document.cookie.match(new RegExp(`(?:^|; )${COOKIE}=([^;]*)`));
@@ -68,13 +71,21 @@ export const useOrgStore = defineStore('org', {
 			if (this.items === undefined) await this.load();
 			else this.reconcile();
 		},
-		async load(): Promise<void> {
+		load(): Promise<void> {
+			pending ??= this.fetchItems().finally(() => {
+				pending = null;
+			});
+			return pending;
+		},
+		async fetchItems(): Promise<void> {
 			try {
 				this.items = await fetchAll();
 				this.error = null;
 				this.reconcile();
 			} catch (error) {
-				this.error = toApiClientError(error);
+				const apiError = toApiClientError(error);
+				// a 401 already cleared the session, and with it this store
+				if (apiError.status !== 401) this.error = apiError;
 			}
 		},
 		async loadPlan(orgId: string): Promise<void> {

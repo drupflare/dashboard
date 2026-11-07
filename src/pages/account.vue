@@ -31,7 +31,19 @@ async function signOut() {
 
 <template>
 	<ClientOnly>
-		<div class="flex max-w-3xl flex-col gap-10">
+		<AccountSkeleton v-if="session.me === undefined" />
+		<UiEmptyState
+			v-else-if="session.me === null"
+			icon="i-lucide-log-in"
+			title="You Are Signed Out"
+			text="Sign in to see your account."
+		>
+			<UButton to="/login">Sign In</UButton>
+		</UiEmptyState>
+		<div
+			v-else
+			class="flex max-w-3xl flex-col gap-10"
+		>
 			<UiPageHeader
 				title="Account"
 				:text="session.me?.email"
@@ -77,8 +89,8 @@ async function signOut() {
 			<section class="flex flex-col gap-4">
 				<h2 class="text-lg font-semibold text-highlighted">Sign-In</h2>
 				<p class="max-w-prose text-muted">
-					You sign in with a code sent to {{ session.me?.email }}. Signing out ends this
-					session on this device.
+					Sign-in codes go to {{ session.me?.email }}. Signing out ends the session on
+					this device.
 				</p>
 				<div>
 					<UButton
@@ -94,12 +106,7 @@ async function signOut() {
 			</section>
 		</div>
 		<template #fallback>
-			<p
-				role="status"
-				class="text-sm text-muted"
-			>
-				Loading...
-			</p>
+			<AccountSkeleton />
 		</template>
 	</ClientOnly>
 </template>

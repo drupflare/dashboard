@@ -13,7 +13,23 @@ function onChange(event: Event) {
 </script>
 
 <template>
-	<div class="flex items-center gap-2">
+	<div
+		v-if="org.items === undefined && !org.error"
+		role="status"
+	>
+		<span class="sr-only">Loading organizations</span>
+		<div
+			aria-hidden="true"
+			class="flex items-center gap-2"
+		>
+			<USkeleton class="h-5 w-20" />
+			<USkeleton class="h-8 w-48" />
+		</div>
+	</div>
+	<div
+		v-else
+		class="flex items-center gap-2"
+	>
 		<label
 			:for="selectId"
 			class="text-sm text-muted"

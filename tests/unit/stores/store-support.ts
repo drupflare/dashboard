@@ -47,6 +47,7 @@ export function cookieValue(name: string): string | null {
 export function clearBrowserState(): void {
 	calls.length = 0;
 	document.cookie = 'drupflare_org=; max-age=0; path=/';
+	document.cookie = 'drupflare_in=; max-age=0; path=/';
 	sessionStorage.clear();
 }
 

@@ -66,7 +66,7 @@ function retryPage() {
 			<UiErrorState
 				v-if="view === 'session-error'"
 				title="Could Not Load Your Account"
-				text="Check your connection and try again."
+				:text="session.error?.message"
 				:request-id="session.error?.requestId"
 			>
 				<UButton
@@ -79,7 +79,7 @@ function retryPage() {
 			<UiErrorState
 				v-else-if="view === 'org-error'"
 				title="Could Not Load Organizations"
-				text="Check your connection and try again."
+				:text="org.error?.message"
 				:request-id="org.error?.requestId"
 			>
 				<UButton
@@ -96,18 +96,15 @@ function retryPage() {
 				text="Sign out and sign in again to set up your organization."
 			/>
 
-			<p
+			<UiSkeletonTable
 				v-else-if="view === 'loading'"
-				role="status"
-				class="text-sm text-muted"
-			>
-				Loading sites...
-			</p>
+				label="Loading sites"
+			/>
 
 			<UiErrorState
 				v-else-if="view === 'sites-error'"
 				title="Could Not Load Sites"
-				text="Check your connection and try again."
+				:text="list?.error?.message"
 				:request-id="list?.error?.requestId"
 			>
 				<p
@@ -180,12 +177,10 @@ function retryPage() {
 			</template>
 		</div>
 		<template #fallback>
-			<p
-				role="status"
-				class="text-sm text-muted"
-			>
-				Loading sites...
-			</p>
+			<div class="flex flex-col gap-6">
+				<UiPageHeader title="Sites" />
+				<UiSkeletonTable label="Loading sites" />
+			</div>
 		</template>
 	</ClientOnly>
 </template>

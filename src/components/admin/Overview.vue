@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { toApiClientError, useApi } from '~/composables/useApi';
+import { adminGet } from '~/composables/useAdminApi';
+import { toApiClientError } from '~/composables/useApi';
 
 interface Overview {
 	users: number;
@@ -14,7 +15,7 @@ const error = ref('');
 async function load() {
 	error.value = '';
 	try {
-		data.value = await useApi().get<Overview>('/admin/overview');
+		data.value = await adminGet<Overview>('/admin/overview');
 	} catch (cause) {
 		error.value = toApiClientError(cause).message;
 	}
@@ -44,13 +45,33 @@ const groups = computed(() =>
 			>Try Again</UButton
 		>
 	</UiErrorState>
-	<p
+	<div
 		v-else-if="!data"
 		role="status"
-		class="text-sm text-muted"
 	>
-		Loading...
-	</p>
+		<span class="sr-only">Loading the totals</span>
+		<div
+			aria-hidden="true"
+			class="flex max-w-md flex-col gap-8"
+		>
+			<div class="flex flex-col gap-3">
+				<USkeleton
+					v-for="line in 2"
+					:key="line"
+					class="h-6 w-full"
+				/>
+			</div>
+			<div
+				v-for="group in 2"
+				:key="group"
+				class="flex flex-col gap-3"
+			>
+				<USkeleton class="h-6 w-40" />
+				<USkeleton class="h-5 w-full" />
+				<USkeleton class="h-5 w-full" />
+			</div>
+		</div>
+	</div>
 	<div
 		v-else
 		class="flex flex-col gap-8"

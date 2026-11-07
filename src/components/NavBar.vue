@@ -21,18 +21,25 @@ async function signOut() {
 			</NuxtLink>
 			<div class="ml-auto flex flex-wrap items-center gap-3">
 				<ClientOnly>
-					<OrgSwitcher v-if="session.me" />
-					<UButton
-						v-if="session.me"
-						color="neutral"
-						variant="ghost"
-						icon="i-lucide-log-out"
-						:loading="signingOut"
-						@click="signOut"
-					>
-						Sign Out
-					</UButton>
+					<OrgSwitcher v-if="session.signedIn" />
+					<template #fallback>
+						<USkeleton
+							v-if="session.signedIn"
+							class="h-8 w-72"
+							aria-hidden="true"
+						/>
+					</template>
 				</ClientOnly>
+				<UButton
+					v-if="session.signedIn"
+					color="neutral"
+					variant="ghost"
+					icon="i-lucide-log-out"
+					:loading="signingOut"
+					@click="signOut"
+				>
+					Sign Out
+				</UButton>
 				<ThemeToggle />
 			</div>
 		</div>

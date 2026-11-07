@@ -9,6 +9,7 @@ import {
 } from 'h3';
 import { z } from 'zod';
 import { ApiError } from '../../shared/errors';
+import { SESSION_HINT_COOKIE } from '../../shared/session-hint';
 import { nowUtc } from '../../shared/utils/time';
 import { findApiKeyByLookup } from '../db/repos/api-key-lookup';
 import type { Principal } from '../domain/authorize';
@@ -210,12 +211,17 @@ export async function ensureLoggedIn(event: H3Event): Promise<Principal> {
 
 // #region cookie
 
+// the hint is readable by script so the first paint can pick a nav; it holds no secret and the
+// server never reads it
 export function setSessionCookie(event: H3Event, token: string, session: SessionRecord): void {
-	setCookie(event, SESSION_COOKIE_NAME, token, sessionCookieOptions(session));
+	const options = sessionCookieOptions(session);
+	setCookie(event, SESSION_COOKIE_NAME, token, options);
+	setCookie(event, SESSION_HINT_COOKIE, '1', { ...options, httpOnly: false });
 }
 
 export function clearSessionCookie(event: H3Event): void {
 	deleteCookie(event, SESSION_COOKIE_NAME, { secure: true, path: '/' });
+	deleteCookie(event, SESSION_HINT_COOKIE, { secure: true, path: '/' });
 }
 
 export function sessionTokenOf(event: H3Event): string | undefined {

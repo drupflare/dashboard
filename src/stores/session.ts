@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { ApiClientError, toApiClientError, useApi } from '~/composables/useApi';
+import { SESSION_HINT_COOKIE } from '~/shared/session-hint';
 import { useOrgStore } from '~/stores/org';
 import { useSitesStore } from '~/stores/sites';
 
@@ -15,6 +16,9 @@ export interface Me {
 // one request at a time; a second caller waits on the first
 let pending: Promise<void> | null = null;
 
+// counts clear() calls, so a /me answer that was in flight when the session ended is dropped
+let cleared = 0;
+
 export function safeRedirect(value: unknown): string | null {
 	if (typeof value !== 'string') return null;
 	if (!value.startsWith('/') || value.startsWith('//') || value.startsWith('/\\')) return null;
@@ -25,8 +29,13 @@ export const useSessionStore = defineStore('session', {
 	state: () => ({
 		// undefined: not loaded; null: signed out; Me: signed in
 		me: undefined as Me | null | undefined,
-		error: null as ApiClientError | null
+		error: null as ApiClientError | null,
+		// the readable cookie the server sets beside the session; a guess for the first paint only
+		hinted: String(useCookie(SESSION_HINT_COOKIE).value) === '1'
 	}),
+	getters: {
+		signedIn: (state): boolean => (state.me === undefined ? state.hinted : state.me !== null)
+	},
 	actions: {
 		load(): Promise<void> {
 			pending ??= this.fetchMe().finally(() => {
@@ -38,10 +47,15 @@ export const useSessionStore = defineStore('session', {
 			if (this.me === undefined) await this.load();
 		},
 		async fetchMe(): Promise<void> {
+			const started = cleared;
 			try {
-				this.me = await useApi().get<Me>('/me');
+				const me = await useApi().get<Me>('/me');
+				if (started !== cleared) return;
+				this.me = me;
 				this.error = null;
+				this.hinted = true;
 			} catch (error) {
+				if (started !== cleared) return;
 				const apiError = toApiClientError(error);
 				if (apiError.status === 401) {
 					this.clear();
@@ -51,8 +65,11 @@ export const useSessionStore = defineStore('session', {
 			}
 		},
 		clear(): void {
+			cleared++;
 			this.me = null;
 			this.error = null;
+			this.hinted = false;
+			if (import.meta.client) useCookie(SESSION_HINT_COOKIE, { path: '/' }).value = null;
 			useOrgStore().reset();
 			useSitesStore().reset();
 		},

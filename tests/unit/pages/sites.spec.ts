@@ -66,7 +66,7 @@ afterEach(() => {
 });
 
 describe('sites page', () => {
-	it('shows a loading state until the first page arrives', async () => {
+	it('shows table-shaped skeletons until the first page arrives', async () => {
 		let release: () => void = () => undefined;
 		const gate = new Promise<void>((resolve) => {
 			release = resolve;
@@ -77,10 +77,16 @@ describe('sites page', () => {
 		};
 
 		const wrapper = await mountPage();
-		expect(wrapper.text()).toContain('Loading sites...');
+		const loading = wrapper.find('[role="status"]');
+		expect(loading.text()).toBe('Loading sites');
+		expect(loading.findAll('.animate-pulse').length).toBeGreaterThan(5);
+		expect(loading.find('[aria-hidden="true"]').exists()).toBe(true);
+		expect(wrapper.text()).not.toContain('Loading sites...');
+		expect(wrapper.text()).not.toContain('No Sites Yet');
 
 		release();
 		await vi.waitFor(() => expect(wrapper.text()).toContain('No Sites Yet'));
+		expect(wrapper.find('[role="status"]').exists()).toBe(false);
 	});
 
 	it('shows an empty state with a link to create a site', async () => {

@@ -1,8 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useOrgStore } from '~/stores/org';
 import { useSessionStore } from '~/stores/session';
 import { useSitesStore } from '~/stores/sites';
-import { calls, clearBrowserState, failure, registerApi } from './store-support';
+import { calls, clearBrowserState, cookieValue, failure, registerApi } from './store-support';
 
 const me = {
 	id: 'usr_1',
@@ -72,6 +72,105 @@ describe('session store', () => {
 		expect(session.me).toBeUndefined();
 		expect(session.error?.code).toBe('internal');
 		expect(session.error?.requestId).toBe('req_500');
+	});
+
+	it('reads the hint cookie on creation and makes no request for it', () => {
+		const session = useSessionStore();
+		expect(session.hinted).toBe(false);
+		expect(session.signedIn).toBe(false);
+
+		document.cookie = 'drupflare_in=1; path=/';
+		session.$reset();
+
+		expect(session.hinted).toBe(true);
+		expect(session.me).toBeUndefined();
+		expect(session.signedIn).toBe(true);
+		expect(calls).toHaveLength(0);
+	});
+
+	it('ignores a hint cookie with any other value', () => {
+		document.cookie = 'drupflare_in=0; path=/';
+		const session = useSessionStore();
+		session.$reset();
+		expect(session.hinted).toBe(false);
+	});
+
+	it('lets the loaded account override the hint', async () => {
+		document.cookie = 'drupflare_in=1; path=/';
+		const session = useSessionStore();
+		session.$reset();
+		session.me = null;
+		expect(session.signedIn).toBe(false);
+
+		cleanup = registerApi({ 'GET /api/v1/me': { body: me } });
+		session.$reset();
+		await session.load();
+		expect(session.signedIn).toBe(true);
+	});
+
+	it('settles a wrong hint on the 401: hint and cookie cleared, no error', async () => {
+		cleanup = registerApi({ 'GET /api/v1/me': unauthenticated });
+		document.cookie = 'drupflare_in=1; path=/';
+		const session = useSessionStore();
+		session.$reset();
+		expect(session.signedIn).toBe(true);
+
+		await session.load();
+
+		expect(session.hinted).toBe(false);
+		expect(session.signedIn).toBe(false);
+		expect(session.error).toBeNull();
+		expect(cookieValue('drupflare_in')).toBeFalsy();
+	});
+
+	it('keeps the hint when the server fails to answer', async () => {
+		cleanup = registerApi({ 'GET /api/v1/me': failure('internal', 'failed', 'req_500') });
+		document.cookie = 'drupflare_in=1; path=/';
+		const session = useSessionStore();
+		session.$reset();
+
+		await session.load();
+
+		expect(session.hinted).toBe(true);
+		expect(session.signedIn).toBe(true);
+	});
+
+	it('raises the hint when the account loads and drops it on sign-out', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/me': { body: me },
+			'POST /api/v1/auth/logout': { status: 204, body: undefined }
+		});
+		const session = useSessionStore();
+		await session.load();
+		expect(session.hinted).toBe(true);
+
+		await session.signOut();
+		expect(session.hinted).toBe(false);
+		expect(session.signedIn).toBe(false);
+	});
+
+	it('drops a /me answer that was in flight when the session ended', async () => {
+		let release: () => void = () => undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		cleanup = registerApi({
+			'GET /api/v1/me': async () => {
+				await gate;
+				return { body: me };
+			},
+			'POST /api/v1/auth/logout': { status: 204, body: undefined }
+		});
+		const session = useSessionStore();
+		const loading = session.load();
+		await vi.waitFor(() => expect(calls).toHaveLength(1));
+
+		await session.signOut();
+		release();
+		await loading;
+
+		expect(session.me).toBeNull();
+		expect(session.hinted).toBe(false);
 	});
 
 	it('posts sign-out and clears the account', async () => {

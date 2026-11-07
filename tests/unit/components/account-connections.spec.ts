@@ -67,6 +67,29 @@ afterEach(() => {
 });
 
 describe('connected accounts', () => {
+	it('shows row-shaped skeletons until the list arrives', async () => {
+		signIn(null);
+		let release: () => void = () => undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		cleanup = registerApi({
+			'GET /api/v1/me/identities': async () => {
+				await gate;
+				return { body: { items: [], nextCursor: null } };
+			},
+			'GET /api/v1/auth/oauth': { body: { providers: ['github'] } }
+		});
+		const wrapper = await mountPanel();
+		const loading = wrapper.find('[role="status"]');
+		expect(loading.text()).toBe('Loading connected accounts');
+		expect(loading.findAll('.animate-pulse').length).toBeGreaterThan(2);
+		expect(wrapper.text()).not.toContain('Loading...');
+
+		release();
+		await vi.waitFor(() => expect(wrapper.find('[role="status"]').exists()).toBe(false));
+	});
+
 	it('lists each provider that is set up, connected or not', async () => {
 		signIn(soon());
 		cleanup = registerApi(api([identity]));
@@ -94,7 +117,9 @@ describe('connected accounts', () => {
 		signIn(soon());
 		cleanup = registerApi(api([], []));
 		const wrapper = await mountPanel();
-		await vi.waitFor(() => expect(wrapper.text()).toContain('No provider sign-in is set up'));
+		await vi.waitFor(() =>
+			expect(wrapper.text()).toContain('No sign-in providers are available')
+		);
 	});
 
 	it('confirms a connection that just finished', async () => {
@@ -125,7 +150,7 @@ describe('connecting', () => {
 				external: true
 			})
 		);
-		expect(wrapper.text()).not.toContain('Confirm It Is You');
+		expect(wrapper.text()).not.toContain('Confirm Your Identity');
 	});
 
 	it('asks for a code first when the session is not fresh, then connects', async () => {
@@ -157,7 +182,7 @@ describe('connecting', () => {
 			.findAll('li')
 			.find((row) => row.text().startsWith('Cloudflare'))!;
 		await cloudflare.find('button').trigger('click');
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm It Is You'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm Your Identity'));
 		expect(calls.some((call) => call.path.endsWith('/start'))).toBe(false);
 
 		await button(wrapper, 'Send Code')!.trigger('submit');
@@ -179,7 +204,7 @@ describe('connecting', () => {
 		expect(calls.find((call) => call.path === '/api/v1/auth/step-up')?.body).toEqual({
 			code: '123456'
 		});
-		expect(wrapper.text()).not.toContain('Confirm It Is You');
+		expect(wrapper.text()).not.toContain('Confirm Your Identity');
 	});
 
 	it('checks the code is six digits before it asks the server', async () => {
@@ -191,7 +216,7 @@ describe('connecting', () => {
 		const wrapper = await mountPanel();
 		await vi.waitFor(() => expect(button(wrapper, 'Connect')).toBeTruthy());
 		await wrapper.findAll('li')[0]!.find('button').trigger('click');
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm It Is You'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm Your Identity'));
 		await wrapper.find('form').trigger('submit');
 		await vi.waitFor(() => expect(wrapper.find('#step-up-code').exists()).toBe(true));
 		await wrapper.find('#step-up-code').setValue('12');
@@ -206,9 +231,9 @@ describe('connecting', () => {
 		const wrapper = await mountPanel();
 		await vi.waitFor(() => expect(button(wrapper, 'Connect')).toBeTruthy());
 		await wrapper.findAll('li')[0]!.find('button').trigger('click');
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm It Is You'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm Your Identity'));
 		await button(wrapper, 'Cancel')!.trigger('click');
-		expect(wrapper.text()).not.toContain('Confirm It Is You');
+		expect(wrapper.text()).not.toContain('Confirm Your Identity');
 		expect(navigate).not.toHaveBeenCalled();
 	});
 
@@ -258,7 +283,7 @@ describe('connecting', () => {
 			.findAll('li')
 			.find((row) => row.text().startsWith('Cloudflare'))!;
 		await cloudflare.find('button').trigger('click');
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm It Is You'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm Your Identity'));
 		expect(wrapper.find('[role="alert"]').exists()).toBe(false);
 	});
 });

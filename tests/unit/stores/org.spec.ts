@@ -127,4 +127,38 @@ describe('org store', () => {
 		expect(org.items).toBeUndefined();
 		expect(org.error?.requestId).toBe('req_org');
 	});
+
+	it('sends one request when two callers ask at once', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/me/organizations': { body: { items: [personal], nextCursor: null } }
+		});
+		const org = useOrgStore();
+
+		await Promise.all([org.ensure(), org.ensure(), org.load()]);
+
+		expect(calls.filter((call) => call.path === '/api/v1/me/organizations')).toHaveLength(1);
+		expect(org.items).toEqual([personal]);
+	});
+
+	it('leaves no error behind when a 401 signs the visitor out', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/me/organizations': {
+				status: 401,
+				body: {
+					code: 'unauthenticated',
+					message: 'Sign in',
+					details: {},
+					requestId: 'req_401'
+				}
+			}
+		});
+		const org = useOrgStore();
+		const session = useSessionStore();
+
+		await org.ensure();
+
+		expect(session.me).toBeNull();
+		expect(org.items).toBeUndefined();
+		expect(org.error).toBeNull();
+	});
 });
