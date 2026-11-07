@@ -22,7 +22,7 @@ import { bundleKeys } from '../../../engine/src/bundle';
 import { CONFIG_VARS, ConfigError, readConfig } from '../../../engine/src/config';
 import { PermanentError } from '../../../engine/src/step';
 import { shardKey } from '../../../src/shared/names';
-import { bucketOf, hostsKv, newAnswer, siteFetch } from './doubles';
+import { CDN_BASE, cdnOf, hostsKv, newAnswer, siteFetch } from './doubles';
 import { makeBundle } from './fakes';
 
 vi.mock('cloudflare:workers', () => ({
@@ -552,13 +552,20 @@ describe('the other binding adapters', () => {
 		expect(calls).toEqual([`acquire:${SITE}`, 'heartbeat', 'check', 'release']);
 	});
 
-	it('names what is missing from the blob store and what cannot be read', async () => {
-		const objects = new Map<string, Uint8Array | string>([
+	it('reads a release from the CDN and names what is missing or unreadable', async () => {
+		const calls: string[] = [];
+		const objects = new Map<string, Uint8Array | string | number>([
 			[bundleKeys.manifest('v1.0.4'), '{"releaseId":"v1.0.4"}'],
-			[bundleKeys.manifest('broken'), 'not json']
+			[bundleKeys.manifest('broken'), 'not json'],
+			[bundleKeys.module('v1.0.4', 'site.js'), new Uint8Array([1, 2, 3])],
+			[bundleKeys.module('v1.0.4', 'down.js'), 503]
 		]);
-		const releases = releasesOf(bucketOf(objects));
+		const releases = releasesOf(CDN_BASE.slice(0, -1), cdnOf(objects, calls));
 		expect(await releases.manifest('v1.0.4')).toEqual({ releaseId: 'v1.0.4' });
+		expect(calls).toEqual([`${CDN_BASE}releases/v1.0.4/manifest.json`]);
+		expect(await releases.part(bundleKeys.module('v1.0.4', 'site.js'))).toEqual(
+			new Uint8Array([1, 2, 3])
+		);
 		await expect(releases.manifest('v9')).rejects.toMatchObject({ code: 'release_not_found' });
 		await expect(releases.manifest('broken')).rejects.toMatchObject({
 			code: 'release_manifest_unreadable'
@@ -566,6 +573,17 @@ describe('the other binding adapters', () => {
 		await expect(releases.part('releases/v9/modules/x')).rejects.toMatchObject({
 			code: 'release_part_missing'
 		});
+	});
+
+	it('treats a CDN failure as an interruption to retry, not a refusal', async () => {
+		const objects = new Map<string, Uint8Array | string | number>([
+			[bundleKeys.module('v1.0.4', 'down.js'), 503]
+		]);
+		const releases = releasesOf(CDN_BASE, cdnOf(objects));
+		const error = await releases.part(bundleKeys.module('v1.0.4', 'down.js')).catch((e) => e);
+		expect(error).toBeInstanceOf(Error);
+		expect(error).not.toBeInstanceOf(PermanentError);
+		expect(error.message).toContain('503');
 	});
 });
 

@@ -34,6 +34,7 @@ export interface EngineEnv {
 	SITE_PURGE: Workflow<SitePurgeInput>;
 	BACKUP_CREATE: Workflow<BackupCreateInput>;
 	BACKUP_RESTORE: Workflow<BackupRestoreInput>;
+	RELEASES_URL: string;
 	CF_ACCOUNT_ID: string;
 	CF_API_TOKEN: string;
 	CONTROL_SEED: string;
@@ -95,7 +96,7 @@ export async function buildDeps(env: EngineEnv): Promise<EngineDeps> {
 			pendingTtlMs: Number(env.PENDING_SECRET_TTL_MS),
 			now: Date.now
 		}),
-		releases: releasesOf(env.BLOB),
+		releases: releasesOf(env.RELEASES_URL, fetch),
 		leases: leasesOf((siteId) => stub<LeaseStub>(env.SITE_LEASE, siteId)),
 		kv: namespaceKvOf(plane),
 		now: Date.now,

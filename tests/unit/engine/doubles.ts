@@ -1,4 +1,4 @@
-import type { KVNamespace, R2Bucket } from '@cloudflare/workers-types';
+import type { KVNamespace } from '@cloudflare/workers-types';
 import { toBase64Url, type SigningKey } from '../../../contracts/src/common';
 import { Names } from '../../../dispatch/src/names';
 import { SiteAuth } from '../../../dispatch/src/site-auth';
@@ -65,19 +65,21 @@ export function hostsKv() {
 	return { kv, map };
 }
 
-export function bucketOf(objects: Map<string, Uint8Array | string>): R2Bucket {
-	return {
-		get: async (key: string) => {
-			const value = objects.get(key);
-			if (value === undefined) return null;
-			const bytes = typeof value === 'string' ? new TextEncoder().encode(value) : value;
-			return {
-				json: async () => JSON.parse(new TextDecoder().decode(bytes)),
-				arrayBuffer: async () =>
-					bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
-			};
-		}
-	} as unknown as R2Bucket;
+export const CDN_BASE = 'https://cdn.example.test/payloads/managed/';
+
+// a number stands for a bare status answer; a key that is absent answers 404
+export function cdnOf(
+	objects: Map<string, Uint8Array | string | number>,
+	calls: string[] = []
+): typeof fetch {
+	return (async (input: RequestInfo | URL) => {
+		const url = String(input);
+		calls.push(url);
+		const value = objects.get(url.slice(CDN_BASE.length));
+		if (value === undefined) return new Response(null, { status: 404 });
+		if (typeof value === 'number') return new Response(null, { status: value });
+		return new Response(value as BodyInit);
+	}) as typeof fetch;
 }
 
 export interface SiteAnswer {

@@ -32,7 +32,8 @@ import {
 import { shardKey } from '../../../src/shared/names';
 import { authorityState } from '../dispatch/fakes';
 import {
-	bucketOf,
+	CDN_BASE,
+	cdnOf,
 	hostsKv,
 	leaseObjects,
 	namesObjects,
@@ -132,8 +133,9 @@ async function adapterPorts(bundle: FakeBundle, clock: () => number) {
 		leasesPort: leasesOf(leases.stub),
 		site: siteOf(siteFetch(answer), 1_000),
 		releases: adapterReleases(
-			bucketOf(
-				new Map<string, Uint8Array | string>([
+			CDN_BASE,
+			cdnOf(
+				new Map<string, Uint8Array | string | number>([
 					[
 						bundleKeys.manifest(bundle.manifest.releaseId),
 						JSON.stringify(bundle.manifest)
