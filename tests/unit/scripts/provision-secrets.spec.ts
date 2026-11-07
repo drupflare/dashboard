@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { fromBase64Url, signingKeyFromSeed } from '../../../contracts/src/common';
-import { generateSecrets, plan } from '../../../scripts/provision-secrets';
+import { generateSecrets, plan, withRetry } from '../../../scripts/provision-secrets';
 
 describe('generateSecrets', () => {
 	it('derives each public key from its seed and never repeats a value', async () => {
@@ -14,6 +14,34 @@ describe('generateSecrets', () => {
 		const values = Object.values(secrets);
 		expect(new Set(values).size).toBe(values.length);
 		expect(await generateSecrets()).not.toEqual(secrets);
+	});
+});
+
+describe('withRetry', () => {
+	it('repeats a failing attempt up to the limit and stops at the first success', async () => {
+		const results = [{ code: 1 }, { code: 1 }, { code: 0 }, { code: 0 }];
+		let calls = 0;
+		const pauses: number[] = [];
+		const last = await withRetry(
+			async () => results[calls++]!,
+			(r) => r.code === 0,
+			5,
+			async (ms) => void pauses.push(ms)
+		);
+		expect(last.code).toBe(0);
+		expect(calls).toBe(3);
+		expect(pauses).toHaveLength(2);
+	});
+
+	it('returns the last failure when every attempt fails', async () => {
+		let calls = 0;
+		const last = await withRetry(
+			async () => ({ code: ++calls }),
+			() => false,
+			3,
+			async () => {}
+		);
+		expect(last.code).toBe(3);
 	});
 });
 

@@ -102,14 +102,42 @@ async function run(command: string[], stdin: string, env: Record<string, string>
 	return { code, tail };
 }
 
+// the Cloudflare API drops connections now and then, and a put is safe to repeat
+export async function withRetry<T>(
+	attempt: () => Promise<T>,
+	done: (value: T) => boolean,
+	tries: number,
+	pause: (ms: number) => Promise<void> = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+): Promise<T> {
+	let last = await attempt();
+	for (let n = 1; n < tries && !done(last); n++) {
+		await pause(3000);
+		last = await attempt();
+	}
+	return last;
+}
+
 async function apply(action: Action, token: string): Promise<boolean> {
 	const cloudflare = { CLOUDFLARE_API_TOKEN: token, CLOUDFLARE_ACCOUNT_ID: ACCOUNT_ID };
 	const result =
 		action.kind === 'worker'
-			? await run(
-					['bunx', 'wrangler', 'secret', 'put', action.name, '--name', action.worker],
-					action.value,
-					{ ...cloudflare, WRANGLER_SEND_METRICS: 'false' }
+			? await withRetry(
+					() =>
+						run(
+							[
+								'bunx',
+								'wrangler',
+								'secret',
+								'put',
+								action.name,
+								'--name',
+								action.worker
+							],
+							action.value,
+							{ ...cloudflare, WRANGLER_SEND_METRICS: 'false' }
+						),
+					(attempt) => attempt.code === 0,
+					5
 				)
 			: await run(
 					[
@@ -139,14 +167,21 @@ production  generates the production keys, sets them on the production Workers, 
 --dev-vars  reads CF_API_TOKEN and the sign-in provider secrets from .dev.vars; without it
             CF_API_TOKEN must be in the environment
 --dry-run   prints the names it would set and calls nothing
+--resume    production only: sets every secret again from the escrow file, for a run that
+            failed part way, so the keys keep the values already written
 
-It never prints a value and never rotates: production refuses to run if the escrow file exists.`;
+It never prints a value and never rotates: production refuses to run over an escrow file
+without --resume.`;
 
 async function main(argv: string[]): Promise<number> {
 	const { values: flags, positionals } = parseArgs({
 		args: argv,
 		allowPositionals: true,
-		options: { 'dev-vars': { type: 'boolean' }, 'dry-run': { type: 'boolean' } }
+		options: {
+			'dev-vars': { type: 'boolean' },
+			'dry-run': { type: 'boolean' },
+			resume: { type: 'boolean' }
+		}
 	});
 	const environment = positionals[0];
 	if (environment !== 'staging' && environment !== 'production') {
@@ -160,8 +195,22 @@ async function main(argv: string[]): Promise<number> {
 		return 2;
 	}
 	const escrow = join(homedir(), 'drupflare-production-secrets.json');
+	if (flags.resume && environment === 'production') {
+		if (!existsSync(escrow)) {
+			console.error(`${escrow} does not exist; nothing to resume`);
+			return 1;
+		}
+		const saved = JSON.parse(readFileSync(escrow, 'utf8')) as Values;
+		let failed = 0;
+		for (const action of plan(environment, saved)) {
+			if (flags['dry-run'])
+				console.log(action.kind === 'worker' ? action.worker : 'github', action.name);
+			else if (!(await apply(action, saved.CF_API_TOKEN!))) failed++;
+		}
+		return failed === 0 ? 0 : 1;
+	}
 	if (environment === 'production' && existsSync(escrow) && !flags['dry-run']) {
-		console.error(`${escrow} exists; refusing to generate new production keys over it`);
+		console.error(`${escrow} exists; use --resume to set the same keys again`);
 		return 1;
 	}
 	const generated = environment === 'production' ? await generateSecrets() : {};
