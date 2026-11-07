@@ -6,8 +6,8 @@ One person who did not build the dashboard works through the steps below on the 
 
 The person running staging does these first. None of them belongs to the operator.
 
-1. The staging dashboard and the dispatch Worker run from a worker release commit whose CI is green, and the managed Drupal bundle was built from that same commit.
-2. The operator has an email address that can receive a sign-in code, and a staging organisation on a plan that allows a managed Drupal site.
+1. The staging dashboard and the dispatch Worker run from a worker release commit whose CI is green, and the engine reads the managed Drupal bundle for that same release from the CDN.
+2. The operator has an email address that can receive a sign-in code, and a staging organisation on a plan that allows two more managed Drupal sites (the free plan caps an organisation at 3 active sites).
 3. Nothing in the `drupflare-test` namespace is used or touched.
 4. The observer has the sheet at the bottom of this file open.
 
@@ -21,7 +21,7 @@ Each step lists what the operator is asked to do and what should happen. The obs
 2. **Create a Drupal site.** Choose Create a Site, keep Managed, pick Drupal, accept the suggested name and create it. Expect a progress page that names the live machine state and ends with the site URL. No spinner without a state.
 3. **Open the site.** Open the site URL. Expect the Drupal front page.
 4. **Reach the admin.** Reveal the first admin password (shown once), sign in to the site's admin with it and open the content list. Expect the password to work and a second reveal to be refused.
-5. **Read the site page.** Open the site in the dashboard. Expect its status, hostname, a health verdict, a readiness level, an update state, a backups panel and the operation that created it.
+5. **Read the site page.** On the sites list, press the site's name. Expect its status, hostname, a health verdict, a readiness level, an update state, a backups panel and the operation that created it.
 6. **Back up the site.** Press "Back Up Now" in the backups panel and follow the progress screen to the end. Expect a backup in the table, marked "Not Verified Yet".
 7. **Create a second site** the same way as step 2.
 8. **Restore the backup into the second site.** Press "Restore" on the backup, pick the second site, tick the box and confirm. Follow the progress screen. Expect the second site to serve the first site's content afterwards.
