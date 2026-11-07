@@ -39,6 +39,7 @@ const site = {
 	ring: 'R1',
 	primaryHostname: 'quiet-oak-harbor.drupflare.app',
 	hostnames: [],
+	admin: { username: 'admin', email: 'owner@example.test', password: 'available' },
 	createdAt: '2026-01-01T00:00:00Z',
 	updatedAt: '2026-01-01T00:00:00Z'
 };
@@ -69,7 +70,7 @@ function operation(status: string, steps: ReturnType<typeof step>[], type = 'sit
 }
 
 let cleanup: () => void = () => undefined;
-let opReply: () => Reply;
+let opReply: () => Reply | Promise<Reply>;
 let secretReply: () => Reply;
 const mounted: { unmount: () => void }[] = [];
 
@@ -110,6 +111,27 @@ function revealButton(wrapper: {
 }
 
 describe('create progress', () => {
+	it('shows a skeleton shaped like the timeline until the operation arrives', async () => {
+		let release: () => void = () => undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		opReply = async () => {
+			await gate;
+			return { body: operation('running', [step('a', 'Probe the site', 'running')]) };
+		};
+		const wrapper = await mountPage();
+
+		const loading = wrapper.find('[role="status"]');
+		expect(loading.text()).toBe('Loading the operation');
+		expect(loading.findAll('.animate-pulse').length).toBeGreaterThan(5);
+		expect(wrapper.text()).not.toContain('Loading the operation...');
+
+		release();
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Probe the site'));
+		expect(wrapper.text()).not.toContain('Loading the operation');
+	});
+
 	it('renders every step state with an icon and text, and names the running step', async () => {
 		opReply = () => ({
 			body: operation('running', [
@@ -157,6 +179,38 @@ describe('create progress', () => {
 		await vi.waitFor(() => expect(again.text()).toContain('Already Shown'));
 		expect(again.text()).not.toContain(password);
 		expect(again.find('[role="alert"]').exists()).toBe(false);
+	});
+
+	it('shows the admin username above the password', async () => {
+		opReply = () => ({
+			body: operation('succeeded', [step('a', 'Mark the site active', 'succeeded')])
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Username'));
+		const text = wrapper.text();
+		expect(text).toContain('admin');
+		expect(text.indexOf('Username')).toBeLessThan(text.indexOf('Admin Password'));
+	});
+
+	it('leaves the username line out for a site that did not record one', async () => {
+		opReply = () => ({
+			body: operation('succeeded', [step('a', 'Mark the site active', 'succeeded')])
+		});
+		cleanup();
+		cleanup = registerApi({
+			'GET /api/v1/me': { body: me },
+			'GET /api/v1/me/organizations': { body: { items: [personal], nextCursor: null } },
+			[opKey]: () => opReply(),
+			[siteKey]: {
+				body: { ...site, admin: { username: null, email: null, password: 'unknown' } }
+			},
+			[secretKey]: () => secretReply()
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Admin Password'));
+		expect(wrapper.text()).not.toContain('Username');
 	});
 
 	it('keeps the password out of every store and out of the DOM after leaving', async () => {
@@ -225,31 +279,31 @@ describe('progress for each operation type', () => {
 		[
 			'site.create',
 			'Creating Your Site',
-			'Your site is being created.',
+			'The site is ready when every step succeeds.',
 			'Could Not Create the Site'
 		],
 		[
 			'site.delete',
 			'Deleting Your Site',
-			'Your site is being deleted.',
+			'The site stops serving once its access is revoked.',
 			'Could Not Delete the Site'
 		],
 		[
 			'site.upgrade',
 			'Updating Your Site',
-			'Your site is being updated',
+			'The site keeps serving during the update.',
 			'Could Not Update the Site'
 		],
 		[
 			'backup.create',
 			'Backing Up Your Site',
-			'Your site is being backed up.',
+			'Leaving this page does not stop the backup.',
 			'Could Not Back Up the Site'
 		],
 		[
 			'backup.restore',
 			'Restoring a Backup',
-			'The backup is being restored',
+			'The backup replaces the site content as the restore runs.',
 			'Could Not Restore the Backup'
 		]
 	];

@@ -3,6 +3,7 @@ import { runSiteCreate } from '../../../engine/src/workflows/site-create';
 import {
 	beginCreate,
 	custodyRows,
+	FAKE_ADMIN_NAME,
 	FAKE_OWNER_TOKEN,
 	Killed,
 	makeRunner,
@@ -22,6 +23,13 @@ async function start(options: Parameters<typeof makeWorld>[0] = {}) {
 function attempt(world: World, memo: Memo, script: RunnerScript = {}) {
 	const { runner, executed } = makeRunner(memo, script);
 	return { executed, done: runSiteCreate(runner, world.deps, world.input) };
+}
+
+function adminColumns(world: World) {
+	const [row] = world.sqlite
+		.prepare(`SELECT admin_name, admin_mail FROM sites WHERE id = '${world.siteId}'`)
+		.all();
+	return row;
 }
 
 async function reference(options: Parameters<typeof makeWorld>[0] = {}) {
@@ -75,6 +83,47 @@ describe('an uninterrupted create', () => {
 			generation: 1
 		});
 		expect(snapshot.authority.hosts).toHaveLength(1);
+	});
+
+	it('sends the owner mail in the first-run body and stores the admin the site reports', async () => {
+		const { world } = await reference();
+		expect(world.site.bodies.map((body) => JSON.parse(body!))).toEqual([
+			{ adminMail: 'owner@example.test' }
+		]);
+		expect(adminColumns(world)).toEqual({
+			admin_name: FAKE_ADMIN_NAME,
+			admin_mail: 'owner@example.test'
+		});
+	});
+
+	it('stores what the site answered, not what was sent', async () => {
+		const world = await start();
+		world.deps.site = {
+			...world.deps.site,
+			firstRun: async () => ({
+				status: 200,
+				secrets: { ownerToken: FAKE_OWNER_TOKEN, adminPassword: null },
+				admin: { adminName: 'site-admin', adminMail: 'reset@example.test' }
+			})
+		};
+		expect(await attempt(world, new Map()).done).toEqual({ status: 'succeeded' });
+		expect(adminColumns(world)).toEqual({
+			admin_name: 'site-admin',
+			admin_mail: 'reset@example.test'
+		});
+	});
+
+	it('leaves the admin columns null when the site reports no admin', async () => {
+		const world = await start();
+		world.deps.site = {
+			...world.deps.site,
+			firstRun: async () => ({
+				status: 200,
+				secrets: { ownerToken: FAKE_OWNER_TOKEN, adminPassword: null }
+			})
+		};
+		expect(await attempt(world, new Map()).done).toEqual({ status: 'succeeded' });
+		expect(adminColumns(world)).toEqual({ admin_name: null, admin_mail: null });
 	});
 
 	it('spends one lookup and one create call per resource', async () => {

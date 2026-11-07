@@ -2,6 +2,7 @@ import { siteSchema } from '@contracts/sites';
 import { z } from 'zod';
 import { ApiError } from '../../../../../../shared/errors';
 import { listReadySites, toSite } from '../../../../../db/repos/sites';
+import { adminPasswordStateOf, pendingSecretDeps } from '../../../../../services/owner-tokens';
 import { siteServices } from '../../../../../services/sites';
 import { defineApi } from '../../../../../utils/define-api';
 import { decodeCursor, resolveLimit, toPage } from '../../../../../utils/pagination';
@@ -37,8 +38,17 @@ export default defineApi(
 		});
 		const page = toPage(rows, limit, (row) => ({ id: row.id }));
 		const { releases } = siteServices().config;
+		const pending = await pendingSecretDeps();
 		return {
-			items: page.items.map((row) => toSite(row, releases[row.kind] ?? null)),
+			items: await Promise.all(
+				page.items.map(async (row) =>
+					toSite(
+						row,
+						releases[row.kind] ?? null,
+						await adminPasswordStateOf(pending, row)
+					)
+				)
+			),
 			nextCursor: page.nextCursor
 		};
 	}

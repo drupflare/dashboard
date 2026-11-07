@@ -447,6 +447,8 @@ export function fakeLeases(now: () => number) {
 // recognisable values the scan specs search for; none of them may reach a stored artefact
 export const FAKE_OWNER_TOKEN = 'otk-Zq8mR4vN2xLw9HcT7pYs3KdA6eJb5UfG';
 export const FAKE_ADMIN_PASSWORD = 'pw-Xv7Lq2Rn8Tz4Wm9Hd3Ks6Bc5Yj1Pf';
+export const FAKE_ADMIN_NAME = 'admin';
+export const FAKE_ADMIN_MAIL = 'owner@example.test';
 
 export function fakeKv() {
 	const spaces = new Map<string, Map<string, string>>();
@@ -470,6 +472,8 @@ export type FakeKv = ReturnType<typeof fakeKv>;
 export function fakeSite(store: FakeKv = fakeKv()) {
 	const calls = { probe: 0, firstRun: 0, recover: 0 };
 	const answers = { probe: 200, firstRun: 200 };
+	// the body of each first-run call, as the engine sent it
+	const bodies: (string | undefined)[] = [];
 	// what the site was handed on each probe, kept here and nowhere a workflow can store it
 	const bearers: (string | null)[] = [];
 	let claimed = false;
@@ -497,6 +501,7 @@ export function fakeSite(store: FakeKv = fakeKv()) {
 		// the worker mints a token and a password on the first claim and refuses a second
 		async firstRun(_hostname, call) {
 			calls.firstRun++;
+			bodies.push(call.body);
 			const { reads } = call;
 			if (reads === undefined) return { status: answers.firstRun };
 			if (answers.firstRun < 200 || answers.firstRun >= 300) {
@@ -513,11 +518,21 @@ export function fakeSite(store: FakeKv = fakeKv()) {
 				secrets: {
 					ownerToken: reads.ownerToken === undefined ? null : FAKE_OWNER_TOKEN,
 					adminPassword: reads.adminPassword === undefined ? null : FAKE_ADMIN_PASSWORD
+				},
+				// uid 1 answers with the mail it was given, or the pack's default
+				admin: {
+					adminName: reads.adminName === undefined ? null : FAKE_ADMIN_NAME,
+					adminMail:
+						reads.adminMail === undefined
+							? null
+							: ((call.body === undefined
+									? undefined
+									: JSON.parse(call.body).adminMail) ?? FAKE_ADMIN_MAIL)
 				}
 			};
 		}
 	};
-	return { site, calls, answers, bearers, lose, store };
+	return { site, calls, answers, bearers, bodies, lose, store };
 }
 
 export interface FakeBundle {
@@ -748,7 +763,13 @@ export async function makeWorld(
 		firstRun: {
 			method: 'POST',
 			path: '/first-run',
-			reads: { ownerToken: 'ownerToken', adminPassword: 'adminPass' }
+			body: JSON.stringify({ adminMail: 'owner@example.test' }),
+			reads: {
+				ownerToken: 'ownerToken',
+				adminPassword: 'adminPass',
+				adminName: 'adminName',
+				adminMail: 'adminMail'
+			}
 		},
 		probe: { path: '/health', expectStatus: 200, auth: 'owner-token' }
 	};

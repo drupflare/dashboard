@@ -34,6 +34,8 @@ export type SiteRecord = {
 	category: SiteCategory;
 	config: SiteConfig;
 	releaseId?: string | null;
+	adminName?: string | null;
+	adminMail?: string | null;
 };
 
 export type SiteRowState = 'active' | 'suspended' | 'tombstoned' | 'purge-eligible' | 'deleted';
@@ -426,11 +428,13 @@ export class D1OperationStore implements OperationStore {
 		await this.db
 			.prepare(
 				`INSERT INTO sites (id, organization_id, name, plane, state, account_id, category, config,
-				release_id, ready_at, created_at, updated_at)
-				VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
+				release_id, admin_name, admin_mail, ready_at, created_at, updated_at)
+				VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (id) DO UPDATE SET state = 'active',
 				ready_at = COALESCE(sites.ready_at, excluded.ready_at),
 				release_id = COALESCE(excluded.release_id, sites.release_id),
+				admin_name = COALESCE(excluded.admin_name, sites.admin_name),
+				admin_mail = COALESCE(excluded.admin_mail, sites.admin_mail),
 				account_id = excluded.account_id, updated_at = excluded.updated_at`
 			)
 			.bind(
@@ -442,6 +446,8 @@ export class D1OperationStore implements OperationStore {
 				site.category,
 				site.config,
 				site.releaseId ?? null,
+				site.adminName ?? null,
+				site.adminMail ?? null,
 				now,
 				now,
 				now

@@ -7,11 +7,19 @@ import { PermanentError } from './step';
 export interface FirstRunReads {
 	ownerToken?: string;
 	adminPassword?: string;
+	// the account the call made; neither is a secret, so both are kept as plain text
+	adminName?: string;
+	adminMail?: string;
 }
 
 export interface FirstRunSecrets {
 	ownerToken: string | null;
 	adminPassword: string | null;
+}
+
+export interface FirstRunAdmin {
+	adminName: string | null;
+	adminMail: string | null;
 }
 
 export interface SealedIds {
@@ -93,8 +101,7 @@ function field(parsed: Record<string, unknown>, name: string | undefined): strin
 	return value;
 }
 
-// the parser's own error text can quote the body, so it is dropped
-export function readFirstRunSecrets(text: string, reads: FirstRunReads): FirstRunSecrets {
+function responseRecord(text: string): Record<string, unknown> {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(text);
@@ -110,10 +117,33 @@ export function readFirstRunSecrets(text: string, reads: FirstRunReads): FirstRu
 			'the first-run response was not readable'
 		);
 	}
-	const record = parsed as Record<string, unknown>;
+	return parsed as Record<string, unknown>;
+}
+
+// the parser's own error text can quote the body, so it is dropped
+export function readFirstRunSecrets(text: string, reads: FirstRunReads): FirstRunSecrets {
+	const record = responseRecord(text);
 	return {
 		ownerToken: field(record, reads.ownerToken),
 		adminPassword: field(record, reads.adminPassword)
+	};
+}
+
+const MAX_ADMIN_NAME_CHARS = 255;
+const MAX_ADMIN_MAIL_CHARS = 320;
+
+function plain(record: Record<string, unknown>, name: string | undefined, max: number) {
+	if (name === undefined) return null;
+	const value = record[name];
+	return typeof value === 'string' && value !== '' && value.length <= max ? value : null;
+}
+
+// a missing or odd value is null: the create has worked by then, and the sign-in line is a courtesy
+export function readFirstRunAdmin(text: string, reads: FirstRunReads): FirstRunAdmin {
+	const record = responseRecord(text);
+	return {
+		adminName: plain(record, reads.adminName, MAX_ADMIN_NAME_CHARS),
+		adminMail: plain(record, reads.adminMail, MAX_ADMIN_MAIL_CHARS)
 	};
 }
 

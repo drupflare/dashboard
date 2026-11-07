@@ -29,6 +29,8 @@ import { ApiError } from '../../../src/shared/errors';
 import {
 	beginCreate,
 	custodyRows,
+	FAKE_ADMIN_MAIL,
+	FAKE_ADMIN_NAME,
 	FAKE_ADMIN_PASSWORD,
 	FAKE_OWNER_TOKEN,
 	Killed,
@@ -362,7 +364,9 @@ describe('the first-run step', () => {
 			value: {
 				status: 200,
 				ownerTokenId: `owner-token:${world.siteId}`,
-				pendingSecretId: `pending-secret:${world.siteId}:admin-password`
+				pendingSecretId: `pending-secret:${world.siteId}:admin-password`,
+				adminName: FAKE_ADMIN_NAME,
+				adminMail: FAKE_ADMIN_MAIL
 			}
 		});
 	});
@@ -555,8 +559,30 @@ describe('the site adapter and secrets', () => {
 		answer.body = JSON.stringify({ ownerToken: 'tok', adminPass: 'pw', applied: true });
 		expect(await site.firstRun('a.example.com', call)).toEqual({
 			status: 200,
-			secrets: { ownerToken: 'tok', adminPassword: null }
+			secrets: { ownerToken: 'tok', adminPassword: null },
+			admin: { adminName: null, adminMail: null }
 		});
+	});
+
+	it('reads the admin name and mail as plain text, and drops a value that is not usable', async () => {
+		const { answer, site } = make();
+		const reads = { ...call.reads, adminName: 'adminName', adminMail: 'adminMail' };
+		answer.body = JSON.stringify({
+			ownerToken: 'tok',
+			adminName: 'admin',
+			adminMail: 'owner@example.test'
+		});
+		expect((await site.firstRun('a.example.com', { ...call, reads })).admin).toEqual({
+			adminName: 'admin',
+			adminMail: 'owner@example.test'
+		});
+		for (const odd of [undefined, null, '', 7, 'x'.repeat(400)]) {
+			answer.body = JSON.stringify({ ownerToken: 'tok', adminName: odd, adminMail: odd });
+			expect((await site.firstRun('a.example.com', { ...call, reads })).admin).toEqual({
+				adminName: null,
+				adminMail: null
+			});
+		}
 	});
 
 	it('leaves the body unread when the call names no fields, or the status was not wanted', async () => {

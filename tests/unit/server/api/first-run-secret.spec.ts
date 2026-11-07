@@ -1,5 +1,7 @@
+import type { CollegeDBClient } from '@earth-app/collegedb';
 import { afterEach, describe, expect, it } from 'vitest';
 import { toBase64Url } from '../../../../contracts/src/common';
+import firstRunState from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/first-run-secret.get';
 import firstRunSecret from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/first-run-secret.post';
 import type { PendingSecretRow } from '../../../../src/server/db/repos/pending-secrets';
 import {
@@ -7,6 +9,7 @@ import {
 	setPendingSecretDeps,
 	type PendingSecretStore
 } from '../../../../src/server/services/owner-tokens';
+import { resetSiteServices, setSiteServices } from '../../../../src/server/services/sites';
 import { resetApiDeps } from '../../../../src/server/utils/define-api';
 import { createMemoryStore, type IdempotencyStore } from '../../../../src/server/utils/idempotency';
 import { encryptRecord, loadKeyRing, type KeyRing } from '../../../../src/shared/custody/envelope';
@@ -93,9 +96,141 @@ const reveal = (
 		headers
 	});
 
+const siteRow = (adminName: string | null) => ({
+	id: MINE,
+	organization_id: ORG,
+	name: 'Quiet Otter',
+	kind: 'drupal',
+	category: 'cms',
+	plane: 'managed',
+	config: 'managed',
+	account_id: null,
+	state: 'active',
+	primary_hostname: 'quiet-otter.drupflare.app',
+	release_id: null,
+	admin_name: adminName,
+	admin_mail: adminName === null ? null : 'owner@example.com',
+	ready_at: 1,
+	created_at: 1,
+	updated_at: 1
+});
+
+// the site table answers for the one site of this organisation; anything else is not there
+function siteTable(adminName: string | null = 'admin') {
+	setSiteServices({
+		getDb: async () =>
+			({
+				first: async (_key: string, _sql: string, params: string[]) =>
+					params[0] === ORG && params[1] === MINE ? siteRow(adminName) : null
+			}) as unknown as CollegeDBClient
+	});
+}
+
+const readState = (
+	headers: Record<string, string> = asUser,
+	orgId: string = ORG,
+	siteId: string = MINE
+) =>
+	sendRequest(firstRunState, ROUTE, {
+		method: 'GET',
+		path: `/api/v1/orgs/${orgId}/sites/${siteId}/first-run-secret`,
+		headers
+	});
+
 afterEach(() => {
 	resetPendingSecretDeps();
+	resetSiteServices();
 	resetApiDeps();
+});
+
+describe('GET /api/v1/orgs/:orgId/sites/:id/first-run-secret', () => {
+	it('says available for an unread password, uncached, and does not read it', async () => {
+		const { rows, audits } = await world();
+		siteTable();
+		api();
+		const reply = await readState();
+		expect(reply.status).toBe(200);
+		expect(reply.json).toEqual({ kind: 'admin-password', state: 'available' });
+		expect(reply.headers.get('cache-control')).toBe('no-store');
+		expect(reply.text).not.toContain(PASSWORD);
+		expect(rows.get(`${MINE}:admin-password`)?.revealedAt).toBeNull();
+		expect(audits).toEqual([]);
+		expect((await reveal()).status).toBe(200);
+	});
+
+	it('says revealed once the password was read', async () => {
+		await world();
+		siteTable();
+		api();
+		await reveal();
+		expect((await readState()).json).toEqual({ kind: 'admin-password', state: 'revealed' });
+	});
+
+	it('says expired for a password past its expiry', async () => {
+		await world({ expiresAt: NOW });
+		siteTable();
+		api();
+		expect((await readState()).json).toEqual({ kind: 'admin-password', state: 'expired' });
+	});
+
+	it('says expired when the purge removed the row from a site that recorded its admin', async () => {
+		const { rows } = await world();
+		rows.delete(`${MINE}:admin-password`);
+		siteTable('admin');
+		api();
+		expect((await readState()).json).toEqual({ kind: 'admin-password', state: 'expired' });
+	});
+
+	it('says unknown for a site that predates the admin columns and has no row', async () => {
+		const { rows } = await world();
+		rows.delete(`${MINE}:admin-password`);
+		siteTable(null);
+		api();
+		expect((await readState()).json).toEqual({ kind: 'admin-password', state: 'unknown' });
+	});
+
+	it('refuses an API key even when the key holds the scope', async () => {
+		await world();
+		siteTable();
+		api({
+			facts: (input) => ({
+				...facts({ ...member('owner'), ...fresh }),
+				...(input.principal.kind === 'key'
+					? { key: { id: 'key-1', scopes: ['site.create'] } }
+					: {})
+			})
+		});
+		const reply = await readState(asKey);
+		expect(reply.status).toBe(403);
+		expect(reply.json).toMatchObject({
+			code: 'forbidden',
+			details: { reason: 'session_only' }
+		});
+	});
+
+	it('answers 404 for a site that is not in the organisation', async () => {
+		await world();
+		siteTable();
+		api();
+		expect((await readState(asUser, ORG, THEIRS)).status).toBe(404);
+	});
+
+	it('refuses a member who cannot create sites, and a caller without a session', async () => {
+		await world();
+		siteTable();
+		api({ role: 'viewer' });
+		expect((await readState()).status).toBe(403);
+		api();
+		expect((await readState({})).status).toBe(401);
+	});
+
+	it('answers 501 until a secret store is installed', async () => {
+		siteTable();
+		api();
+		const reply = await readState();
+		expect(reply.status).toBe(501);
+		expect(reply.json).toMatchObject({ code: 'not_built' });
+	});
 });
 
 describe('POST /api/v1/orgs/:orgId/sites/:id/first-run-secret', () => {

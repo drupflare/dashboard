@@ -71,8 +71,12 @@ describe('buildSiteCreateInput for each kind', () => {
 				expectStatus: recipe.firstRun!.success.statuses[0]
 			});
 			const token = recipe.firstRun!.ownerToken;
+			const admin = recipe.firstRun!.admin;
 			expect(input.firstRun?.reads).toEqual({
 				adminPassword: 'adminPass',
+				...(admin === undefined
+					? {}
+					: { adminName: admin.nameField, adminMail: admin.mailField }),
 				...(token === undefined ? {} : { ownerToken: token.responseField })
 			});
 			// the engine refuses a call that carries the password field
@@ -105,6 +109,22 @@ describe('buildSiteCreateInput for each kind', () => {
 			parts('smoke', { ownerEmail: 'owner@example.com' })
 		);
 		expect(JSON.parse(input.firstRun!.body!)).toMatchObject({ email: 'owner@example.com' });
+	});
+
+	it('sends the owner email as the Drupal admin mail, and never a site mail or admin name', async () => {
+		const input = await buildSiteCreateInput(
+			parts('drupal', { ownerEmail: 'owner@example.com' })
+		);
+		expect(JSON.parse(input.firstRun!.body!)).toEqual({ adminMail: 'owner@example.com' });
+		expect(input.firstRun?.reads).toMatchObject({
+			adminName: 'adminName',
+			adminMail: 'adminMail'
+		});
+	});
+
+	it('leaves the optional admin mail out when the owner email is not known', async () => {
+		const input = await buildSiteCreateInput(parts('drupal'));
+		expect(JSON.parse(input.firstRun!.body!)).toEqual({});
 	});
 
 	it('refuses the custom kind, which has no recipe of its own', async () => {

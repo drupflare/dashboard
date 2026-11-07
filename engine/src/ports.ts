@@ -3,7 +3,7 @@ import type { SitePlane } from '@contracts/sites';
 import type { UploadMetadata } from '@drupflare/workforce';
 import type { BackupRecord, ExportPage } from './backup-parts';
 import type { BundleLimits, BundleManifest, BundleModule } from './bundle';
-import type { Custody, FirstRunReads, FirstRunSecrets } from './custody';
+import type { Custody, FirstRunAdmin, FirstRunReads, FirstRunSecrets } from './custody';
 import type { Granted, LeaseRefusal, Refused } from './lease';
 import type { OperationStore, SiteRowState } from './operations/store';
 import type { ResourceLedger } from './ownership';
@@ -127,11 +127,11 @@ export interface Site {
 		expectStatus?: number,
 		auth?: { bearer: string }
 	): Promise<{ status: number }>;
-	// secrets are set only when the call names fields to read and the site answered as wanted
+	// secrets and admin are set only when the call names fields to read and the site answered as wanted
 	firstRun(
 		hostname: string,
 		call: SiteCall
-	): Promise<{ status: number; secrets?: FirstRunSecrets }>;
+	): Promise<{ status: number; secrets?: FirstRunSecrets; admin?: FirstRunAdmin }>;
 	// posts a nonce whose hash record the caller has already written to the site's CONFIG_KV; the
 	// token is set only when the site answered 200
 	recoverOwnerToken(

@@ -83,7 +83,9 @@ export interface SiteInputParts {
 const clip = (value: string, max: number | undefined) =>
 	max === undefined ? value : value.slice(0, max);
 
-// only required fields are filled, and never the password: the site makes its own
+// only required fields are filled, and never the password: the site makes its own. The admin
+// email is the one optional field sent whenever the owner's address is known, so the site's own
+// password reset mail reaches them
 function firstRunCall(
 	recipe: Recipe,
 	siteName: string,
@@ -93,7 +95,13 @@ function firstRunCall(
 	if (firstRun === null) return undefined;
 	const body: Record<string, string> = {};
 	for (const field of firstRun.body) {
-		if (!field.required || field.value === 'admin-password') continue;
+		if (field.value === 'admin-password') continue;
+		if (!field.required) {
+			if (field.value === 'admin-email' && ownerEmail !== undefined) {
+				body[field.name] = ownerEmail;
+			}
+			continue;
+		}
 		if (field.value === 'admin-username') body[field.name] = 'admin';
 		else if (field.value === 'owner-input') body[field.name] = clip(siteName, field.maxLength);
 		else if (ownerEmail !== undefined) body[field.name] = ownerEmail;
@@ -111,6 +119,9 @@ function firstRunCall(
 		expectStatus: firstRun.success.statuses[0],
 		reads: {
 			adminPassword: 'adminPass',
+			...(firstRun.admin === undefined
+				? {}
+				: { adminName: firstRun.admin.nameField, adminMail: firstRun.admin.mailField }),
 			...(firstRun.ownerToken === undefined
 				? {}
 				: { ownerToken: firstRun.ownerToken.responseField })

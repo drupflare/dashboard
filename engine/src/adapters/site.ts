@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { BackupError, parseExportPage } from '../backup-parts';
 import { ConfigError } from '../config';
-import { readFirstRunSecrets, type FirstRunReads } from '../custody';
+import { readFirstRunAdmin, readFirstRunSecrets, type FirstRunReads } from '../custody';
 import type { BackupWorker, ImportState, Site } from '../ports';
 import { PermanentError } from '../step';
 
@@ -153,7 +153,11 @@ export function siteOf(fetcher: typeof fetch, timeoutMs: number): Site {
 				[409]
 			);
 			if (reads === undefined || text === null) return { status };
-			return { status, secrets: readFirstRunSecrets(text, reads) };
+			return {
+				status,
+				secrets: readFirstRunSecrets(text, reads),
+				admin: readFirstRunAdmin(text, reads)
+			};
 		},
 		async recoverOwnerToken(hostname, nonce) {
 			const { status, text } = await call(

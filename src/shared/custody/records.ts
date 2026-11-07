@@ -62,6 +62,24 @@ export function expiredPendingSecrets<T extends PendingExpiry>(
 	return rows.filter((row) => row.expiresAt <= now);
 }
 
+export interface PendingState {
+	expiresAt: number;
+	revealedAt: number | null;
+}
+
+// what the owner can still do with a site's first admin password. The purge task deletes a row
+// after its expiry, so a missing row on a site that recorded its admin reads as expired; on one
+// that did not, the dashboard never saw the first run's answer
+export function adminPasswordState(
+	row: PendingState | null,
+	now: number,
+	adminRecorded: boolean
+): 'available' | 'revealed' | 'expired' | 'unknown' {
+	if (row === null) return adminRecorded ? 'expired' : 'unknown';
+	if (row.revealedAt !== null) return 'revealed';
+	return row.expiresAt <= now ? 'expired' : 'available';
+}
+
 // #endregion
 
 // #region ids

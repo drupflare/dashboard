@@ -11,6 +11,7 @@ import {
 	type Plan
 } from '../../../contracts/src/operations';
 import {
+	ADMIN_PASSWORD_STATES,
 	SITES_VERSION,
 	SITE_CATEGORIES,
 	SITE_CONFIGS,
@@ -41,6 +42,7 @@ describe('sites', () => {
 		primaryHostname: 'campus.drupflare.app',
 		hostnames: ['campus.drupflare.app', 'www.example.edu'],
 		release: { current: 'v1.0.4', available: 'v1.0.5' },
+		admin: { username: 'admin', email: 'owner@example.edu', password: 'available' },
 		createdAt: at,
 		updatedAt: at
 	};
@@ -95,8 +97,8 @@ describe('sites', () => {
 		expect(siteIdFromScript(`s-${site.id}`)).toBeNull();
 	});
 
-	it('is version 1.1 and lists the two categories and the two configs', () => {
-		expect(SITES_VERSION).toEqual({ major: 1, minor: 1 });
+	it('is version 1.2 and lists the two categories and the two configs', () => {
+		expect(SITES_VERSION).toEqual({ major: 1, minor: 2 });
 		expect(SITE_CATEGORIES).toEqual(['cms', 'workers']);
 		expect(SITE_CONFIGS).toEqual(['managed', 'canonical']);
 	});
@@ -109,16 +111,27 @@ describe('sites', () => {
 	});
 
 	it('parses a 1.0 document by giving it the category of its kind, the canonical config and no account', () => {
-		const { category: _c, config: _f, accountId: _a, release: _r, ...old } = site;
+		const { category: _c, config: _f, accountId: _a, release: _r, admin: _d, ...old } = site;
 		expect(siteSchema.parse(old)).toEqual({
 			...old,
 			category: 'cms',
 			config: 'canonical',
 			accountId: null,
-			release: { current: null, available: null }
+			release: { current: null, available: null },
+			admin: { username: null, email: null, password: 'unknown' }
 		});
 		const worker = siteSchema.parse({ ...old, kind: 'nuxtpress' });
 		expect(worker).toMatchObject({ kind: 'nuxtpress', category: 'workers' });
+	});
+
+	it('parses every password state and refuses one it does not know', () => {
+		for (const password of ADMIN_PASSWORD_STATES) {
+			const stated = { ...site, admin: { username: null, email: null, password } };
+			expect(siteSchema.parse(stated)).toEqual(stated);
+		}
+		const odd = { ...site, admin: { ...site.admin, password: 'shown' } };
+		expect(siteSchema.safeParse(odd).success).toBe(false);
+		expect(siteSchema.safeParse({ ...site, admin: { username: null } }).success).toBe(false);
 	});
 
 	it('keeps a stated category, config and account over the defaults', () => {

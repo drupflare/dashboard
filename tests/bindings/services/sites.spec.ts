@@ -7,9 +7,11 @@ import siteRead from '../../../src/server/api/v1/sites/[id]/index.get';
 import siteOperations from '../../../src/server/api/v1/sites/[id]/operations.get';
 import { ensureCollegeDB } from '../../../src/server/db/collegedb';
 import { withAtomicBatch } from '../../../src/server/db/repos/atomic-shards';
+import { createUser } from '../../../src/server/db/repos/identity';
 import { getReadySite, markSiteReady } from '../../../src/server/db/repos/sites';
 import { FREE_PLAN_ID, derive } from '../../../src/server/domain/entitlements';
 import type { EngineStartRequest } from '../../../src/server/integrations/engine';
+import { resetPendingSecretDeps } from '../../../src/server/services/owner-tokens';
 import {
 	createSite,
 	resetSiteServices,
@@ -17,6 +19,7 @@ import {
 	siteServices
 } from '../../../src/server/services/sites';
 import { resetApiDeps } from '../../../src/server/utils/define-api';
+import { PENDING_SECRET_SQL } from '../../../src/shared/custody/records';
 import { ApiError } from '../../../src/shared/errors';
 import { DEPT, ORG, OTHER_ORG, facts, fresh } from '../../unit/domain/fixtures';
 import {
@@ -26,7 +29,7 @@ import {
 	type Reply,
 	type Request as RequestInit
 } from '../../unit/server/fixtures/harness';
-import { openBindings, type Bindings, type OpenBindings } from '../support';
+import { installPendingSecrets, openBindings, type Bindings, type OpenBindings } from '../support';
 
 let harness: OpenBindings;
 let env: Bindings;
@@ -41,6 +44,7 @@ afterAll(() => harness.close());
 
 afterEach(() => {
 	resetSiteServices();
+	resetPendingSecretDeps();
 	resetApiDeps();
 });
 
@@ -79,8 +83,11 @@ const freeEntitlement = () => {
 };
 
 // the port answers yes, and every accepted start is recorded
+const NOW = 1_000_000;
+
 function acceptingPort() {
 	const started: EngineStartRequest[] = [];
+	installPendingSecrets(getDb, () => NOW);
 	setSiteServices({
 		getDb,
 		entitlements: { check: async () => ({ allow: true, entitlement: freeEntitlement() }) },
@@ -326,5 +333,135 @@ describe('routes over the store', () => {
 		});
 		expect(reply.status).toBe(404);
 		expect(reply.json).toMatchObject({ code: 'not_found' });
+	});
+});
+
+describe('the admin sign-in of a site', () => {
+	const firstRunBody = (started: EngineStartRequest[]) =>
+		JSON.parse((started[0].params as { firstRun: { body: string } }).firstRun.body);
+
+	it('sends the stored email of the creator as the admin mail', async () => {
+		const started = acceptingPort();
+		const user = await createUser(await getDb(), {
+			email: `owner-${crypto.randomUUID()}@Example.edu`
+		});
+		await createSite(siteServices(), {
+			orgId: ORG,
+			userId: user.id,
+			kind: 'drupal',
+			name: 'admin-mail-site',
+			hostnameLabel: undefined,
+			idempotencyKey: key()
+		});
+		expect(firstRunBody(started)).toEqual({ adminMail: user.email });
+		expect(user.email).toBe(user.email.toLowerCase());
+	});
+
+	it('sends no admin mail for a user the store does not hold', async () => {
+		const started = acceptingPort();
+		await createFor(ORG, 'admin-mail-unknown-site');
+		expect(firstRunBody(started)).toEqual({});
+	});
+
+	it('refuses an admin mail in the request body, so only the stored address is ever used', async () => {
+		const started = acceptingPort();
+		asMember();
+		const reply = await send(sitesCreate, '/api/v1/orgs/:orgId/sites', {
+			method: 'POST',
+			path: `/api/v1/orgs/${ORG}/sites`,
+			headers: { ...asUser, 'idempotency-key': 'route-admin-mail-0001' },
+			json: { kind: 'drupal', name: 'route-admin-mail', adminMail: 'someone@else.test' }
+		});
+		expect(reply.status).toBe(400);
+		expect(started).toEqual([]);
+	});
+
+	async function readySite(
+		org: string,
+		name: string,
+		admin: { name: string; mail: string } | null,
+		secret: { expiresAt: number; revealedAt: number | null } | null
+	) {
+		const { siteId } = await createFor(org, name);
+		await markSiteReady(await getDb(), org, siteId, 5_000);
+		if (admin !== null) {
+			await env.DB.prepare('UPDATE sites SET admin_name = ?, admin_mail = ? WHERE id = ?')
+				.bind(admin.name, admin.mail, siteId)
+				.run();
+		}
+		if (secret !== null) {
+			await env.DB.prepare(PENDING_SECRET_SQL.seal)
+				.bind(siteId, 'admin-password', '{}', 1, NOW - 1_000, secret.expiresAt)
+				.run();
+			if (secret.revealedAt !== null) {
+				await env.DB.prepare(
+					`UPDATE pending_secrets SET revealed_at = ?, ciphertext = '' WHERE site_id = ?`
+				)
+					.bind(secret.revealedAt, siteId)
+					.run();
+			}
+		}
+		return siteId;
+	}
+
+	const adminOf = async (siteId: string) => {
+		const reply = await send(siteRead, '/api/v1/sites/:id', {
+			path: `/api/v1/sites/${siteId}`,
+			headers: asUser
+		});
+		expect(reply.status).toBe(200);
+		return (reply.json as { admin: unknown }).admin;
+	};
+
+	const sign = { name: 'admin', mail: 'owner@example.edu' };
+
+	it.each([
+		['an unread password', sign, { expiresAt: NOW + 60_000, revealedAt: null }, 'available'],
+		[
+			'a revealed password',
+			sign,
+			{ expiresAt: NOW + 60_000, revealedAt: NOW - 10 },
+			'revealed'
+		],
+		['an expired password', sign, { expiresAt: NOW, revealedAt: null }, 'expired'],
+		['a purged password on a site that recorded its admin', sign, null, 'expired'],
+		['no password and no recorded admin', null, null, 'unknown']
+	] as const)('reads %s as %s', async (_label, admin, secret, password) => {
+		acceptingPort();
+		const org = `org-admin-${password}-${counter}`;
+		const siteId = await readySite(org, `admin-${password}-${counter}-site`, admin, secret);
+		asMember(org);
+		expect(await adminOf(siteId)).toEqual({
+			username: admin?.name ?? null,
+			email: admin?.mail ?? null,
+			password
+		});
+	});
+
+	it('GET /sites carries the admin of each site with its own password state', async () => {
+		acceptingPort();
+		const org = 'org-admin-list';
+		const live = await readySite(org, 'admin-list-live-site', sign, {
+			expiresAt: NOW + 60_000,
+			revealedAt: null
+		});
+		const old = await readySite(org, 'admin-list-old-site', null, null);
+		asMember(org);
+		const reply = await send(sitesList, '/api/v1/orgs/:orgId/sites', {
+			path: `/api/v1/orgs/${org}/sites`,
+			headers: asUser
+		});
+		expect(reply.status).toBe(200);
+		const items = (reply.json as { items: { id: string; admin: unknown }[] }).items;
+		expect(items.find((item) => item.id === live)?.admin).toEqual({
+			username: 'admin',
+			email: 'owner@example.edu',
+			password: 'available'
+		});
+		expect(items.find((item) => item.id === old)?.admin).toEqual({
+			username: null,
+			email: null,
+			password: 'unknown'
+		});
 	});
 });

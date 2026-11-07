@@ -6,6 +6,7 @@ import { withAtomicBatch } from '../../../src/server/db/repos/atomic-shards';
 import { markSiteReady, setSiteState } from '../../../src/server/db/repos/sites';
 import { FREE_PLAN_ID, derive } from '../../../src/server/domain/entitlements';
 import type { EngineStartRequest } from '../../../src/server/integrations/engine';
+import { resetPendingSecretDeps } from '../../../src/server/services/owner-tokens';
 import {
 	createSite,
 	resetSiteServices,
@@ -17,7 +18,7 @@ import { resetApiDeps } from '../../../src/server/utils/define-api';
 import { ApiError } from '../../../src/shared/errors';
 import { DEPT, ORG, OTHER_ORG, facts, fresh } from '../../unit/domain/fixtures';
 import { asUser, send as sendRequest, setup, type Reply } from '../../unit/server/fixtures/harness';
-import { openBindings, type Bindings, type OpenBindings } from '../support';
+import { installPendingSecrets, openBindings, type Bindings, type OpenBindings } from '../support';
 
 let harness: OpenBindings;
 let env: Bindings;
@@ -32,6 +33,7 @@ afterAll(() => harness.close());
 
 afterEach(() => {
 	resetSiteServices();
+	resetPendingSecretDeps();
 	resetApiDeps();
 });
 
@@ -56,6 +58,7 @@ const freeEntitlement = () => {
 
 function acceptingPort(releases: Record<string, string> = { drupal: 'v1.0.5' }) {
 	const started: EngineStartRequest[] = [];
+	installPendingSecrets(getDb);
 	setSiteServices({
 		getDb,
 		entitlements: { check: async () => ({ allow: true, entitlement: freeEntitlement() }) },

@@ -1,5 +1,12 @@
 import type { OrgId, SiteId } from '@contracts/common';
-import type { Site, SiteCategory, SiteConfig, SiteKind, SitePlane } from '@contracts/sites';
+import type {
+	AdminPasswordState,
+	Site,
+	SiteCategory,
+	SiteConfig,
+	SiteKind,
+	SitePlane
+} from '@contracts/sites';
 import type { CollegeDBClient } from '@earth-app/collegedb';
 import { wasChanged } from '../collegedb';
 
@@ -15,6 +22,9 @@ export interface SiteRecord {
 	state: Site['state'];
 	primaryHostname: string | null;
 	releaseId: string | null;
+	// what the first run reported for the account it made; null on a site that predates the columns
+	adminName: string | null;
+	adminMail: string | null;
 	readyAt: number | null;
 	createdAt: number;
 	updatedAt: number;
@@ -32,13 +42,15 @@ interface SiteRow {
 	state: Site['state'];
 	primary_hostname: string | null;
 	release_id: string | null;
+	admin_name: string | null;
+	admin_mail: string | null;
 	ready_at: number | null;
 	created_at: number;
 	updated_at: number;
 }
 
 const SITE_COLUMNS = `id, organization_id, name, kind, category, plane, config, account_id, state,
-	primary_hostname, release_id, ready_at, created_at, updated_at`;
+	primary_hostname, release_id, admin_name, admin_mail, ready_at, created_at, updated_at`;
 
 function toRecord(row: SiteRow): SiteRecord {
 	return {
@@ -53,6 +65,8 @@ function toRecord(row: SiteRow): SiteRecord {
 		state: row.state,
 		primaryHostname: row.primary_hostname,
 		releaseId: row.release_id,
+		adminName: row.admin_name,
+		adminMail: row.admin_mail,
 		readyAt: row.ready_at,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
@@ -60,8 +74,13 @@ function toRecord(row: SiteRow): SiteRecord {
 }
 
 // no ring or hostname list in the table yet; a new site starts in R0 with its managed host. The
-// available release is the platform's current one for the site's kind, null when none is set
-export function toSite(record: SiteRecord, available: string | null = null): Site {
+// available release is the platform's current one for the site's kind, null when none is set. The
+// password state comes from the pending secret, which this table does not hold
+export function toSite(
+	record: SiteRecord,
+	available: string | null = null,
+	password: AdminPasswordState = 'unknown'
+): Site {
 	return {
 		id: record.id as SiteId,
 		orgId: record.organizationId as OrgId,
@@ -76,6 +95,7 @@ export function toSite(record: SiteRecord, available: string | null = null): Sit
 		primaryHostname: record.primaryHostname,
 		hostnames: record.primaryHostname === null ? [] : [record.primaryHostname],
 		release: { current: record.releaseId, available },
+		admin: { username: record.adminName, email: record.adminMail, password },
 		createdAt: new Date(record.createdAt).toISOString(),
 		updatedAt: new Date(record.updatedAt).toISOString()
 	};

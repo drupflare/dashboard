@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { SCHEMA_STATEMENTS } from '../../../../src/server/db/schema';
 import {
+	adminPasswordState,
 	expiredPendingSecrets,
 	OWNER_TOKEN_SQL,
 	ownerTokenAad,
@@ -52,6 +53,26 @@ describe('expiredPendingSecrets', () => {
 		const [out] = expiredPendingSecrets(rows, 2);
 		expect(out).toBe(rows[0]);
 		expect(rows).toHaveLength(1);
+	});
+});
+
+describe('adminPasswordState', () => {
+	it('is available only for an unread row before its expiry', () => {
+		expect(adminPasswordState({ expiresAt: 101, revealedAt: null }, 100, true)).toBe(
+			'available'
+		);
+		expect(adminPasswordState({ expiresAt: 100, revealedAt: null }, 100, true)).toBe('expired');
+		expect(adminPasswordState({ expiresAt: 99, revealedAt: null }, 100, false)).toBe('expired');
+	});
+
+	it('is revealed for a read row, even past its expiry', () => {
+		expect(adminPasswordState({ expiresAt: 200, revealedAt: 50 }, 100, true)).toBe('revealed');
+		expect(adminPasswordState({ expiresAt: 10, revealedAt: 5 }, 100, false)).toBe('revealed');
+	});
+
+	it('reads a missing row as expired when the admin was recorded and unknown when it was not', () => {
+		expect(adminPasswordState(null, 100, true)).toBe('expired');
+		expect(adminPasswordState(null, 100, false)).toBe('unknown');
 	});
 });
 

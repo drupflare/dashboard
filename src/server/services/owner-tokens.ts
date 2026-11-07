@@ -1,3 +1,4 @@
+import type { AdminPasswordState } from '@contracts/sites';
 import type { CollegeDBClient } from '@earth-app/collegedb';
 import {
 	CryptoError,
@@ -9,6 +10,7 @@ import {
 	type KeyRing
 } from '../../shared/custody/envelope';
 import {
+	adminPasswordState,
 	ownerTokenAad,
 	pendingSecretAad,
 	type PendingSecretKind
@@ -321,6 +323,16 @@ export async function revealPendingSecret(
 	);
 	if (!(await deps.store.markRevealed(call.siteId, call.kind, deps.now()))) throw notFound();
 	return value;
+}
+
+// the state of a site's first admin password without opening it; the caller has already checked
+// that the site belongs to the organisation. No audit row: nothing secret is read
+export async function adminPasswordStateOf(
+	deps: Pick<PendingSecretDeps, 'store' | 'now'>,
+	site: { id: string; adminName: string | null }
+): Promise<AdminPasswordState> {
+	const row = await deps.store.get(site.id, 'admin-password');
+	return adminPasswordState(row, deps.now(), site.adminName !== null);
 }
 
 // moves an unread secret to the newest key version; false when nothing was left to move

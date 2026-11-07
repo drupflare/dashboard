@@ -11,6 +11,7 @@ import type { BudgetKey } from '../../shared/permissions';
 import { recipeFor } from '../../shared/recipes';
 import { nowUtc } from '../../shared/utils/time';
 import { createOperationRecord } from '../db/repos/backups';
+import { getUserById } from '../db/repos/identity';
 import {
 	createSiteOperation,
 	findOpenSiteOperation,
@@ -189,6 +190,8 @@ export async function createSite(
 	const operationId = newId('op');
 	const { config } = services;
 	const category = categoryOfKind(input.kind);
+	// the address comes from the stored user, never from the request body
+	const owner = await getUserById(await services.getDb(), input.userId);
 	const engineInput = await buildSiteCreateInput({
 		site: {
 			id: siteId,
@@ -203,7 +206,8 @@ export async function createSite(
 		recipe: recipeFor(input.kind),
 		release: config.releases[input.kind],
 		account: config.accountId,
-		hostSuffix: config.hostSuffix
+		hostSuffix: config.hostSuffix,
+		...(owner === null ? {} : { ownerEmail: owner.email })
 	}).catch(inputRefusal);
 
 	// the engine's own plan, so both writers hold one digest and one step list
@@ -310,11 +314,15 @@ export async function deleteSite(
 	}
 	const busy = await findOpenSiteOperation(db, input.orgId, site.id);
 	if (busy) {
-		throw new ApiError('conflict', 'Another change to this site is still running', {
-			reason: 'site_busy',
-			operationId: busy.id,
-			operation: busy.type
-		});
+		throw new ApiError(
+			'conflict',
+			'Another change to this site is still running. Wait for it to finish.',
+			{
+				reason: 'site_busy',
+				operationId: busy.id,
+				operation: busy.type
+			}
+		);
 	}
 
 	const operationId = newId('op');
@@ -431,11 +439,15 @@ export async function upgradeSite(
 	}
 	const busy = await findOpenSiteOperation(db, input.orgId, site.id);
 	if (busy) {
-		throw new ApiError('conflict', 'Another change to this site is still running', {
-			reason: 'site_busy',
-			operationId: busy.id,
-			operation: busy.type
-		});
+		throw new ApiError(
+			'conflict',
+			'Another change to this site is still running. Wait for it to finish.',
+			{
+				reason: 'site_busy',
+				operationId: busy.id,
+				operation: busy.type
+			}
+		);
 	}
 
 	const operationId = newId('op');

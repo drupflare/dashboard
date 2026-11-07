@@ -26,20 +26,23 @@ function site(kind: string) {
 		ring: 'R1',
 		primaryHostname: 'quiet-oak-harbor.drupflare.app',
 		hostnames: [],
+		admin: { username: 'admin', email: 'owner@example.test', password: 'available' },
 		createdAt: '2026-01-01T00:00:00Z',
 		updatedAt: '2026-01-01T00:00:00Z'
 	};
 }
 
 let cleanup: () => void = () => undefined;
-let siteReply: () => Reply;
-let opsReply: () => Reply;
+let siteReply: () => Reply | Promise<Reply>;
+let opsReply: () => Reply | Promise<Reply>;
+let stateReply: () => Reply;
 const mounted: { unmount: () => void }[] = [];
 
 beforeEach(() => {
 	clearBrowserState();
 	useSessionStore().$reset();
 	siteReply = () => ({ body: site('drupal') });
+	stateReply = () => ({ body: { kind: 'admin-password', state: 'revealed' } });
 	opsReply = () => ({
 		body: {
 			items: [
@@ -56,7 +59,8 @@ beforeEach(() => {
 	cleanup = registerApi({
 		'GET /api/v1/me': { body: me },
 		'GET /api/v1/sites/site_1': () => siteReply(),
-		'GET /api/v1/sites/site_1/operations': () => opsReply()
+		'GET /api/v1/sites/site_1/operations': () => opsReply(),
+		'GET /api/v1/orgs/org_personal/sites/site_1/first-run-secret': () => stateReply()
 	});
 });
 
@@ -97,6 +101,60 @@ describe('site page', () => {
 
 		await vi.waitFor(() => expect(wrapper.find('h1').exists()).toBe(true));
 		expect(wrapper.text()).not.toContain('Open Admin');
+		expect(wrapper.text()).not.toContain('Admin Sign-In');
+	});
+
+	it('shows Admin Sign-In right after Open Admin, with the recorded username and email', async () => {
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('shown once and is not stored'));
+		const text = wrapper.text();
+		expect(text.indexOf('Open Admin')).toBeLessThan(text.indexOf('Admin Sign-In'));
+		expect(text).toContain('owner@example.test');
+		expect(wrapper.text()).toContain('Open Sign-In Page');
+	});
+
+	it('shows skeletons shaped like the page until the site and its operations arrive', async () => {
+		let release: () => void = () => undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		siteReply = async () => {
+			await gate;
+			return { body: site('drupal') };
+		};
+		opsReply = async () => {
+			await gate;
+			return { body: { items: [], nextCursor: null } };
+		};
+		const wrapper = await mountPage();
+
+		expect(wrapper.text()).toContain('Loading the site');
+		expect(wrapper.text()).toContain('Loading operations');
+		expect(wrapper.findAll('.animate-pulse').length).toBeGreaterThan(8);
+		expect(wrapper.text()).not.toContain('Loading the site...');
+
+		release();
+		await vi.waitFor(() => expect(wrapper.find('h1').text()).toBe('quiet-oak-harbor'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('No Operations Yet'));
+		expect(wrapper.text()).not.toContain('Loading operations');
+	});
+
+	it('shows the server message when the site cannot be loaded', async () => {
+		siteReply = () => ({
+			status: 500,
+			body: {
+				code: 'internal',
+				message: 'Something went wrong on our side. Try again.',
+				details: {},
+				requestId: 'req_500'
+			}
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Could Not Load the Site'));
+		expect(wrapper.text()).toContain('Something went wrong on our side. Try again.');
+		expect(wrapper.text()).toContain('req_500');
 	});
 
 	it('shows Site Not Found for a site the person cannot read', async () => {

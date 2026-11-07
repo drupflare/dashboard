@@ -129,6 +129,14 @@ export const recipeSchema = z.strictObject({
 					}),
 					provenance: provenanceSchema
 				})
+				.optional(),
+			// the response fields that name the account the call made; neither is a secret
+			admin: z
+				.strictObject({
+					nameField: z.string().min(1),
+					mailField: z.string().min(1),
+					provenance: provenanceSchema
+				})
 				.optional()
 		})
 		.nullable(),

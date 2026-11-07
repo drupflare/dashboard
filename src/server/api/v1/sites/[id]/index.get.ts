@@ -3,6 +3,7 @@ import { siteSchema } from '@contracts/sites';
 import { z } from 'zod';
 import { ApiError } from '../../../../../shared/errors';
 import { getReadySite, toSite } from '../../../../db/repos/sites';
+import { adminPasswordStateOf, pendingSecretDeps } from '../../../../services/owner-tokens';
 import { siteServices } from '../../../../services/sites';
 import { defineApi } from '../../../../utils/define-api';
 
@@ -26,6 +27,7 @@ export default defineApi(
 			resource.siteId
 		);
 		if (!site) throw new ApiError('not_found', 'Not found');
-		return toSite(site, siteServices().config.releases[site.kind] ?? null);
+		const password = await adminPasswordStateOf(await pendingSecretDeps(), site);
+		return toSite(site, siteServices().config.releases[site.kind] ?? null, password);
 	}
 );

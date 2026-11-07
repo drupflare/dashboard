@@ -40,6 +40,8 @@ onMounted(() => {
 	void loadOperations();
 });
 
+useHead({ title: () => site.value?.name ?? 'Site' });
+
 const adminUrl = computed(() => (site.value ? adminUrlFor(site.value) : null));
 const siteMissing = computed(() => siteError.value?.status === 404);
 
@@ -70,7 +72,7 @@ function when(value: string): string {
 			<UiErrorState
 				v-else-if="siteError"
 				title="Could Not Load the Site"
-				text="Check your connection and try again."
+				:text="siteError.message"
 				:request-id="siteError.requestId"
 			>
 				<UButton
@@ -81,13 +83,7 @@ function when(value: string): string {
 				</UButton>
 			</UiErrorState>
 
-			<p
-				v-else-if="!site"
-				role="status"
-				class="text-sm text-muted"
-			>
-				Loading the site...
-			</p>
+			<SiteSkeleton v-else-if="!site" />
 
 			<template v-else>
 				<SiteHeader :site="site" />
@@ -104,6 +100,15 @@ function when(value: string): string {
 						Open Admin
 					</UButton>
 				</div>
+
+				<SiteAdmin
+					v-if="adminUrl"
+					:org-id="site.orgId"
+					:site-id="site.id"
+					:sign-in-url="adminUrl"
+					:username="site.admin.username"
+					:email="site.admin.email"
+				/>
 
 				<HealthTree
 					:org-id="site.orgId"
@@ -129,7 +134,7 @@ function when(value: string): string {
 				<UiErrorState
 					v-if="operationsError"
 					title="Could Not Load Operations"
-					text="Check your connection and try again."
+					:text="operationsError.message"
 					:request-id="operationsError.requestId"
 				>
 					<UButton
@@ -140,13 +145,26 @@ function when(value: string): string {
 					</UButton>
 				</UiErrorState>
 
-				<p
+				<div
 					v-else-if="operations === null"
 					role="status"
-					class="text-sm text-muted"
 				>
-					Loading operations...
-				</p>
+					<span class="sr-only">Loading operations</span>
+					<div
+						aria-hidden="true"
+						class="flex flex-col divide-y divide-default rounded-lg border border-default"
+					>
+						<div
+							v-for="row in 3"
+							:key="row"
+							class="flex items-center justify-between gap-3 px-4 py-3"
+						>
+							<USkeleton class="h-4 w-28" />
+							<USkeleton class="h-4 w-20" />
+							<USkeleton class="h-4 w-32" />
+						</div>
+					</div>
+				</div>
 
 				<UiEmptyState
 					v-else-if="operations.length === 0"
@@ -183,12 +201,7 @@ function when(value: string): string {
 			/>
 		</div>
 		<template #fallback>
-			<p
-				role="status"
-				class="text-sm text-muted"
-			>
-				Loading the site...
-			</p>
+			<SiteSkeleton />
 		</template>
 	</ClientOnly>
 </template>

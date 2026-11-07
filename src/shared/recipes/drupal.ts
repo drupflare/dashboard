@@ -186,6 +186,11 @@ export const drupal = {
 				provenance: { source: 'dashboard/src/server/services/owner-tokens.ts:138' }
 			},
 			provenance: { source: 'worker/src/do/routes/lifecycle.ts:497' }
+		},
+		admin: {
+			nameField: 'adminName',
+			mailField: 'adminMail',
+			provenance: { source: 'worker/src/site/php/first-run-config.php:89' }
 		}
 	},
 	probe: {

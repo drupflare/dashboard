@@ -92,6 +92,9 @@ export interface FirstRunSealed {
 	status: number | null;
 	ownerTokenId: string | null;
 	pendingSecretId: string | null;
+	// what the site said it made; plain text, and null when the call was not answered here
+	adminName?: string | null;
+	adminMail?: string | null;
 }
 
 export class NameUnavailableError extends PermanentError {
@@ -403,7 +406,7 @@ async function firstRun(ctx: Ctx, input: SiteCreateInput, call: SiteCall): Promi
 					: kept.ownerTokenId !== null;
 			if (sealed) return { status: null, ...kept };
 		}
-		const { status, secrets } = await site.firstRun(input.hostname, call);
+		const { status, secrets, admin } = await site.firstRun(input.hostname, call);
 		if (status === 409 && reads?.ownerToken !== undefined) {
 			return recoverClaim(ctx, input, keptPending);
 		}
@@ -439,7 +442,13 @@ async function firstRun(ctx: Ctx, input: SiteCreateInput, call: SiteCall): Promi
 				: await sealing('the owner token', () =>
 						custody.sealOwnerToken(input.site.id, ownerToken)
 					);
-		return { status, ownerTokenId, pendingSecretId };
+		return {
+			status,
+			ownerTokenId,
+			pendingSecretId,
+			adminName: admin?.adminName ?? null,
+			adminMail: admin?.adminMail ?? null
+		};
 	});
 }
 
@@ -535,7 +544,11 @@ async function verify(
 	});
 }
 
-async function activate(ctx: Ctx, input: SiteCreateInput): Promise<void> {
+async function activate(
+	ctx: Ctx,
+	input: SiteCreateInput,
+	sealed: FirstRunSealed | null
+): Promise<void> {
 	const { deps } = ctx;
 	await runStep(ctx, 'activate', 'activate', async () => {
 		await fenced(ctx);
@@ -551,7 +564,9 @@ async function activate(ctx: Ctx, input: SiteCreateInput): Promise<void> {
 				accountId: input.site.accountId,
 				category: input.site.category,
 				config: input.site.config,
-				releaseId: input.releaseId
+				releaseId: input.releaseId,
+				adminName: sealed?.adminName ?? null,
+				adminMail: sealed?.adminMail ?? null
 			},
 			deps.now()
 		);
@@ -782,7 +797,7 @@ export async function runSiteCreate(
 		await putRoute(ctx, input);
 		sealed = input.firstRun === undefined ? null : await firstRun(ctx, input, input.firstRun);
 		await verify(ctx, input, sealed);
-		await activate(ctx, input);
+		await activate(ctx, input, sealed);
 	} catch (error) {
 		if (!(error instanceof StepFailed)) throw error;
 		return rollback(ctx, input, resources, error);

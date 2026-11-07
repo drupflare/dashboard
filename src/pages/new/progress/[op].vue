@@ -109,7 +109,7 @@ function followFailureLink(): void {
 			<UiErrorState
 				v-else-if="error && !operation"
 				title="Could Not Load the Operation"
-				text="Check your connection and try again."
+				:text="error.message"
 				:request-id="error.requestId"
 			>
 				<UButton
@@ -120,13 +120,7 @@ function followFailureLink(): void {
 				</UButton>
 			</UiErrorState>
 
-			<p
-				v-else-if="!operation"
-				role="status"
-				class="text-sm text-muted"
-			>
-				Loading the operation...
-			</p>
+			<OpSkeleton v-else-if="!operation" />
 
 			<template v-else>
 				<div class="flex flex-wrap items-center gap-3">
@@ -194,7 +188,7 @@ function followFailureLink(): void {
 					<UiErrorState
 						v-if="siteError"
 						title="Could Not Load the Site"
-						text="Check your connection and try again."
+						:text="siteError.message"
 						:request-id="siteError.requestId"
 					>
 						<UButton
@@ -205,13 +199,21 @@ function followFailureLink(): void {
 						</UButton>
 					</UiErrorState>
 
-					<p
+					<div
 						v-else-if="!site"
 						role="status"
-						class="text-sm text-muted"
+						class="flex flex-col gap-3"
 					>
-						Loading the site address...
-					</p>
+						<span class="sr-only">Loading the site address</span>
+						<USkeleton
+							class="h-5 w-64 max-w-full"
+							aria-hidden="true"
+						/>
+						<USkeleton
+							class="h-9 w-40"
+							aria-hidden="true"
+						/>
+					</div>
 
 					<template v-else>
 						<p class="wrap-break-word">
@@ -223,6 +225,15 @@ function followFailureLink(): void {
 						</p>
 
 						<div class="flex flex-col gap-2">
+							<p
+								v-if="site.admin.username"
+								class="text-sm"
+							>
+								<span class="text-muted">Username</span>
+								<code class="ml-2 text-highlighted select-all">{{
+									site.admin.username
+								}}</code>
+							</p>
 							<h3 class="text-base font-semibold text-highlighted">Admin Password</h3>
 							<UiSecretOnce
 								v-if="orgId"
@@ -248,12 +259,7 @@ function followFailureLink(): void {
 			</template>
 		</div>
 		<template #fallback>
-			<p
-				role="status"
-				class="text-sm text-muted"
-			>
-				Loading the operation...
-			</p>
+			<OpSkeleton />
 		</template>
 	</ClientOnly>
 </template>
