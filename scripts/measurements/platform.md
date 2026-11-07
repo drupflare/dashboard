@@ -129,3 +129,24 @@ Run on 2026-11-06 against the same stage site after its first-run call, with the
 - The document passes the discovery contract. It holds 32 settings, each with a value, a provenance and a writable flag, plus 6 routes. Its capabilities list is empty, because the composer does not fill it from `/settings`.
 - One write round trip on a numeric setting (`LAZY_FS_BUDGET_BYTES`, 4,194,304): a write with the current value as its snapshot succeeded and the next read returned the new value. A write sent with the old value as its snapshot came back as a conflict that carried the server's value. A revert restored the original value. The worker serves no `ETag`, so the conflict comes from the dashboard's own comparison against a fresh read and not from `If-Match`.
 - Only the Drupal worker was tested. The first-party Worker templates deploy unmodified and serve no discovery document, so nothing about them was run.
+
+## Serving a site with the dashboard off
+
+Run on 2026-11-07 against `jovial-iris-pier.drupflare.app`, a site the engine created on the stage namespace from worker commit `edd7f09234`. The run removed the custom-domain mapping for `app.drupflare.com` from the dashboard Worker, so the dashboard stopped answering, and put it back at the end. The dispatch Worker and the engine stayed deployed. One client in one location.
+
+- Before: the dashboard health route answered 200 and the site's front page answered 200 in 2,322 ms for the first request of the run.
+- With the mapping removed, `app.drupflare.com` answered 530 (origin DNS error) on every request, including the login page.
+- The site answered 200 on every probe at 20 s, 60 s and 130 s after removal: the front page from cache (196, 647 and 980 ms), the login page (99, 75 and 141 ms), and an uncached `?cpoff=N` query that forced a render (593, 661 and 712 ms, `x-cfw-cache: RENDER`).
+- After the mapping returned, the dashboard answered 200 again on the second poll and the site answered 200 as before.
+- This shows that serving needs no request to the dashboard Worker. It does not show serving with the engine, the stage D1 database or the dispatch Worker unavailable. The dispatch Worker binds the dispatch namespace, its host KV, Analytics Engine and its own Durable Objects, and no D1 database and no service binding, which the configuration confirms and this run does not test.
+
+## Creating, backing up, restoring and updating a site on the stage plane
+
+Run on 2026-11-07 against the stage namespace with the engine and dashboard Workers redeployed from the working tree. The engine streams the asset and script uploads as multipart bodies written one slice at a time. Before this change the engine's logs hold two memory kills (128 MB limit) during creates, at 01:38 and 01:48 UTC on the same day, each followed by a replayed step; workforce encodes an asset to base64 one character at a time, which for the 13 MB asset builds a rope string of about 13 million nodes. One client, one site, one run each.
+
+- Create (`calm-river-ash`, worker commit `edd7f09234`): succeeded in 5 min 9 s from start to the last step. All 11 steps ran on attempt 1. The engine's Observability logs for the window hold no memory error. `/firstrun` answered 503 once while the database unpacked, then 200 on the retry, so the owner token and the admin password were sealed and the password is unrevealed. The asset upload took 8 chunks in about 4 min 30 s.
+- Health read through the dashboard (token unsealed, `/health` fetched through the site's hostname): 200 in 1.9 to 2.8 s, level `ok`, readiness `live`.
+- Backup: succeeded in about 30 s, 2,601,188 bytes in 5 parts, restorable, not verified.
+- Restore of that backup into another stage site: succeeded in about 20 s, the target answered 200 afterwards.
+- Update to a second release (the first release plus one changed 57-byte asset): succeeded in about 30 s. The asset upload step sent 1 file. The front page and the changed asset answered 200, health read `ok`, the site's release record moved, and the script tags read `v:edd7f09235` and `m:v2`. A second update request answered 409 `up_to_date`.
+- This shows that one create no longer hits the memory limit, and that these routes work on the plane for a small change. It does not show that the memory fix holds across many creates, because n = 1. It does not show an update that adds a Durable Object migration tag (the API's `old_tag` form has not run), the rollback after a failed update (covered by tests with injected failures only), or a delete (it needs a signed-in session with a fresh step-up, which no key can hold).
