@@ -312,9 +312,15 @@ async function apply(
 			);
 			if (state === 'applied') return;
 			if (state === 'failed') {
+				const reason = await deps.custody.withOwnerToken(
+					input.siteId,
+					checked.ownerTokenId,
+					(bearer) =>
+						deps.worker.importReason(checked.hostname, checked.label, { bearer })
+				);
 				throw new BackupError(
 					'import_failed',
-					`${input.siteId} reported that the import failed`
+					`${input.siteId} reported that the import failed${reason === '' ? '' : ` at ${reason}`}`
 				);
 			}
 			if (deps.now() >= deadline) {

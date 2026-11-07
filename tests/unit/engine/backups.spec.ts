@@ -158,7 +158,19 @@ function fakeWorkers(log: string[], ceiling = 16 * MIB) {
 			const last = site.imports.at(-1);
 			return Response.json({
 				tree: {},
-				import: last === undefined ? null : { generation: last.label, state: last.state }
+				import:
+					last === undefined
+						? null
+						: {
+								generation: last.label,
+								state: last.state,
+								chunk: last.state === 'failed' ? 3 : last.ticks,
+								chunks: 9,
+								error:
+									last.state === 'failed'
+										? 'UNIQUE constraint failed: users.uid'
+										: null
+							}
 			});
 		}
 		if (url.pathname === '/serve-stats') {
@@ -684,7 +696,11 @@ describe('backup.restore', () => {
 		const failing = await backupWorld({ files: false });
 		await backedUp(failing);
 		failing.worker.sites.get(TARGET_HOST)!.failImport = true;
-		trip((await runRestore(failing)).outcome, 'import_failed');
+		const failed = (await runRestore(failing)).outcome;
+		trip(failed, 'import_failed');
+		if (failed.status === 'rolled-back' || failed.status === 'failed') {
+			expect(failed.reason).toContain('at chunk 3 of 9: UNIQUE constraint failed: users.uid');
+		}
 		const slow = await backupWorld({ files: false });
 		await backedUp(slow);
 		slow.worker.sites.get(TARGET_HOST)!.applyAfter = 1_000;
@@ -1041,6 +1057,30 @@ describe('the worker adapter', () => {
 				}
 			)
 		).toBe('failed');
+		const reason = (stored: object | null) =>
+			health({ import: stored }).importReason('h.app', 'l', { bearer: 't' });
+		expect(
+			await reason({
+				generation: 'l',
+				state: 'failed',
+				chunk: 3,
+				chunks: 9,
+				error: 'UNIQUE constraint failed: users.uid'
+			})
+		).toBe('chunk 3 of 9: UNIQUE constraint failed: users.uid');
+		expect(await reason({ generation: 'l', state: 'failed', error: 'x' })).toBe('x');
+		expect(await reason({ generation: 'l', state: 'failed', chunk: 1, chunks: 2 })).toBe(
+			'chunk 1 of 2'
+		);
+		expect(await reason({ generation: 'other', state: 'failed', error: 'x' })).toBe('');
+		expect(await reason(null)).toBe('');
+		const long = await reason({
+			generation: 'l',
+			state: 'failed',
+			error: `a\u0000b\n${'z'.repeat(1000)}`
+		});
+		expect(long).toHaveLength(300);
+		expect(long).not.toMatch(/[\u0000-\u001f]/);
 		tripped
 			.add('owner_token_rejected')
 			.add('export_not_replayable')
