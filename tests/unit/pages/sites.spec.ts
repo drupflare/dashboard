@@ -103,6 +103,15 @@ describe('sites page', () => {
 		expect(wrapper.html()).toContain('circle-check');
 	});
 
+	it('links each site name in the table and the card to its page', async () => {
+		sitesReply = () => ({ body: { items: [site('site_1')], nextCursor: null } });
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.findAll('tbody tr')).toHaveLength(1));
+		expect(wrapper.find('tbody a[href="/sites/site_1"]').text()).toBe('Site site_1');
+		expect(wrapper.find('ul a[href="/sites/site_1"]').text()).toBe('Site site_1');
+	});
+
 	it('shows the error with a request id, then recovers on retry', async () => {
 		sitesReply = () => failure('internal', 'Failed', 'req_list');
 		const wrapper = await mountPage();

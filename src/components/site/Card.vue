@@ -7,7 +7,13 @@ defineProps<{ site: SiteSummary }>();
 <template>
 	<li class="flex flex-col gap-2 rounded-lg border border-default p-4">
 		<div class="flex items-start justify-between gap-3">
-			<h3 class="wrap-break-word font-medium text-highlighted">{{ site.name }}</h3>
+			<h3 class="wrap-break-word font-medium text-highlighted">
+				<NuxtLink
+					:to="`/sites/${encodeURIComponent(site.id)}`"
+					class="text-brand-700 underline dark:text-brand-300"
+					>{{ site.name }}</NuxtLink
+				>
+			</h3>
 			<SiteStatus :state="site.state" />
 		</div>
 		<p class="text-sm text-muted">

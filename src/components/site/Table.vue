@@ -47,7 +47,13 @@ defineProps<{ sites: SiteSummary[] }>();
 					:key="site.id"
 					class="border-t border-default"
 				>
-					<td class="px-4 py-3 font-medium text-highlighted">{{ site.name }}</td>
+					<td class="px-4 py-3 font-medium text-highlighted">
+						<NuxtLink
+							:to="`/sites/${encodeURIComponent(site.id)}`"
+							class="text-brand-700 underline dark:text-brand-300"
+							>{{ site.name }}</NuxtLink
+						>
+					</td>
 					<td class="px-4 py-3">{{ SITE_KIND_LABELS[site.kind] }}</td>
 					<td class="px-4 py-3">{{ SITE_PLANE_LABELS[site.plane] }}</td>
 					<td class="px-4 py-3">
