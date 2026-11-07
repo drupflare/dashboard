@@ -6,7 +6,7 @@ import {
 	issueLease,
 	type Lease
 } from '@contracts/site-auth';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { signApply } from '../../../dispatch/src/authority';
 import { serve, type ServeDeps, type SiteAuthClient } from '../../../dispatch/src/serve';
 import { createSpike, signSpike, type SpikeBody } from '../../../dispatch/src/spike';
@@ -478,10 +478,12 @@ describe('control route', () => {
 // #region counting and the stage routes
 
 const HTML = 'text/html; charset=utf-8';
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
-
 async function counting(
-	opts: { state?: Parameters<typeof authorityState>[0]; batchSize?: number } = {}
+	opts: {
+		state?: Parameters<typeof authorityState>[0];
+		batchSize?: number;
+		timeoutMs?: number;
+	} = {}
 ) {
 	const w = await world(opts.state);
 	const counter = counterDouble(w.rig.clock.now);
@@ -503,7 +505,7 @@ async function counting(
 		counter: counter.stub,
 		evict: () => (evicts.count++, 0),
 		options: { batchSize: opts.batchSize ?? 1_000 },
-		timeoutMs: 30
+		timeoutMs: opts.timeoutMs ?? 30
 	});
 	spike.bind((promise) => void bound.push(promise));
 	w.deps.spike = spike;
@@ -563,14 +565,13 @@ describe('counting in the serving path', () => {
 	});
 
 	it('holds the response for write-through until the counter answers', async () => {
-		const c = await counting();
+		const c = await counting({ timeoutMs: 60_000 });
 		c.choose('write-through');
 		const gate = deferred();
 		c.counter.mode.gate = gate.promise;
 		let done = false;
 		const response = c.get().then((r) => ((done = true), r));
-		await settle();
-		expect(c.counter.applies).toHaveLength(1);
+		await vi.waitFor(() => expect(c.counter.applies).toHaveLength(1));
 		expect(done).toBe(false);
 		gate.open();
 		expect((await response).status).toBe(200);
@@ -583,8 +584,7 @@ describe('counting in the serving path', () => {
 		const gate = deferred();
 		c.counter.mode.gate = gate.promise;
 		expect((await c.get()).status).toBe(200);
-		await settle();
-		expect(c.counter.applies).toHaveLength(2);
+		await vi.waitFor(() => expect(c.counter.applies).toHaveLength(2));
 		expect(c.counter.applies[1]?.sync).toBe(false);
 		gate.open();
 	});

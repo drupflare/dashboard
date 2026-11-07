@@ -328,9 +328,9 @@ async function suite(config: string | undefined, label: string) {
 			});
 		});
 
-		it('refuses the platform scope', async () => {
+		it('refuses a scope it has no facts for', async () => {
 			await expect(
-				load({ ...orgInput(ORGS.a, user(ALICE)), scope: 'admin' })
+				load({ ...orgInput(ORGS.a, user(ALICE)), scope: 'public' })
 			).rejects.toMatchObject({ code: 'not_built' });
 		});
 	});
