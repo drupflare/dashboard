@@ -104,6 +104,23 @@ function when(value: string): string {
 						Open Admin
 					</UButton>
 				</div>
+
+				<HealthTree
+					:org-id="site.orgId"
+					:site-id="site.id"
+				/>
+				<ReadinessChecklist
+					:org-id="site.orgId"
+					:site-id="site.id"
+				/>
+				<SiteUpdate
+					:org-id="site.orgId"
+					:site-id="site.id"
+				/>
+				<SiteBackupPanel
+					:org-id="site.orgId"
+					:site-id="site.id"
+				/>
 			</template>
 
 			<section class="flex flex-col gap-3">
@@ -157,6 +174,13 @@ function when(value: string): string {
 					</li>
 				</ul>
 			</section>
+
+			<SiteDelete
+				v-if="site"
+				:org-id="site.orgId"
+				:site-id="site.id"
+				:name="site.name"
+			/>
 		</div>
 		<template #fallback>
 			<p

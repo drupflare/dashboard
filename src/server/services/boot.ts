@@ -49,6 +49,11 @@ import {
 	type PendingSecretDeps
 } from './owner-tokens';
 import { collegeOnceStore } from './single-use';
+import {
+	resetSiteHealthServices,
+	setSiteHealthServices,
+	type SiteHealthServices
+} from './site-health';
 import { siteInputConfigOf } from './site-input';
 import {
 	collegeBudgets,
@@ -278,6 +283,7 @@ export interface BuiltServices {
 	ownerTokens: OwnerTokenStore;
 	sites: SiteServices;
 	backups: BackupServices;
+	siteHealth: Partial<SiteHealthServices>;
 	pendingSecrets: () => Promise<PendingSecretDeps>;
 	heads: HeadStore;
 }
@@ -294,6 +300,7 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 	const billing = collegeBillingStore(getDb);
 	const planOf = async (orgId: string) => entitlementOf(await billing.getAccount(orgId));
 	const startOperation = engineStarter({ ...engineConfigOf(env), now: Date.now });
+	const ownerTokens = collegeOwnerTokenStore(getDb);
 	let ring: Promise<KeyRing> | undefined;
 	// the key ring loads on first use, and a missing KEK_V<n> answers 501 until one is set
 	const pendingSecrets = async (): Promise<PendingSecretDeps> => {
@@ -348,7 +355,7 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 				),
 			...auditWriters(getDb, heads)
 		},
-		ownerTokens: collegeOwnerTokenStore(getDb),
+		ownerTokens,
 		sites: {
 			getDb,
 			entitlements: collegeSiteEntitlements(getDb, billing),
@@ -357,6 +364,13 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			config: siteInputConfigOf(env)
 		},
 		backups: backupServicesOf({ BLOB: env.BLOB }, { getDb, startOperation }, heads),
+		siteHealth: {
+			getDb,
+			custody: async () => {
+				const pending = await pendingSecrets();
+				return { store: ownerTokens, audit: pending.audit, ring: pending.ring };
+			}
+		},
 		pendingSecrets,
 		heads
 	};
@@ -374,6 +388,7 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	setApiDeps(built.api);
 	setSiteServices(built.sites);
 	setBackupServices(built.backups);
+	setSiteHealthServices(built.siteHealth);
 	setPendingSecretDeps(built.pendingSecrets);
 	booted = built;
 	return built;
@@ -392,6 +407,7 @@ export function resetBoot(): void {
 	resetApiDeps();
 	resetSiteServices();
 	resetBackupServices();
+	resetSiteHealthServices();
 	resetPendingSecretDeps();
 }
 
