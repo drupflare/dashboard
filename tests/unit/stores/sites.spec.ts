@@ -99,3 +99,83 @@ describe('sites store', () => {
 		expect(calls.filter((call) => call.path === '/api/v1/orgs/org_a/sites')).toHaveLength(1);
 	});
 });
+
+describe('sites store remove', () => {
+	const deletePath = 'DELETE /api/v1/orgs/org_a/sites/site_1';
+	const started = {
+		id: 'op_del1',
+		type: 'site.delete',
+		status: 'planned',
+		targetIds: ['site_1']
+	};
+
+	it('sends the confirm text and the key, returns the operation and drops the cached list', async () => {
+		cleanup = registerApi({
+			[sitesPath('org_a')]: { body: { items: [site('site_1', 'org_a')], nextCursor: null } },
+			[deletePath]: { status: 202, body: started }
+		});
+		const sites = useSitesStore();
+		await sites.load('org_a');
+
+		const operation = await sites.remove('org_a', 'site_1', 'Site site_1', 'key-delete-1');
+
+		expect(operation).toMatchObject({ id: 'op_del1', type: 'site.delete' });
+		const call = calls.find((entry) => entry.method === 'DELETE');
+		expect(call?.body).toEqual({ confirm: 'Site site_1' });
+		expect(call?.headers['idempotency-key']).toBe('key-delete-1');
+		expect(sites.lists.get('org_a')).toBeUndefined();
+	});
+
+	it('throws the server message and keeps the cached list when the delete is refused', async () => {
+		cleanup = registerApi({
+			[sitesPath('org_a')]: { body: { items: [site('site_1', 'org_a')], nextCursor: null } },
+			[deletePath]: {
+				status: 409,
+				body: {
+					code: 'conflict',
+					message: 'Another change to this site is still running',
+					details: { reason: 'site_busy' },
+					requestId: 'req_busy'
+				}
+			}
+		});
+		const sites = useSitesStore();
+		await sites.load('org_a');
+
+		await expect(
+			sites.remove('org_a', 'site_1', 'Site site_1', 'key-delete-2')
+		).rejects.toMatchObject({
+			code: 'conflict',
+			status: 409,
+			message: 'Another change to this site is still running',
+			requestId: 'req_busy'
+		});
+		expect(sites.lists.get('org_a')).toMatchObject({ status: 'ready', ids: ['site_1'] });
+	});
+
+	it('clears the session when the delete answers 401', async () => {
+		useSessionStore().me = {
+			id: 'usr_1',
+			email: 'owner@example.test',
+			displayName: null,
+			via: 'session',
+			stepUpUntil: null
+		};
+		cleanup = registerApi({
+			[deletePath]: {
+				status: 401,
+				body: {
+					code: 'unauthenticated',
+					message: 'Sign in',
+					details: {},
+					requestId: 'req_401'
+				}
+			}
+		});
+
+		await expect(
+			useSitesStore().remove('org_a', 'site_1', 'Site site_1', 'key-delete-3')
+		).rejects.toMatchObject({ status: 401 });
+		expect(useSessionStore().me).toBeNull();
+	});
+});

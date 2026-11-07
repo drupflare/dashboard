@@ -103,6 +103,17 @@ const RULES: ModuleRule[] = [
 
 const CRONS = ['*/5 * * * *'];
 
+// a site made before its script recorded a migration tag ran both Drupal migrations
+export const UNTAGGED_MIGRATION_TAG = 'v2';
+
+const tagValue = (tags: readonly string[], prefix: string) =>
+	tags.find((tag) => tag.startsWith(prefix))?.slice(prefix.length) ?? null;
+
+export const releaseOfTags = (tags: readonly string[]) => tagValue(tags, 'v:');
+
+// the script's own tags are where its latest applied migration tag is kept
+export const migrationTagOfTags = (tags: readonly string[]) => tagValue(tags, 'm:');
+
 const SECRET_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
 
 const REDACTED = '[redacted]';
@@ -209,6 +220,7 @@ export function buildDescriptor(input: DescriptorInput): Descriptor {
 	bindings.push({ type: 'assets', name: 'ASSETS' });
 	bindings.push(...checkSecrets(input.secrets, new Set(bindings.map((binding) => binding.name))));
 
+	const lastTag = recipe.migrations[recipe.migrations.length - 1]?.tag;
 	const metadata: UploadMetadata = {
 		bindings,
 		compatibility_date: COMPATIBILITY_DATE,
@@ -221,7 +233,8 @@ export function buildDescriptor(input: DescriptorInput): Descriptor {
 			`k:${site.kind}`,
 			`p:${site.plane}`,
 			`r:${site.ring}`,
-			`v:${release.id}`
+			`v:${release.id}`,
+			...(lastTag === undefined ? [] : [`m:${lastTag}`])
 		]
 	};
 	if (release.assetsToken) metadata.assets = { jwt: release.assetsToken };

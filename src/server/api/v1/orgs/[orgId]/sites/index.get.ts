@@ -36,6 +36,10 @@ export default defineApi(
 			count: limit + 1
 		});
 		const page = toPage(rows, limit, (row) => ({ id: row.id }));
-		return { items: page.items.map(toSite), nextCursor: page.nextCursor };
+		const { releases } = siteServices().config;
+		return {
+			items: page.items.map((row) => toSite(row, releases[row.kind] ?? null)),
+			nextCursor: page.nextCursor
+		};
 	}
 );

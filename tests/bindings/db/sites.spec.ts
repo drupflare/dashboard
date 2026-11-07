@@ -20,6 +20,7 @@ import {
 	listLiveSiteResources
 } from '../../../src/server/db/repos/site-resources';
 import {
+	countOrganizationSites,
 	getReadySite,
 	listReadySites,
 	markSiteReady,
@@ -109,6 +110,16 @@ describe('site rows', () => {
 		expect(seen).not.toContain(unready);
 	});
 
+	it('leaves a site out of the list once it is tombstoned, and still reads it by id', async () => {
+		const org = `${ORG}-tombstone`;
+		const kept = (await newCreate(org, 1_000)).operation.operation.targetIds[0] as string;
+		const gone = (await newCreate(org, 1_001)).operation.operation.targetIds[0] as string;
+		for (const id of [kept, gone]) await markSiteReady(db, org, id, 2_000);
+		await setSiteState(db, org, gone, 'tombstoned', 3_000);
+		expect((await listReadySites(db, org, { count: 10 })).map((row) => row.id)).toEqual([kept]);
+		expect(await getReadySite(db, org, gone)).toMatchObject({ state: 'tombstoned' });
+	});
+
 	it('hides a site from reads until its create finishes, and from other organisations', async () => {
 		const org = `${ORG}-visibility`;
 		const { operation } = await newCreate(org, 1_000);
@@ -152,6 +163,59 @@ describe('site rows', () => {
 			state: 'suspended',
 			readyAt: 2_000
 		});
+	});
+});
+
+describe('the plan cap count', () => {
+	type State = Parameters<typeof setSiteState>[3];
+
+	// a site as its create and the engine leave it
+	async function seed(
+		org: string,
+		shape: { operation: string; ready: boolean; state?: State }
+	): Promise<string> {
+		const { operation } = await newCreate(org, 1_000);
+		const id = operation.operation.targetIds[0] as string;
+		await env.DB.prepare('UPDATE operations SET status = ? WHERE id = ?')
+			.bind(shape.operation, operation.operation.id)
+			.run();
+		if (shape.ready) await markSiteReady(db, org, id, 2_000);
+		if (shape.state) await setSiteState(db, org, id, shape.state, 3_000);
+		return id;
+	}
+
+	it('counts a site that is being created or can still serve', async () => {
+		const org = `${ORG}-count-live`;
+		await seed(org, { operation: 'planned', ready: false });
+		await seed(org, { operation: 'running', ready: false });
+		await seed(org, { operation: 'verifying', ready: false });
+		await seed(org, { operation: 'succeeded', ready: true });
+		await seed(org, { operation: 'succeeded', ready: true, state: 'suspended' });
+		expect(await countOrganizationSites(db, org)).toBe(5);
+	});
+
+	it('does not count a create that failed, rolled back or was cancelled', async () => {
+		const org = `${ORG}-count-failed`;
+		await seed(org, { operation: 'failed', ready: false });
+		await seed(org, { operation: 'rolled-back', ready: false });
+		await seed(org, { operation: 'cancelled', ready: false });
+		expect(await countOrganizationSites(db, org)).toBe(0);
+	});
+
+	it('never counts a tombstoned, purge-eligible or deleted site, whatever its operation says', async () => {
+		const org = `${ORG}-count-gone`;
+		for (const state of ['tombstoned', 'purge-eligible', 'deleted'] as const) {
+			await seed(org, { operation: 'succeeded', ready: true, state });
+			await seed(org, { operation: 'running', ready: false, state });
+		}
+		expect(await countOrganizationSites(db, org)).toBe(0);
+	});
+
+	it('counts the organisation it is asked about and no other', async () => {
+		const org = `${ORG}-count-own`;
+		await seed(org, { operation: 'running', ready: false });
+		await seed(`${ORG}-count-other`, { operation: 'running', ready: false });
+		expect(await countOrganizationSites(db, org)).toBe(1);
 	});
 });
 

@@ -33,11 +33,13 @@ export type SiteRecord = {
 	accountId: string;
 	category: SiteCategory;
 	config: SiteConfig;
+	releaseId?: string | null;
 };
 
 export type SiteRowState = 'active' | 'suspended' | 'tombstoned' | 'purge-eligible' | 'deleted';
 
-// a create that failed and whose site never became ready; the account is null until activation
+// a create that ended or never started and left a live row that never became ready; the account is
+// null until activation
 export interface StrandedCreateRow {
 	operationId: string;
 	siteId: string;
@@ -59,6 +61,7 @@ export interface OperationStore {
 	allResources(siteId: string): Promise<SiteResourceRow[]>;
 	markResourceDeleted(id: string, now: number): Promise<void>;
 	activateSite(site: SiteRecord, now: number): Promise<void>;
+	setSiteRelease(siteId: string, releaseId: string, now: number): Promise<void>;
 	setSiteState(siteId: string, state: SiteRowState, now: number): Promise<void>;
 	siteState(siteId: string): Promise<SiteRowState | null>;
 	strandedCreates(failedBefore: number, limit: number): Promise<StrandedCreateRow[]>;
@@ -423,9 +426,11 @@ export class D1OperationStore implements OperationStore {
 		await this.db
 			.prepare(
 				`INSERT INTO sites (id, organization_id, name, plane, state, account_id, category, config,
-				ready_at, created_at, updated_at) VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
+				release_id, ready_at, created_at, updated_at)
+				VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT (id) DO UPDATE SET state = 'active',
 				ready_at = COALESCE(sites.ready_at, excluded.ready_at),
+				release_id = COALESCE(excluded.release_id, sites.release_id),
 				account_id = excluded.account_id, updated_at = excluded.updated_at`
 			)
 			.bind(
@@ -436,10 +441,18 @@ export class D1OperationStore implements OperationStore {
 				site.accountId,
 				site.category,
 				site.config,
+				site.releaseId ?? null,
 				now,
 				now,
 				now
 			)
+			.run();
+	}
+
+	async setSiteRelease(siteId: string, releaseId: string, now: number): Promise<void> {
+		await this.db
+			.prepare('UPDATE sites SET release_id = ?, updated_at = ? WHERE id = ?')
+			.bind(releaseId, now, siteId)
 			.run();
 	}
 
@@ -465,7 +478,8 @@ export class D1OperationStore implements OperationStore {
 				`SELECT o.id AS operation_id, s.id AS site_id, s.account_id, s.plane, s.config,
 				 s.primary_hostname FROM operations o
 				 JOIN sites s ON s.id = json_extract(o.target_ids, '$[0]')
-				 WHERE o.type = 'site.create' AND o.status = 'failed' AND o.updated_at < ?
+				 WHERE o.type = 'site.create' AND o.status IN ('failed', 'rolled-back', 'planned')
+				 AND o.updated_at < ?
 				 AND s.ready_at IS NULL AND s.state <> 'deleted'
 				 ORDER BY o.updated_at LIMIT ?`
 			)

@@ -40,6 +40,7 @@ describe('sites', () => {
 		ring: 'R3',
 		primaryHostname: 'campus.drupflare.app',
 		hostnames: ['campus.drupflare.app', 'www.example.edu'],
+		release: { current: 'v1.0.4', available: 'v1.0.5' },
 		createdAt: at,
 		updatedAt: at
 	};
@@ -108,12 +109,13 @@ describe('sites', () => {
 	});
 
 	it('parses a 1.0 document by giving it the category of its kind, the canonical config and no account', () => {
-		const { category: _c, config: _f, accountId: _a, ...old } = site;
+		const { category: _c, config: _f, accountId: _a, release: _r, ...old } = site;
 		expect(siteSchema.parse(old)).toEqual({
 			...old,
 			category: 'cms',
 			config: 'canonical',
-			accountId: null
+			accountId: null,
+			release: { current: null, available: null }
 		});
 		const worker = siteSchema.parse({ ...old, kind: 'nuxtpress' });
 		expect(worker).toMatchObject({ kind: 'nuxtpress', category: 'workers' });

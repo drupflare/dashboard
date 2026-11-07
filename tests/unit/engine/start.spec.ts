@@ -22,6 +22,7 @@ const BODY = JSON.stringify({ workflow: 'site-create', params: { operationId: 'o
 function starters() {
 	const created: Record<WorkflowName, Map<string, unknown>> = {
 		'site-create': new Map(),
+		'site-upgrade': new Map(),
 		'site-delete': new Map(),
 		'site-purge': new Map(),
 		'backup-create': new Map(),

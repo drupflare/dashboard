@@ -164,6 +164,7 @@ export const sites = sqliteTable('sites', {
 	config: text('config').notNull().default('canonical'),
 	kind: text('kind').notNull().default('drupal'),
 	primaryHostname: text('primary_hostname'),
+	releaseId: text('release_id'),
 	readyAt: integer('ready_at'),
 	createdAt: integer('created_at').notNull(),
 	updatedAt: integer('updated_at').notNull()
@@ -446,6 +447,7 @@ export const SCHEMA_STATEMENTS: string[] = [
 	${SITE_CONFIG_COLUMN},
 	${SITE_KIND_COLUMN},
 	primary_hostname TEXT,
+	release_id TEXT,
 	ready_at INTEGER,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL

@@ -5,7 +5,13 @@ import ProgressPage from '~/pages/new/progress/[op].vue';
 import { useOperationsStore } from '~/stores/operations';
 import { useOrgStore } from '~/stores/org';
 import { useSessionStore } from '~/stores/session';
-import { clearBrowserState, failure, registerApi, type Reply } from '../stores/store-support';
+import {
+	calls,
+	clearBrowserState,
+	failure,
+	registerApi,
+	type Reply
+} from '../stores/store-support';
 
 const personal = { id: 'org_personal', name: 'Personal', personal: true, role: 'owner' };
 const me = {
@@ -49,11 +55,11 @@ function step(id: string, name: string, state: string, error: string | null = nu
 	};
 }
 
-function operation(status: string, steps: ReturnType<typeof step>[]) {
+function operation(status: string, steps: ReturnType<typeof step>[], type = 'site.create') {
 	return {
 		id: 'op_1',
 		orgId: personal.id,
-		type: 'site.create',
+		type,
 		status,
 		targetIds: ['site_1'],
 		steps,
@@ -210,5 +216,108 @@ describe('create progress', () => {
 
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Could Not Load the Operation'));
 		expect(wrapper.text()).toContain('req_read');
+	});
+});
+
+describe('progress for each operation type', () => {
+	const ended = [step('a', 'Take the site writer lease', 'succeeded')];
+	const wording: [string, string, string, string][] = [
+		[
+			'site.create',
+			'Creating Your Site',
+			'Your site is being created.',
+			'Could Not Create the Site'
+		],
+		[
+			'site.delete',
+			'Deleting Your Site',
+			'Your site is being deleted.',
+			'Could Not Delete the Site'
+		],
+		[
+			'site.upgrade',
+			'Updating Your Site',
+			'Your site is being updated',
+			'Could Not Update the Site'
+		],
+		[
+			'backup.create',
+			'Backing Up Your Site',
+			'Your site is being backed up.',
+			'Could Not Back Up the Site'
+		],
+		[
+			'backup.restore',
+			'Restoring a Backup',
+			'The backup is being restored',
+			'Could Not Restore the Backup'
+		]
+	];
+
+	for (const [type, title, runningLine, failureTitle] of wording) {
+		it(`reads right for ${type} while it runs and when it fails`, async () => {
+			opReply = () => ({ body: operation('running', ended, type) });
+			const live = await mountPage();
+			await vi.waitFor(() => expect(live.find('h1').text()).toBe(title));
+			expect(live.text()).toContain(runningLine);
+			live.unmount();
+
+			opReply = () => ({
+				body: operation(
+					'failed',
+					[step('a', 'Take the site writer lease', 'failed', 'The lease was lost')],
+					type
+				)
+			});
+			const failed = await mountPage();
+			await vi.waitFor(() => expect(failed.text()).toContain(failureTitle));
+			expect(failed.text()).toContain('The lease was lost');
+		});
+	}
+
+	it('ends a delete on Site deleted with a link to Sites, and shows no site or admin password', async () => {
+		opReply = () => ({ body: operation('succeeded', ended, 'site.delete') });
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Site deleted.'));
+		expect(wrapper.text()).toContain('held for 90 days');
+		const link = wrapper.findAll('a').find((a) => a.text().trim() === 'Back to Sites');
+		expect(link?.attributes('href')).toBe('/sites');
+		expect(wrapper.text()).not.toContain('Admin Password');
+		expect(wrapper.text()).not.toContain('Reveal Password');
+		expect(wrapper.text()).not.toContain('Open Admin');
+		expect(calls.map((call) => call.path)).not.toContain('/api/v1/sites/site_1');
+		expect(calls.map((call) => call.path.endsWith('/first-run-secret'))).not.toContain(true);
+	});
+
+	it('shows the admin password panel only for a create', async () => {
+		for (const type of ['site.upgrade', 'backup.create', 'backup.restore']) {
+			opReply = () => ({ body: operation('succeeded', ended, type) });
+			const wrapper = await mountPage();
+			await vi.waitFor(() => expect(wrapper.text()).toContain('Back to the Site'));
+			expect(wrapper.text(), type).not.toContain('Admin Password');
+			expect(wrapper.text(), type).not.toContain('Reveal Password');
+			wrapper.unmount();
+		}
+		opReply = () => ({ body: operation('succeeded', ended) });
+		const create = await mountPage();
+		await vi.waitFor(() => expect(create.text()).toContain('Admin Password'));
+	});
+
+	it('sends a failed delete back to the site, and says the delete can be run again', async () => {
+		opReply = () => ({
+			body: operation(
+				'failed',
+				[step('a', 'Drop the hostname routes', 'failed', 'Cloudflare timed out')],
+				'site.delete'
+			)
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Could Not Delete the Site'));
+		expect(wrapper.text()).toContain('Deleting the site again finishes it');
+		const back = wrapper.findAll('button').find((b) => b.text().trim() === 'Back to the Site');
+		await back?.trigger('click');
+		await vi.waitFor(() => expect(useRouter().currentRoute.value.path).toBe('/sites/site_1'));
 	});
 });

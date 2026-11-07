@@ -3,10 +3,10 @@ import type { ApiClientError } from '~/composables/useApi';
 import { toApiClientError, useApi } from '~/composables/useApi';
 import { adminUrlFor } from '~/composables/useOnboarding';
 import { useOperation } from '~/composables/useOperation';
+import { copyFor } from '~/shared/operation-copy';
 import type { SiteSummary } from '~/stores/sites';
 
 definePageMeta({ middleware: ['auth', 'org'] });
-useHead({ title: 'Creating a Site' });
 
 const route = useRoute();
 const router = useRouter();
@@ -16,7 +16,16 @@ const orgId = computed(() => org.current?.id ?? null);
 
 const { operation, error, missing, refresh } = useOperation(orgId, opId);
 
+const copy = computed(() => copyFor(operation.value?.type));
+useHead({ title: () => copy.value.title });
+
 const succeeded = computed(() => operation.value?.status === 'succeeded');
+// only a create has a new site to show, its address and its first admin password
+const showsSite = computed(() => operation.value?.type === 'site.create');
+const running = computed(() => {
+	const status = operation.value?.status;
+	return status === 'planned' || status === 'running' || status === 'verifying';
+});
 const failed = computed(() => {
 	const status = operation.value?.status;
 	return status === 'failed' || status === 'cancelled' || status === 'rolled-back';
@@ -27,7 +36,9 @@ const runningStep = computed(
 const failedStep = computed(
 	() => operation.value?.steps.find((step) => step.state === 'failed') ?? null
 );
-const siteId = computed(() => (succeeded.value ? (operation.value?.targetIds[0] ?? null) : null));
+const siteId = computed(() =>
+	succeeded.value && showsSite.value ? (operation.value?.targetIds[0] ?? null) : null
+);
 
 const site = ref<SiteSummary | null>(null);
 const siteError = ref<ApiClientError | null>(null);
@@ -56,23 +67,31 @@ const reason = computed(
 		'The server did not give a reason.'
 );
 
-const rollbackText = computed(() =>
-	operation.value?.status === 'rolled-back'
+const rollbackText = computed(() => {
+	if (operation.value?.type === 'site.delete') {
+		return 'The delete stopped part way. Deleting the site again finishes it.';
+	}
+	return operation.value?.status === 'rolled-back'
 		? 'Changes made before the failure were rolled back.'
-		: 'No rollback is recorded for this operation.'
-);
+		: 'No rollback is recorded for this operation.';
+});
 
 const adminUrl = computed(() => (site.value ? adminUrlFor(site.value) : null));
 
-function startOver(): void {
-	void router.push('/new');
+const failureLink = computed(() =>
+	operation.value ? copy.value.failureLink(operation.value) : null
+);
+const successLink = computed(() => (operation.value ? copy.value.link(operation.value) : null));
+
+function followFailureLink(): void {
+	if (failureLink.value) void router.push(failureLink.value.to);
 }
 </script>
 
 <template>
 	<ClientOnly>
 		<div class="flex max-w-3xl flex-col gap-6">
-			<h1 class="text-2xl font-semibold text-highlighted">Creating Your Site</h1>
+			<h1 class="text-2xl font-semibold text-highlighted">{{ copy.title }}</h1>
 
 			<UiErrorState
 				v-if="missing"
@@ -121,11 +140,18 @@ function startOver(): void {
 					</p>
 				</div>
 
+				<p
+					v-if="running"
+					class="text-sm text-muted"
+				>
+					{{ copy.running }}
+				</p>
+
 				<OpTimeline :steps="operation.steps" />
 
 				<UiErrorState
 					v-if="failed"
-					title="Could Not Create the Site"
+					:title="copy.failure"
 					:text="reason"
 				>
 					<div class="flex flex-col gap-2 text-sm text-muted">
@@ -133,12 +159,31 @@ function startOver(): void {
 						<p>{{ rollbackText }}</p>
 					</div>
 					<UButton
+						v-if="failureLink"
 						color="neutral"
-						@click="startOver"
+						@click="followFailureLink"
 					>
-						Try Again
+						{{ failureLink.label }}
 					</UButton>
 				</UiErrorState>
+
+				<section
+					v-else-if="succeeded && !showsSite"
+					class="flex flex-col items-start gap-4 rounded-lg border border-default p-6"
+				>
+					<p
+						role="status"
+						class="text-base font-medium text-highlighted"
+					>
+						{{ copy.success }}
+					</p>
+					<UButton
+						v-if="successLink"
+						:to="successLink.to"
+						color="primary"
+						>{{ successLink.label }}</UButton
+					>
+				</section>
 
 				<section
 					v-else-if="succeeded"

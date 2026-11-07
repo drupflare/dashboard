@@ -3,20 +3,25 @@ import { DEFAULT_CHANGE_BUDGET, computePlanDigest } from '@contracts/operations'
 import { categoryOfKind, type SiteKind } from '@contracts/sites';
 import type { CollegeDBClient } from '@earth-app/collegedb';
 import { planSiteCreate } from '../../../engine/src/workflows/site-create';
+import { planSiteDelete, type SiteDeleteInput } from '../../../engine/src/workflows/site-delete';
+import { planSiteUpgrade, type SiteUpgradeInput } from '../../../engine/src/workflows/site-upgrade';
 import { ApiError } from '../../shared/errors';
 import { isValidName, suffixOwner } from '../../shared/names';
 import type { BudgetKey } from '../../shared/permissions';
 import { recipeFor } from '../../shared/recipes';
 import { nowUtc } from '../../shared/utils/time';
+import { createOperationRecord } from '../db/repos/backups';
 import {
 	createSiteOperation,
+	findOpenSiteOperation,
 	getOperation,
+	getOperationByKey,
 	openBlastRadius,
 	updateOperationStatus,
 	type StoredOperation
 } from '../db/repos/operations';
 import { listUserOrganizations } from '../db/repos/organization';
-import { countOrganizationSites, setSiteState } from '../db/repos/sites';
+import { countOrganizationSites, getReadySite, setSiteState, toSite } from '../db/repos/sites';
 import { FREE_PLAN_ID, check, type CheckDenial, type Entitlement } from '../domain/entitlements';
 import type { EngineStartRequest } from '../integrations/engine';
 import { EngineStartError } from '../integrations/engine';
@@ -260,3 +265,247 @@ export async function createSite(
 	if (!latest) throw new Error(`operation ${operationId} is missing after its start`);
 	return latest;
 }
+
+// #region delete
+
+export interface DeleteSiteInput {
+	orgId: string;
+	siteId: string;
+	confirm: string;
+	idempotencyKey: string;
+}
+
+const LIVE_STATES: readonly string[] = ['active', 'suspended'];
+
+// the site stops serving when the engine tombstones it; this only records the request and starts it
+export async function deleteSite(
+	services: SiteServices,
+	input: DeleteSiteInput
+): Promise<StoredOperation> {
+	const db = await services.getDb();
+	// a repeat must answer before the site lookup, since the site may already be gone by then
+	const known = await getOperationByKey(db, input.orgId, input.idempotencyKey);
+	if (known) {
+		if (
+			known.operation.type !== 'site.delete' ||
+			known.operation.targetIds[0] !== input.siteId
+		) {
+			throw new ApiError('conflict', 'This Idempotency-Key belongs to a different request', {
+				reason: 'idempotency_key_reused'
+			});
+		}
+		return known;
+	}
+	const site = await getReadySite(db, input.orgId, input.siteId);
+	if (site === null) throw new ApiError('not_found', 'Not found');
+	if (!LIVE_STATES.includes(site.state) || site.accountId === null) {
+		throw new ApiError('unprocessable', 'This site is already deleted', {
+			reason: 'site_not_live'
+		});
+	}
+	if (input.confirm !== site.name) {
+		throw new ApiError('unprocessable', 'The name you typed does not match this site', {
+			reason: 'confirm_mismatch'
+		});
+	}
+	const busy = await findOpenSiteOperation(db, input.orgId, site.id);
+	if (busy) {
+		throw new ApiError('conflict', 'Another change to this site is still running', {
+			reason: 'site_busy',
+			operationId: busy.id,
+			operation: busy.type
+		});
+	}
+
+	const operationId = newId('op');
+	const params: SiteDeleteInput = {
+		operationId,
+		siteId: site.id,
+		accountId: site.accountId,
+		hostnames: toSite(site).hostnames
+	};
+	const plan = planSiteDelete(params);
+	const { operation, created } = await createOperationRecord(db, {
+		id: operationId,
+		organizationId: input.orgId,
+		accountId: site.accountId,
+		siteId: site.id,
+		type: 'site.delete',
+		status: 'planned',
+		idempotencyKey: input.idempotencyKey,
+		targetIds: plan.targetIds,
+		preconditions: plan.preconditions,
+		planDigest: await computePlanDigest(plan),
+		blastRadius: plan.blastRadius,
+		rollbackPoint: plan.rollbackPoint,
+		verification: 'pending',
+		budget: DEFAULT_CHANGE_BUDGET,
+		steps: plan.steps,
+		now: nowUtc().toMillis()
+	});
+	if (!created) return operation;
+
+	try {
+		await services.startOperation({
+			workflow: 'site-delete',
+			id: operationId,
+			params: params as unknown as Record<string, unknown>
+		});
+	} catch (error) {
+		// the engine never took it, so the site is untouched and the operation ends here
+		await updateOperationStatus(
+			db,
+			input.orgId,
+			operationId,
+			operation.version,
+			'failed',
+			nowUtc().toMillis()
+		);
+		if (error instanceof ApiError) throw error;
+		throw new ApiError('unprocessable', 'The delete could not be started', {
+			operationId,
+			...(error instanceof EngineStartError ? { reason: error.code } : {})
+		});
+	}
+	const latest = await getOperation(db, input.orgId, operationId);
+	if (!latest) throw new Error(`operation ${operationId} is missing after its start`);
+	return latest;
+}
+
+// #endregion
+
+// #region upgrade
+
+export interface UpgradeSiteInput {
+	orgId: string;
+	siteId: string;
+	idempotencyKey: string;
+}
+
+// the engine owns every status after it accepts the start; the site keeps serving the release it
+// runs until the engine's own upload replaces it
+export async function upgradeSite(
+	services: SiteServices,
+	input: UpgradeSiteInput
+): Promise<StoredOperation> {
+	const db = await services.getDb();
+	const known = await getOperationByKey(db, input.orgId, input.idempotencyKey);
+	if (known) {
+		if (
+			known.operation.type !== 'site.upgrade' ||
+			known.operation.targetIds[0] !== input.siteId
+		) {
+			throw new ApiError('conflict', 'This Idempotency-Key belongs to a different request', {
+				reason: 'idempotency_key_reused'
+			});
+		}
+		return known;
+	}
+	const site = await getReadySite(db, input.orgId, input.siteId);
+	if (site === null) throw new ApiError('not_found', 'Not found');
+	if (
+		site.state !== 'active' ||
+		site.plane !== 'managed' ||
+		site.accountId === null ||
+		site.primaryHostname === null
+	) {
+		throw new ApiError('unprocessable', 'This site is not live, so it cannot be updated', {
+			reason: 'site_not_live'
+		});
+	}
+	const available = services.config.releases[site.kind];
+	if (available === undefined) {
+		throw new ApiError('not_built', `No current release is set for ${site.kind}`);
+	}
+	if (site.releaseId === available) {
+		throw new ApiError('conflict', 'This site already runs the current release', {
+			reason: 'up_to_date',
+			release: available
+		});
+	}
+	const recipe = recipeFor(site.kind);
+	if (recipe === undefined) {
+		throw new ApiError('unprocessable', `There is no recipe for ${site.kind}`, {
+			reason: 'no_recipe'
+		});
+	}
+	const busy = await findOpenSiteOperation(db, input.orgId, site.id);
+	if (busy) {
+		throw new ApiError('conflict', 'Another change to this site is still running', {
+			reason: 'site_busy',
+			operationId: busy.id,
+			operation: busy.type
+		});
+	}
+
+	const operationId = newId('op');
+	const params: SiteUpgradeInput = {
+		operationId,
+		site: {
+			id: site.id,
+			orgId: input.orgId,
+			kind: site.kind,
+			plane: site.plane,
+			config: site.config,
+			ring: 'R0',
+			plan: (await services.planOf(input.orgId)).planId,
+			accountId: site.accountId
+		},
+		hostname: site.primaryHostname,
+		releaseId: available,
+		currentRelease: site.releaseId,
+		probe: {
+			path: recipe.probe.path,
+			expectStatus: 200,
+			...(recipe.probe.auth === undefined ? {} : { auth: recipe.probe.auth })
+		}
+	};
+	const plan = planSiteUpgrade(params);
+	const { operation, created } = await createOperationRecord(db, {
+		id: operationId,
+		organizationId: input.orgId,
+		accountId: site.accountId,
+		siteId: site.id,
+		type: 'site.upgrade',
+		status: 'planned',
+		idempotencyKey: input.idempotencyKey,
+		targetIds: plan.targetIds,
+		preconditions: plan.preconditions,
+		planDigest: await computePlanDigest(plan),
+		blastRadius: plan.blastRadius,
+		rollbackPoint: plan.rollbackPoint,
+		verification: 'pending',
+		budget: DEFAULT_CHANGE_BUDGET,
+		steps: plan.steps,
+		now: nowUtc().toMillis()
+	});
+	if (!created) return operation;
+
+	try {
+		await services.startOperation({
+			workflow: 'site-upgrade',
+			id: operationId,
+			params: params as unknown as Record<string, unknown>
+		});
+	} catch (error) {
+		// the engine never took it, so the site is untouched and the operation ends here
+		await updateOperationStatus(
+			db,
+			input.orgId,
+			operationId,
+			operation.version,
+			'failed',
+			nowUtc().toMillis()
+		);
+		if (error instanceof ApiError) throw error;
+		throw new ApiError('unprocessable', 'The update could not be started', {
+			operationId,
+			...(error instanceof EngineStartError ? { reason: error.code } : {})
+		});
+	}
+	const latest = await getOperation(db, input.orgId, operationId);
+	if (!latest) throw new Error(`operation ${operationId} is missing after its start`);
+	return latest;
+}
+
+// #endregion

@@ -34,6 +34,7 @@ import type {
 	NamespaceKv,
 	RateHeadroom,
 	Releases,
+	ScriptUpload,
 	Site
 } from '../../../engine/src/ports';
 import type { ResourceKind } from '../../../engine/src/provision-plan';
@@ -137,7 +138,12 @@ export function fakeCloudflare() {
 	const uploaded = new Map<string, Set<string>>();
 	const sessions = new Map<string, { script: string; needed: Set<string> }>();
 	const counts = { create: 0, find: 0, delete: 0, putScript: 0, session: 0, bucket: 0 };
-	const hooks: { beforeCreate?: (kind: ResourceKind, name: string) => void } = {};
+	const hooks: {
+		beforeCreate?: (kind: ResourceKind, name: string) => void;
+		beforePut?: (name: string, upload: ScriptUpload) => void;
+	} = {};
+	const uploads: { name: string; oldTag: string | null; tags: string[]; assetsJwt: string }[] =
+		[];
 	// each read takes the next queued reading, then falls back to the standing one
 	const usage = { rate: { ...NO_RATE }, queue: [] as RateHeadroom[] };
 	let sequence = 0;
@@ -201,7 +207,14 @@ export function fakeCloudflare() {
 			return table(kind)!.delete(providerId) ? 'deleted' : 'absent';
 		},
 		async putScript(name, upload) {
+			hooks.beforePut?.(name, upload);
 			counts.putScript++;
+			uploads.push({
+				name,
+				oldTag: upload.oldTag ?? null,
+				tags: [...(upload.metadata.tags ?? [])],
+				assetsJwt: (upload.metadata.assets as { jwt?: string } | undefined)?.jwt ?? ''
+			});
 			// the completion token has to be in the metadata, which only exists after the assets
 			const token = (upload.metadata.assets as { jwt?: string } | undefined)?.jwt;
 			if (token === undefined || !token.startsWith('completion:')) {
@@ -256,6 +269,7 @@ export function fakeCloudflare() {
 		cloudflare,
 		counts,
 		hooks,
+		uploads,
 		usage,
 		snapshot(): AccountSnapshot {
 			return {

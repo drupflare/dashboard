@@ -8,7 +8,8 @@ export {
 	BackupRestore,
 	SiteCreate,
 	SiteDelete,
-	SitePurge
+	SitePurge,
+	SiteUpgrade
 } from './workflows/classes';
 
 export default {
@@ -18,6 +19,7 @@ export default {
 			now: Date.now(),
 			workflows: {
 				'site-create': env.SITE_CREATE,
+				'site-upgrade': env.SITE_UPGRADE,
 				'site-delete': env.SITE_DELETE,
 				'site-purge': env.SITE_PURGE,
 				'backup-create': env.BACKUP_CREATE,

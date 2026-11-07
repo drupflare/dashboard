@@ -40,7 +40,8 @@ export function categoryOfKind(kind: SiteKind): SiteCategory {
 	return kind === 'drupal' ? 'cms' : 'workers';
 }
 
-// a 1.0 document has no category, config or accountId; each gets the value a 1.0 site had
+// a 1.0 document has no category, config or accountId, and one from before releases has no release;
+// each gets the value such a site had
 function withSiteDefaults(input: unknown): unknown {
 	if (typeof input !== 'object' || input === null || Array.isArray(input)) return input;
 	const doc = input as Record<string, unknown>;
@@ -49,6 +50,7 @@ function withSiteDefaults(input: unknown): unknown {
 		category: kind.success ? categoryOfKind(kind.data) : undefined,
 		config: 'canonical',
 		accountId: null,
+		release: { current: null, available: null },
 		...doc
 	};
 }
@@ -66,6 +68,7 @@ const siteObject = z.object({
 	ring: siteRing,
 	primaryHostname: hostname.nullable(),
 	hostnames: z.array(hostname),
+	release: z.object({ current: z.string().nullable(), available: z.string().nullable() }),
 	createdAt: isoTimestamp,
 	updatedAt: isoTimestamp
 });

@@ -113,6 +113,50 @@ describe('the recovery sweep', () => {
 		expect(await done.store.siteState(done.siteId)).toBe('active');
 	});
 
+	it('marks a row left active after its create rolled back, once', async () => {
+		const world = await start();
+		const run = makeRunner(new Map(), { failAt: { step: 'verify', when: 'before' } });
+		const outcome = await runSiteCreate(run.runner, world.deps, world.input);
+		expect(outcome.status).toBe('rolled-back');
+		// the state a row had when the rollback did not reach it
+		await world.store.setSiteState(world.siteId, 'active', world.clock.now());
+		expect((await sweep(world.deps, SCOPE)).recovered).toEqual([]);
+
+		world.clock.advance(30 * MIN);
+		const swept = await sweep(world.deps, SCOPE);
+		expect(swept.recovered).toEqual([
+			{ siteId: world.siteId, operationId: world.operationId, outcome: 'rolled-back' }
+		]);
+		await expectRecovered(world);
+		expect((await sweep(world.deps, SCOPE)).recovered).toEqual([]);
+	});
+
+	it('cancels a create the dashboard recorded and never started, and marks its row', async () => {
+		const world = await start();
+		world.clock.advance(5 * MIN);
+		expect((await sweep(world.deps, SCOPE)).recovered).toEqual([]);
+
+		world.clock.advance(30 * MIN);
+		const swept = await sweep(world.deps, SCOPE);
+		expect(swept.recovered).toEqual([
+			{ siteId: world.siteId, operationId: world.operationId, outcome: 'cancelled' }
+		]);
+		expect(await world.store.siteState(world.siteId)).toBe('deleted');
+		expect((await world.store.get(world.operationId))?.status).toBe('cancelled');
+		expect((await sweep(world.deps, SCOPE)).recovered).toEqual([]);
+	});
+
+	it('leaves a create alone while its operation is still running', async () => {
+		const world = await start();
+		const run = makeRunner(new Map(), { killAfter: 6 });
+		await expect(runSiteCreate(run.runner, world.deps, world.input)).rejects.toThrow();
+		expect((await world.store.get(world.operationId))?.status).toBe('running');
+
+		world.clock.advance(30 * MIN);
+		expect((await sweep(world.deps, SCOPE)).recovered).toEqual([]);
+		expect(await world.store.siteState(world.siteId)).toBe('active');
+	});
+
 	it('reports an account resource that carries our name and no ledger row, and deletes nothing', async () => {
 		const world = await start();
 		await world.cf.cloudflare.createResource('kv', 's-abcdefgh1234-config');

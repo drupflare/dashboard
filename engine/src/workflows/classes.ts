@@ -12,6 +12,7 @@ import {
 	type SiteDeleteInput,
 	type SitePurgeInput
 } from './site-delete';
+import { runSiteUpgrade, type SiteUpgradeInput } from './site-upgrade';
 
 // retry counts and timeouts are unmeasured starting points
 const STEP_CONFIG = {
@@ -52,6 +53,15 @@ export class SiteCreate extends WorkflowEntrypoint<EngineEnv, SiteCreateInput> {
 		step: WorkflowStep
 	): Promise<Outcome> {
 		return runSiteCreate(runnerOf(step), await buildDeps(this.env), event.payload);
+	}
+}
+
+export class SiteUpgrade extends WorkflowEntrypoint<EngineEnv, SiteUpgradeInput> {
+	async run(
+		event: Readonly<WorkflowEvent<SiteUpgradeInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runSiteUpgrade(runnerOf(step), await buildDeps(this.env), event.payload);
 	}
 }
 

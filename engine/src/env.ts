@@ -18,6 +18,7 @@ import type { BackupCreateInput } from './workflows/backup-create';
 import type { BackupRestoreInput } from './workflows/backup-restore';
 import type { SiteCreateInput } from './workflows/site-create';
 import type { SiteDeleteInput, SitePurgeInput } from './workflows/site-delete';
+import type { SiteUpgradeInput } from './workflows/site-upgrade';
 
 export interface EngineEnv {
 	DB: D1Database;
@@ -28,6 +29,7 @@ export interface EngineEnv {
 	SITE_AUTH: DurableObjectNamespace;
 	NAMES: DurableObjectNamespace;
 	SITE_CREATE: Workflow<SiteCreateInput>;
+	SITE_UPGRADE: Workflow<SiteUpgradeInput>;
 	SITE_DELETE: Workflow<SiteDeleteInput>;
 	SITE_PURGE: Workflow<SitePurgeInput>;
 	BACKUP_CREATE: Workflow<BackupCreateInput>;

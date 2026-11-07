@@ -550,7 +550,8 @@ async function activate(ctx: Ctx, input: SiteCreateInput): Promise<void> {
 				plane: input.site.plane,
 				accountId: input.site.accountId,
 				category: input.site.category,
-				config: input.site.config
+				config: input.site.config,
+				releaseId: input.releaseId
 			},
 			deps.now()
 		);

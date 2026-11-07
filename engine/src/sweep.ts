@@ -4,7 +4,8 @@ import { StepFailed, type StepRunner } from './step';
 import { recoverCreate } from './workflows/site-create';
 
 // a failed create has long since stopped by then, and its lease has run out, so a sweep never
-// races the run that failed; the lease still decides when a repair holds the site
+// races the run that failed; the lease still decides when a repair holds the site. A create still
+// running is never swept, and one left planned this long was never started
 const MIN_FAILED_AGE_MS = 20 * 60 * 1000;
 const BATCH = 10;
 

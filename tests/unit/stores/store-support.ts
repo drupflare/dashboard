@@ -25,7 +25,8 @@ export function registerApi(routes: Record<string, Route>): () => void {
 					path,
 					query: getQuery(event) as Record<string, string>,
 					headers: getRequestHeaders(event),
-					body: method === 'POST' ? await readBody(event) : undefined
+					body:
+						method === 'POST' || method === 'DELETE' ? await readBody(event) : undefined
 				};
 				calls.push(call);
 				const reply = await (typeof route === 'function' ? route(call) : route);

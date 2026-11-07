@@ -215,9 +215,10 @@ describe('the descriptor against the Worker configs', () => {
 		);
 		expect(plain.PLAN).toBe('managed-free');
 		expect(plain.SITE_ID).toMatch(/^site_/);
-		expect(built.metadata.tags).toHaveLength(6);
+		expect(built.metadata.tags).toHaveLength(7);
 		expect(built.metadata.tags).toContain(`s:${plain.SITE_ID}`);
 		expect(built.metadata.tags).toContain('v:1.0.4');
+		expect(built.metadata.tags).toContain('m:v2');
 	});
 
 	it('adds the assets token only when the session has produced one', () => {
@@ -376,6 +377,14 @@ describe('a recipe-driven Worker', () => {
 		const built = build();
 		expect(built.metadata.migrations).toEqual(recipe.migrations);
 		expect(built.crons).toEqual(['0 3 * * *']);
+	});
+
+	it('tags the last migration tag so an update knows where the script is, and none without migrations', () => {
+		expect(build().metadata.tags).toContain('m:v1');
+		const bare = buildDescriptor(
+			input('managed', true, { recipe: { ...recipe, migrations: [] } })
+		);
+		expect(bare.metadata.tags?.some((tag) => tag.startsWith('m:'))).toBe(false);
 	});
 
 	it('adds the secret as a secret_text binding', () => {

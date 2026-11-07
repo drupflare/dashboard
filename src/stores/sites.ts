@@ -1,3 +1,4 @@
+import type { Operation } from '@contracts/operations';
 import type {
 	SITE_STATES,
 	SiteCategory,
@@ -8,6 +9,7 @@ import type {
 } from '@contracts/sites';
 import { defineStore } from 'pinia';
 import { ApiClientError, toApiClientError, useApi } from '~/composables/useApi';
+import { useSessionStore } from '~/stores/session';
 
 export type SiteState = (typeof SITE_STATES)[number];
 
@@ -24,6 +26,7 @@ export interface SiteSummary {
 	ring: SiteRing;
 	primaryHostname: string | null;
 	hostnames: string[];
+	release?: { current: string | null; available: string | null };
 	createdAt: string;
 	updatedAt: string;
 }
@@ -108,6 +111,58 @@ export const useSitesStore = defineStore('sites', {
 				if (!list) return;
 				list.status = 'error';
 				list.error = toApiClientError(error);
+			}
+		},
+		// useApi has no header argument, so the Idempotency-Key call goes through $fetch
+		async upgrade(orgId: string, siteId: string, idempotencyKey: string): Promise<Operation> {
+			const fetcher = $fetch as unknown as (
+				url: string,
+				options: { method: 'POST'; headers: Record<string, string> }
+			) => Promise<Operation>;
+			try {
+				const operation = await fetcher(
+					`/api/v1/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/upgrade`,
+					{ method: 'POST', headers: { 'Idempotency-Key': idempotencyKey } }
+				);
+				// the site's release changes when the operation ends, so the next read is a fresh one
+				this.lists.delete(orgId);
+				return operation;
+			} catch (error) {
+				const failure = toApiClientError(error);
+				if (failure.status === 401) useSessionStore().clear();
+				throw failure;
+			}
+		},
+		// the delete runs as an operation; the list reads fresh once it has started
+		async remove(
+			orgId: string,
+			siteId: string,
+			confirm: string,
+			idempotencyKey: string
+		): Promise<Operation> {
+			const fetcher = $fetch as unknown as (
+				url: string,
+				options: {
+					method: 'DELETE';
+					headers: Record<string, string>;
+					body: Record<string, unknown>;
+				}
+			) => Promise<Operation>;
+			try {
+				const operation = await fetcher(
+					`/api/v1/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}`,
+					{
+						method: 'DELETE',
+						headers: { 'Idempotency-Key': idempotencyKey },
+						body: { confirm }
+					}
+				);
+				this.lists.delete(orgId);
+				return operation;
+			} catch (error) {
+				const failure = toApiClientError(error);
+				if (failure.status === 401) useSessionStore().clear();
+				throw failure;
 			}
 		},
 		reset(): void {

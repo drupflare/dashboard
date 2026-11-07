@@ -18,6 +18,7 @@
 	},
 	"workflows": [
 		{ "name": "site-create", "binding": "SITE_CREATE", "class_name": "SiteCreate" },
+		{ "name": "site-upgrade", "binding": "SITE_UPGRADE", "class_name": "SiteUpgrade" },
 		{ "name": "site-delete", "binding": "SITE_DELETE", "class_name": "SiteDelete" },
 		{ "name": "site-purge", "binding": "SITE_PURGE", "class_name": "SitePurge" },
 		{ "name": "backup-create", "binding": "BACKUP_CREATE", "class_name": "BackupCreate" },
@@ -62,6 +63,11 @@
 					"name": "site-create-stage",
 					"binding": "SITE_CREATE",
 					"class_name": "SiteCreate"
+				},
+				{
+					"name": "site-upgrade-stage",
+					"binding": "SITE_UPGRADE",
+					"class_name": "SiteUpgrade"
 				},
 				{
 					"name": "site-delete-stage",

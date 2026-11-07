@@ -291,6 +291,22 @@ export async function createSiteOperation(
 	return { operation: stored, created: stored.operation.id === operation.id };
 }
 
+// an operation of the site that has not ended; it holds the site, so another one waits
+export async function findOpenSiteOperation(
+	db: CollegeDBClient,
+	organizationId: string,
+	siteId: string
+): Promise<{ id: string; type: Operation['type'] } | null> {
+	return db.first<{ id: string; type: Operation['type'] }>(
+		organizationId,
+		`SELECT id, type FROM operations
+		 WHERE organization_id = ? AND site_id = ?
+		 AND status IN ('planned', 'awaiting-approval', 'running', 'verifying')
+		 ORDER BY created_at LIMIT 1`,
+		[organizationId, siteId]
+	);
+}
+
 // what the organisation's running operations already use of the change budget
 export async function openBlastRadius(
 	db: CollegeDBClient,

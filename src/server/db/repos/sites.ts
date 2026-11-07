@@ -14,6 +14,7 @@ export interface SiteRecord {
 	accountId: string | null;
 	state: Site['state'];
 	primaryHostname: string | null;
+	releaseId: string | null;
 	readyAt: number | null;
 	createdAt: number;
 	updatedAt: number;
@@ -30,13 +31,14 @@ interface SiteRow {
 	account_id: string | null;
 	state: Site['state'];
 	primary_hostname: string | null;
+	release_id: string | null;
 	ready_at: number | null;
 	created_at: number;
 	updated_at: number;
 }
 
 const SITE_COLUMNS = `id, organization_id, name, kind, category, plane, config, account_id, state,
-	primary_hostname, ready_at, created_at, updated_at`;
+	primary_hostname, release_id, ready_at, created_at, updated_at`;
 
 function toRecord(row: SiteRow): SiteRecord {
 	return {
@@ -50,14 +52,16 @@ function toRecord(row: SiteRow): SiteRecord {
 		accountId: row.account_id,
 		state: row.state,
 		primaryHostname: row.primary_hostname,
+		releaseId: row.release_id,
 		readyAt: row.ready_at,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
 	};
 }
 
-// no ring or hostname list in the table yet; a new site starts in R0 with its managed host
-export function toSite(record: SiteRecord): Site {
+// no ring or hostname list in the table yet; a new site starts in R0 with its managed host. The
+// available release is the platform's current one for the site's kind, null when none is set
+export function toSite(record: SiteRecord, available: string | null = null): Site {
 	return {
 		id: record.id as SiteId,
 		orgId: record.organizationId as OrgId,
@@ -71,6 +75,7 @@ export function toSite(record: SiteRecord): Site {
 		ring: 'R0',
 		primaryHostname: record.primaryHostname,
 		hostnames: record.primaryHostname === null ? [] : [record.primaryHostname],
+		release: { current: record.releaseId, available },
 		createdAt: new Date(record.createdAt).toISOString(),
 		updatedAt: new Date(record.updatedAt).toISOString()
 	};
@@ -91,7 +96,8 @@ export async function getReadySite(
 	return row ? toRecord(row) : null;
 }
 
-// returns at most count rows after the id given; callers ask for one more than the page size
+// returns at most count rows after the id given, and none that is tombstoned; callers ask for one
+// more than the page size
 export async function listReadySites(
 	db: CollegeDBClient,
 	organizationId: string,
@@ -100,21 +106,27 @@ export async function listReadySites(
 	const { results } = await db.all<SiteRow>(
 		organizationId,
 		`SELECT ${SITE_COLUMNS} FROM sites
-		 WHERE organization_id = ? AND ready_at IS NOT NULL AND id > ?
-		 ORDER BY id LIMIT ?`,
+		 WHERE organization_id = ? AND ready_at IS NOT NULL AND state IN ('active', 'suspended')
+		 AND id > ? ORDER BY id LIMIT ?`,
 		[organizationId, options.after ?? '', options.count]
 	);
 	return results.map(toRecord);
 }
 
-// counts a site whose create is still running, so two quick creates cannot both slip under a limit
+// counts a site that can serve or whose create is running, so two quick creates cannot both pass
+// a limit; a create that ended without a site stops counting before its row is cleaned up
 export async function countOrganizationSites(
 	db: CollegeDBClient,
 	organizationId: string
 ): Promise<number> {
 	const row = await db.first<{ n: number }>(
 		organizationId,
-		`SELECT COUNT(*) AS n FROM sites WHERE organization_id = ? AND state != 'deleted'`,
+		`SELECT COUNT(*) AS n FROM sites s
+		 WHERE s.organization_id = ? AND s.state IN ('active', 'suspended')
+		 AND (s.ready_at IS NOT NULL OR EXISTS (
+			SELECT 1 FROM operations o WHERE o.organization_id = s.organization_id
+			AND o.site_id = s.id AND o.type = 'site.create'
+			AND o.status IN ('planned', 'awaiting-approval', 'running', 'verifying')))`,
 		[organizationId]
 	);
 	return row?.n ?? 0;

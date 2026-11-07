@@ -26,6 +26,6 @@ export default defineApi(
 			resource.siteId
 		);
 		if (!site) throw new ApiError('not_found', 'Not found');
-		return toSite(site);
+		return toSite(site, siteServices().config.releases[site.kind] ?? null);
 	}
 );

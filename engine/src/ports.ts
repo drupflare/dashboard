@@ -25,6 +25,8 @@ export interface ScriptUpload {
 	main: string;
 	metadata: Omit<UploadMetadata, 'main_module'>;
 	modules: { module: BundleModule; bytes: Uint8Array }[];
+	// the migration tag the live script is at; unset on a first upload
+	oldTag?: string;
 }
 
 export interface ListedResource {

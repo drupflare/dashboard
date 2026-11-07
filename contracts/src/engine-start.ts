@@ -39,6 +39,7 @@ export const START_REFUSAL_STATUS: Record<StartRefusal, number> = {
 
 export const WORKFLOW_NAMES = [
 	'site-create',
+	'site-upgrade',
 	'site-delete',
 	'site-purge',
 	'backup-create',
