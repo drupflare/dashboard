@@ -74,7 +74,7 @@ async function upgrade(): Promise<void> {
 				<span>Update Available</span>
 			</p>
 			<p class="text-sm text-muted">
-				Running {{ current ?? 'an unrecorded release' }}. Available {{ available }}.
+				Running {{ current ?? 'an unrecorded release' }}. Latest is {{ available }}.
 			</p>
 			<UButton
 				color="neutral"
@@ -95,9 +95,8 @@ async function upgrade(): Promise<void> {
 					@submit.prevent="submit()"
 				>
 					<p class="text-sm text-default">
-						Your site keeps serving while it updates. The update takes several minutes.
-						If the check at the end fails, the site goes back to its old release on its
-						own.
+						The site keeps serving during the update, which takes several minutes. If
+						the final check fails, the site returns to its old release on its own.
 					</p>
 					<p
 						v-if="error"

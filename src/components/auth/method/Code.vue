@@ -88,8 +88,8 @@ function changeEmail() {
 			@submit.prevent="requestCode"
 		>
 			<p class="text-sm text-muted">
-				We will email you a six-digit sign-in code. A new address gets an account once the
-				code is verified.
+				We email you a six-digit code. If the address is new, verifying the code creates an
+				account.
 			</p>
 			<UiField
 				id="sign-in-email"

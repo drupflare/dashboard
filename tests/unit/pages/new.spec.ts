@@ -53,6 +53,7 @@ const createKey = `POST /api/v1/orgs/${personal.id}/sites`;
 let cleanup: () => void = () => undefined;
 let createReply: () => Reply | Promise<Reply>;
 let planReply: () => Reply;
+let templatesReply: () => Reply | Promise<Reply>;
 const paidPlan = { planId: 'site', features: { customCode: true } };
 const mounted: { unmount: () => void }[] = [];
 
@@ -63,11 +64,12 @@ beforeEach(async () => {
 	useOrgStore().$reset();
 	createReply = () => ({ status: 202, body: { id: 'op_new', targetIds: ['site_new'] } });
 	planReply = () => ({ body: paidPlan });
+	templatesReply = () => ({ body: templates });
 	cleanup = registerApi({
 		[`GET /api/v1/orgs/${personal.id}/entitlement`]: () => planReply(),
 		'GET /api/v1/me': { body: me },
 		'GET /api/v1/me/organizations': { body: { items: [personal], nextCursor: null } },
-		'GET /api/v1/templates': { body: templates },
+		'GET /api/v1/templates': () => templatesReply(),
 		[createKey]: () => createReply()
 	});
 	await useOrgStore().ensure();
@@ -106,13 +108,13 @@ describe('create a site, step one', () => {
 	it('moves through the steps with Skip and Next and shows the step in a live region', async () => {
 		const wrapper = await mountPage();
 
-		expect(wrapper.find('[role="status"]').text()).toContain('Step 1 of 3: Where');
+		expect(wrapper.find('[role="status"]').text()).toContain('Step 1 of 3: Hosting');
 		await clickButton(wrapper, 'Skip');
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Step 2 of 3: What'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Step 2 of 3: Template'));
 
 		await vi.waitFor(() => expect(wrapper.find('#template-drupal').exists()).toBe(true));
 		await clickButton(wrapper, 'Skip');
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Step 3 of 3: Name and Go'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Step 3 of 3: Name and Create'));
 		expect(wrapper.find<HTMLInputElement>('#site-name').element.value).toMatch(
 			/^[a-z]+-[a-z]+-[a-z]+$/
 		);
@@ -120,6 +122,27 @@ describe('create a site, step one', () => {
 });
 
 describe('create a site, step two', () => {
+	it('shows a grid-shaped skeleton until the templates arrive', async () => {
+		let release: () => void = () => undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		templatesReply = async () => {
+			await gate;
+			return { body: templates };
+		};
+		const wrapper = await mountPage();
+		await clickButton(wrapper, 'Skip');
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Loading templates'));
+		expect(wrapper.findAll('.animate-pulse').length).toBeGreaterThan(3);
+		expect(wrapper.text()).not.toContain('Loading templates...');
+
+		release();
+		await vi.waitFor(() => expect(wrapper.find('#template-drupal').exists()).toBe(true));
+		expect(wrapper.text()).not.toContain('Loading templates');
+	});
+
 	it('disables WordPress and marks Bring Your Own as paid', async () => {
 		const wrapper = await mountPage();
 		await clickButton(wrapper, 'Skip');

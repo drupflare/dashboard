@@ -2,7 +2,7 @@ import { ApiError, type ErrorBody } from '../../shared/errors';
 
 export function toApiError(value: unknown): ApiError {
 	if (value instanceof ApiError) return value;
-	return new ApiError('internal', 'Internal error');
+	return new ApiError('internal', 'Something went wrong on our side. Try again.');
 }
 
 export function toErrorBody(value: unknown, requestId: string): ErrorBody {

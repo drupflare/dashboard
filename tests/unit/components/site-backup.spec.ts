@@ -55,6 +55,7 @@ function site(id: string, name = `Site ${id}`): SiteSummary {
 		ring: 'R1',
 		primaryHostname: null,
 		hostnames: [],
+		admin: { username: null, email: null, password: 'unknown' },
 		createdAt: '2026-01-01T00:00:00Z',
 		updatedAt: '2026-01-01T00:00:00Z'
 	};
@@ -133,7 +134,9 @@ describe('backup panel', () => {
 		});
 
 		const wrapper = await mountPanel();
-		expect(wrapper.text()).toContain('Loading backups...');
+		expect(wrapper.text()).toContain('Loading backups');
+		expect(wrapper.findAll('.animate-pulse').length).toBeGreaterThan(3);
+		expect(wrapper.text()).not.toContain('Loading backups...');
 
 		release();
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Verified'));

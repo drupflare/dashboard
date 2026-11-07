@@ -58,13 +58,19 @@ const summary = computed(() => {
 			Readiness
 		</h2>
 
-		<p
+		<div
 			v-if="!readiness"
-			class="text-sm text-muted"
 			role="status"
 		>
-			Checking readiness
-		</p>
+			<span class="sr-only">Checking readiness</span>
+			<div
+				aria-hidden="true"
+				class="flex flex-col gap-3"
+			>
+				<USkeleton class="h-5 w-56 max-w-full" />
+				<USkeleton class="h-20 w-full" />
+			</div>
+		</div>
 
 		<template v-else>
 			<p

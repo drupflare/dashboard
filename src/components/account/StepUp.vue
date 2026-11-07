@@ -59,9 +59,9 @@ async function confirm() {
 		@submit.prevent="step === 'ask' ? send() : confirm()"
 	>
 		<div class="flex flex-col gap-1">
-			<h3 class="font-semibold text-highlighted">Confirm It Is You</h3>
+			<h3 class="font-semibold text-highlighted">Confirm Your Identity</h3>
 			<p class="text-sm text-muted">
-				This change needs a fresh sign-in. We will email a six-digit code to
+				This change needs a fresh sign-in. We email a six-digit code to
 				{{ session.me?.email }}.
 			</p>
 		</div>

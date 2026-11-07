@@ -35,7 +35,7 @@ function siteOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
 export const OPERATION_COPY = {
 	'site.create': {
 		title: 'Creating Your Site',
-		running: 'Your site is being created.',
+		running: 'The site is ready when every step succeeds. Leaving this page does not stop it.',
 		success: 'Your site is ready.',
 		failure: 'Could Not Create the Site',
 		link: () => null,
@@ -43,7 +43,8 @@ export const OPERATION_COPY = {
 	},
 	'site.delete': {
 		title: 'Deleting Your Site',
-		running: 'Your site is being deleted. It stops serving once access is revoked.',
+		running:
+			'The site stops serving once its access is revoked. Leaving this page does not stop the delete.',
 		success: `Site deleted. Its address is held for ${SITE_HOLD_DAYS} days, and its backups are kept.`,
 		failure: 'Could Not Delete the Site',
 		link: () => sites,
@@ -51,7 +52,8 @@ export const OPERATION_COPY = {
 	},
 	'site.upgrade': {
 		title: 'Updating Your Site',
-		running: 'Your site is being updated to the new release.',
+		running:
+			'The site keeps serving during the update. Leaving this page does not stop the update.',
 		success: 'Your site is up to date.',
 		failure: 'Could Not Update the Site',
 		link: siteOf,
@@ -59,7 +61,7 @@ export const OPERATION_COPY = {
 	},
 	'backup.create': {
 		title: 'Backing Up Your Site',
-		running: 'Your site is being backed up.',
+		running: 'Leaving this page does not stop the backup.',
 		success: 'The backup is saved.',
 		failure: 'Could Not Back Up the Site',
 		link: siteOf,
@@ -67,7 +69,8 @@ export const OPERATION_COPY = {
 	},
 	'backup.restore': {
 		title: 'Restoring a Backup',
-		running: 'The backup is being restored into the site.',
+		running:
+			'The backup replaces the site content as the restore runs. Leaving this page does not stop the restore.',
 		success: 'The backup is restored.',
 		failure: 'Could Not Restore the Backup',
 		link: siteOf,
@@ -77,7 +80,7 @@ export const OPERATION_COPY = {
 
 const GENERIC: OperationCopy = {
 	title: 'Operation Progress',
-	running: 'The operation is running.',
+	running: 'Leaving this page does not stop the operation.',
 	success: 'The operation finished.',
 	failure: 'The Operation Failed',
 	link: () => sites,

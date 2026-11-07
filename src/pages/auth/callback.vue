@@ -83,8 +83,8 @@ onMounted(async () => {
 			<h1 class="text-xl font-bold text-highlighted">Use Your Email Code</h1>
 			<p class="text-muted">
 				An account for <span class="break-all font-medium">{{ linkEmail }}</span> already
-				exists. A provider sign-in never merges into an existing account, so sign in with an
-				email code instead.
+				exists, and a provider sign-in does not attach to an existing account. Sign in with
+				an email code instead.
 			</p>
 			<UButton
 				to="/login"

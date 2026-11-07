@@ -85,13 +85,21 @@ function onOpenChange(value: boolean): void {
 					The target site's content is replaced by this backup. This cannot be undone.
 				</p>
 
-				<p
+				<div
 					v-if="targetList?.status === 'loading' && targets.length === 0"
 					role="status"
-					class="text-sm text-muted"
+					class="flex flex-col gap-2"
 				>
-					Loading sites...
-				</p>
+					<span class="sr-only">Loading sites</span>
+					<USkeleton
+						class="h-5 w-24"
+						aria-hidden="true"
+					/>
+					<USkeleton
+						class="h-10 w-full"
+						aria-hidden="true"
+					/>
+				</div>
 
 				<div
 					v-else-if="targetList?.status === 'error' && targets.length === 0"
@@ -163,7 +171,7 @@ function onOpenChange(value: boolean): void {
 							type="checkbox"
 							class="mt-0.5 size-4 accent-primary"
 						/>
-						<span>I Understand</span>
+						<span>I understand the target site's content will be replaced.</span>
 					</label>
 				</template>
 

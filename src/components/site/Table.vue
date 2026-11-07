@@ -19,13 +19,13 @@ defineProps<{ sites: SiteSummary[] }>();
 						scope="col"
 						class="px-4 py-3 font-medium"
 					>
-						Kind
+						Template
 					</th>
 					<th
 						scope="col"
 						class="px-4 py-3 font-medium"
 					>
-						Plane
+						Hosting
 					</th>
 					<th
 						scope="col"
@@ -37,7 +37,7 @@ defineProps<{ sites: SiteSummary[] }>();
 						scope="col"
 						class="px-4 py-3 font-medium"
 					>
-						Primary Hostname
+						Hostname
 					</th>
 				</tr>
 			</thead>

@@ -33,7 +33,7 @@ const steps = [
 			</li>
 		</ol>
 		<p class="border-t border-default px-5 py-3 text-xs text-muted">
-			An example run. Each step is one line in the record of the operation.
+			An example run. The operation records each step.
 		</p>
 	</figure>
 </template>

@@ -154,7 +154,7 @@ describe('a degraded answer', () => {
 		const node = nodeById((await read(w)).nodes, 'supervisor.made.up_code');
 
 		expect(node?.guidance?.text).toBe(
-			'No repair is catalogued for this, so a person needs to look at it.'
+			'No repair is defined for this, so a person needs to look at it.'
 		);
 	});
 

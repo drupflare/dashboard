@@ -78,18 +78,16 @@ function stepUpDone(): void {
 		<UModal
 			v-model:open="open"
 			title="Delete This Site"
-			:description="`This deletes ${name}.`"
+			:description="`Delete ${name} from this organization.`"
 		>
 			<template #body>
 				<div class="flex flex-col gap-4">
 					<div class="flex flex-col gap-2 text-sm text-default">
-						<p>
-							The site stops serving as soon as the delete runs its first steps, and
-							it leaves your list.
-						</p>
+						<p>The site stops serving early in the delete and leaves your list.</p>
 						<p>
 							Its address stays reserved for {{ SITE_HOLD_DAYS }} days, so nobody else
-							can claim it. The site's data is kept until then. Backups are kept.
+							can claim it. The site's data is kept until then, and its backups are
+							kept.
 						</p>
 						<p>There is no undo in the dashboard.</p>
 					</div>

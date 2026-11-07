@@ -1,9 +1,12 @@
 <script setup lang="ts">
-defineProps<{
-	title: string;
-	text: string;
-	requestId?: string | null;
-}>();
+withDefaults(
+	defineProps<{
+		title: string;
+		text?: string;
+		requestId?: string | null;
+	}>(),
+	{ text: 'The request failed. Try again.' }
+);
 </script>
 
 <template>

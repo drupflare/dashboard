@@ -8,9 +8,9 @@ import type { SiteSummary } from '~/stores/sites';
 export type OnboardingStep = 1 | 2 | 3;
 
 export const STEP_TITLES: Record<OnboardingStep, string> = {
-	1: 'Where',
-	2: 'What',
-	3: 'Name and Go'
+	1: 'Hosting',
+	2: 'Template',
+	3: 'Name and Create'
 };
 
 export const DEFAULT_TEMPLATE = 'drupal';

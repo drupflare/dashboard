@@ -72,7 +72,7 @@ const LEVELS = [
 ] as const;
 
 let cleanup: () => void = () => undefined;
-let reply: () => Reply;
+let reply: () => Reply | Promise<Reply>;
 const mounted: { unmount: () => void }[] = [];
 
 async function mountIt(...args: Parameters<typeof mountSuspended>) {
@@ -144,7 +144,7 @@ describe('health node', () => {
 
 		expect(wrapper.text()).toContain('memory rose across four samples');
 		expect(wrapper.text()).toContain(
-			'What happens next: The site repairs this on its own once it is safe to.'
+			'What Happens Next: The site repairs this on its own once it is safe to.'
 		);
 		const details = wrapper.find('details');
 		expect(details.exists()).toBe(true);
@@ -314,6 +314,27 @@ describe('health tree', () => {
 
 describe('readiness checklist', () => {
 	const props = { orgId: 'org_1', siteId: 'site_1' };
+
+	it('shows a skeleton until the first read arrives', async () => {
+		let release: () => void = () => undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		reply = async () => {
+			await gate;
+			return { body: read() };
+		};
+		const wrapper = await mountIt(ReadinessChecklist, { props });
+
+		expect(wrapper.find('[role="status"]').text()).toBe('Checking readiness');
+		expect(wrapper.findAll('.animate-pulse').length).toBeGreaterThan(1);
+
+		release();
+		await vi.waitFor(() =>
+			expect(wrapper.find('[data-test="readiness-summary"]').exists()).toBe(true)
+		);
+		expect(wrapper.find('[role="status"]').exists()).toBe(false);
+	});
 
 	it('names the level and the next check', async () => {
 		const wrapper = await mountIt(ReadinessChecklist, { props });

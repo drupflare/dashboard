@@ -93,7 +93,9 @@ export async function requestCode(
 ): Promise<void> {
 	ready(deps);
 	if (!(await deps.turnstile(input.turnstileToken, input.ip))) {
-		throw new ApiError('forbidden', 'The bot check failed', { requires: 'challenge' });
+		throw new ApiError('forbidden', 'The bot check failed. Try again.', {
+			requires: 'challenge'
+		});
 	}
 	const result = await issueCode(
 		deps.once,

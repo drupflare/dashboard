@@ -45,7 +45,7 @@ describe('toErrorBody', () => {
 	it('turns an unknown thrown error into internal without its message', () => {
 		expect(toErrorBody(new Error('password=hunter2 at db.sql:3'), 'req_3')).toEqual({
 			code: 'internal',
-			message: 'Internal error',
+			message: 'Something went wrong on our side. Try again.',
 			details: null,
 			requestId: 'req_3'
 		});
@@ -54,7 +54,7 @@ describe('toErrorBody', () => {
 	it('does the same for a thrown string', () => {
 		expect(toErrorBody('secret token', 'req_4')).toMatchObject({
 			code: 'internal',
-			message: 'Internal error'
+			message: 'Something went wrong on our side. Try again.'
 		});
 	});
 });

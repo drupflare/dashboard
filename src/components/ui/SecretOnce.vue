@@ -110,7 +110,7 @@ onBeforeUnmount(() => {
 		<UiErrorState
 			v-else
 			title="Could Not Reveal the Password"
-			text="Check your connection and try again."
+			:text="failure?.message"
 			:request-id="failure?.requestId"
 		>
 			<UButton

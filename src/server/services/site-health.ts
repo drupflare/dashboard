@@ -254,7 +254,7 @@ const CLASS_WORDS: Record<RepairClass, string> = {
 	stateful: 'The repair changes stored data, so it is handled with extra care.'
 };
 
-const NO_REPAIR = 'No repair is catalogued for this, so a person needs to look at it.';
+const NO_REPAIR = 'No repair is defined for this, so a person needs to look at it.';
 
 function repairWords(rung: string, strikes: number): string {
 	if (rung === 'quarantine') {

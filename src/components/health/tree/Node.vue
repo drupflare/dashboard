@@ -84,7 +84,7 @@ function stamp(atMs: number): string {
 			v-if="node.guidance"
 			class="text-sm text-default"
 		>
-			<span class="font-medium">What happens next:</span> {{ node.guidance.text }}
+			<span class="font-medium">What Happens Next:</span> {{ node.guidance.text }}
 		</p>
 
 		<div

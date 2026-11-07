@@ -10,12 +10,12 @@ export const OAUTH_LABELS: Record<OAuthProvider, string> = {
 };
 
 export const OAUTH_CONSENT_TEXT =
-	'Drupflare asks the provider for your name and email address to sign you in. It does not read your repositories or any other data. Connecting repositories is a separate step you take later.';
+	'Drupflare asks the provider for your name and email address to sign you in. It does not read your repositories or any other data.';
 
 // Cloudflare does not say whether its email address is verified, so it cannot start an account;
 // it signs in an account it was connected to
 export const CLOUDFLARE_CONSENT_TEXT =
-	'Drupflare asks Cloudflare which Cloudflare account you are and for its email address, to show next to the connection. It reads no zones, Workers or other data.';
+	'Drupflare asks Cloudflare for your account and its email address, to show next to the connection. It reads no zones, Workers or other data.';
 
 export const consentTextFor = (provider: OAuthProvider): string =>
 	provider === 'cloudflare' ? CLOUDFLARE_CONSENT_TEXT : OAUTH_CONSENT_TEXT;

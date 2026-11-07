@@ -29,7 +29,7 @@ function choosable(template: TemplateChoice): boolean {
 
 function unavailableLabel(template: TemplateChoice): string {
 	if (!template.enabled) return template.comingSoon ?? 'Coming Soon';
-	return blocked(template) ? 'Needs a Paid Plan' : 'Not Available Here Yet';
+	return blocked(template) ? 'Needs a Paid Plan' : 'Not Available Yet';
 }
 
 const chosen = computed(() => props.templates.find((t) => t.id === selected.value) ?? null);
@@ -89,8 +89,7 @@ const chosen = computed(() => props.templates.find((t) => t.id === selected.valu
 			v-if="chosen && !chosen.free"
 			class="text-sm text-muted"
 		>
-			{{ chosen.name }} is a paid choice. The server checks your plan when you create the
-			site.
+			{{ chosen.name }} needs a paid plan. Your plan is checked when you create the site.
 		</p>
 	</div>
 </template>

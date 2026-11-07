@@ -11,7 +11,7 @@ const emit = defineEmits<{ blur: [] }>();
 		<UiField
 			id="site-name"
 			label="Site Name"
-			hint="The suggestion is three random words. Change it if you like."
+			hint="We suggest three random words. You can change them."
 			:error="error"
 		>
 			<template #default="{ describedBy }">

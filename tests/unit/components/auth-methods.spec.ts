@@ -47,7 +47,7 @@ describe('sign-in methods', () => {
 		const wrapper = await mountSuspended(Methods);
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Continue with Cloudflare'));
 		expect(wrapper.text()).toContain('reads no zones');
-		expect(wrapper.text()).toContain('Connect it from Account first');
+		expect(wrapper.text()).toContain('Connect Cloudflare from the Account page');
 		expect(wrapper.text()).not.toContain('It does not read your repositories');
 	});
 

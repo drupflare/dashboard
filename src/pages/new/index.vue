@@ -87,7 +87,7 @@ onMounted(() => {
 		<div class="flex max-w-3xl flex-col gap-6">
 			<UiPageHeader
 				title="Create a Site"
-				text="Three steps. Skip any step that has a default."
+				text="Each step has a default, so you can skip any of them."
 			/>
 
 			<OnboardingStepper :step="step" />
@@ -122,17 +122,33 @@ onMounted(() => {
 				</template>
 
 				<template v-else-if="step === 2">
-					<p
+					<div
 						v-if="templates === null && templatesError === null"
 						role="status"
-						class="text-sm text-muted"
 					>
-						Loading templates...
-					</p>
+						<span class="sr-only">Loading templates</span>
+						<div
+							aria-hidden="true"
+							class="flex flex-col gap-6"
+						>
+							<div
+								v-for="group in 2"
+								:key="group"
+								class="flex flex-col gap-3"
+							>
+								<USkeleton class="h-5 w-20" />
+								<USkeleton
+									v-for="card in 2"
+									:key="card"
+									class="h-16 w-full"
+								/>
+							</div>
+						</div>
+					</div>
 					<UiErrorState
 						v-else-if="templatesError !== null"
 						title="Could Not Load Templates"
-						text="Check your connection and try again."
+						:text="templatesError.message"
 						:request-id="templatesError.requestId"
 					>
 						<UButton
@@ -218,12 +234,24 @@ onMounted(() => {
 			</section>
 		</div>
 		<template #fallback>
-			<p
-				role="status"
-				class="text-sm text-muted"
-			>
-				Loading...
-			</p>
+			<div role="status">
+				<span class="sr-only">Loading the page</span>
+				<div
+					aria-hidden="true"
+					class="flex max-w-3xl flex-col gap-6"
+				>
+					<div class="flex flex-col gap-2">
+						<USkeleton class="h-9 w-48" />
+						<USkeleton class="h-5 w-72 max-w-full" />
+					</div>
+					<USkeleton class="h-6 w-64 max-w-full" />
+					<div class="flex flex-col gap-6 rounded-lg border border-default p-6">
+						<USkeleton class="h-7 w-24" />
+						<USkeleton class="h-16 w-full" />
+						<USkeleton class="h-16 w-full" />
+					</div>
+				</div>
+			</div>
 		</template>
 	</ClientOnly>
 </template>

@@ -29,6 +29,7 @@ function site(release: SiteSummary['release']): SiteSummary {
 		ring: 'R0',
 		primaryHostname: 'quiet-otter.drupflare.app',
 		hostnames: ['quiet-otter.drupflare.app'],
+		admin: { username: null, email: null, password: 'unknown' },
 		...(release === undefined ? {} : { release }),
 		createdAt: '2026-01-01T00:00:00Z',
 		updatedAt: '2026-01-01T00:00:00Z'
@@ -133,7 +134,7 @@ describe('starting an update', () => {
 		const text = document.body.textContent ?? '';
 		expect(text).toContain('keeps serving');
 		expect(text).toContain('several minutes');
-		expect(text).toContain('goes back to its old release on its own');
+		expect(text).toContain('returns to its old release on its own');
 		expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0);
 	});
 

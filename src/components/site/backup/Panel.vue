@@ -129,18 +129,16 @@ const loadMoreError = computed(() =>
 			>
 		</p>
 
-		<p
+		<UiSkeletonTable
 			v-if="!list || (list.status === 'loading' && items.length === 0)"
-			role="status"
-			class="text-sm text-muted"
-		>
-			Loading backups...
-		</p>
+			label="Loading backups"
+			:rows="3"
+		/>
 
 		<UiErrorState
 			v-else-if="list.status === 'error' && items.length === 0"
 			title="Could Not Load Backups"
-			text="Check your connection and try again."
+			:text="list.error?.message"
 			:request-id="list.error?.requestId"
 		>
 			<UButton
@@ -154,12 +152,12 @@ const loadMoreError = computed(() =>
 			v-else-if="items.length === 0"
 			icon="i-lucide-archive"
 			title="No Backups Yet"
-			text="Back up this site to see its backups here."
+			text="The first backup appears here once you back up this site."
 		/>
 
 		<template v-else>
 			<p class="text-sm text-muted">
-				Download gives one SQL file of this site's database. The file holds no secrets.
+				Download saves the site's database as one SQL file. The file holds no secrets.
 			</p>
 
 			<SiteBackupTable

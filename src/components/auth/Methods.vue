@@ -44,7 +44,8 @@ onMounted(async () => {
 					v-if="providers.includes('cloudflare')"
 					class="text-xs text-muted"
 				>
-					{{ CLOUDFLARE_CONSENT_TEXT }} Connect it from Account first.
+					{{ CLOUDFLARE_CONSENT_TEXT }} Connect Cloudflare from the Account page before
+					you sign in with it.
 				</p>
 			</div>
 		</template>
