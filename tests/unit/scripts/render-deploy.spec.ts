@@ -95,6 +95,29 @@ describe('the committed deploy files', () => {
 		}
 	});
 
+	it('renders the dashboard preview on its own database, cache and bucket, with no engine', () => {
+		const preview = render('dashboard', 'preview', built) as Config & {
+			services: unknown[];
+			r2_buckets: { bucket_name: string }[];
+		};
+		expect(preview.services).toEqual([]);
+		expect(preview.r2_buckets[0]!.bucket_name).toBe('drupflare-dashboard-blob-preview');
+		const used = JSON.stringify(preview);
+		for (const environment of ['staging', 'production'] as const) {
+			const other = JSON.stringify(render('dashboard', environment, built));
+			for (const id of other.match(/[0-9a-f]{32}|[0-9a-f-]{36}/g) ?? []) {
+				if (id === '2bba2ae752a5bb611580fdccbce6d200') continue;
+				expect(used, `preview shares ${id} with ${environment}`).not.toContain(id);
+			}
+		}
+	});
+
+	it('refuses a preview of the engine or dispatch Worker', () => {
+		for (const unit of ['engine', 'dispatch'] as const) {
+			expect(() => render(unit, 'preview', built), unit).toThrow('has no preview');
+		}
+	});
+
 	it('names no id for a binding the overlay forgot', () => {
 		const forgot = (path: string): Config =>
 			path === 'deploy/engine.production.json'

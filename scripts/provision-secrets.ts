@@ -23,6 +23,8 @@ const OPTIONAL_FROM_DEV_VARS = [
 	'NUXT_GITLAB_CLIENT_SECRET'
 ] as const;
 
+const PREVIEW_FROM_DEV_VARS = ['NUXT_TURNSTILE_SECRET_KEY'] as const;
+
 export type Values = Record<string, string>;
 
 const random = () => toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
@@ -47,12 +49,26 @@ export type Action =
 	| { kind: 'github'; environment: string; name: string; value: string };
 
 // Worker secrets are set only for production, since the staging Workers already hold theirs
-export function plan(environment: 'staging' | 'production', values: Values): Action[] {
+export function plan(environment: 'staging' | 'production' | 'preview', values: Values): Action[] {
 	const github: Action[] = [
 		{ kind: 'github', environment, name: 'CLOUDFLARE_API_TOKEN', value: values.CF_API_TOKEN! },
 		{ kind: 'github', environment, name: 'CLOUDFLARE_ACCOUNT_ID', value: ACCOUNT_ID }
 	];
 	if (environment === 'staging') return github;
+	// previews are throwaway copies, so the workflow sets their Worker secrets from these
+	if (environment === 'preview') {
+		return [
+			...['KEK_V1', 'START_SECRET', 'AUTH_CODE_SECRET', ...PREVIEW_FROM_DEV_VARS]
+				.filter((name) => values[name] !== undefined)
+				.map((name): Action => ({
+					kind: 'github',
+					environment,
+					name,
+					value: values[name]!
+				})),
+			...github
+		];
+	}
 	const w = WORKERS.production;
 	const on = (worker: string, names: string[]): Action[] =>
 		names.map((name) => ({ kind: 'worker', worker, name, value: values[name]! }));
@@ -159,9 +175,11 @@ async function apply(action: Action, token: string): Promise<boolean> {
 	return result.code === 0;
 }
 
-const USAGE = `usage: bun scripts/provision-secrets.ts <staging|production> [--dev-vars] [--dry-run]
+const USAGE = `usage: bun scripts/provision-secrets.ts <staging|production|preview> [--dev-vars] [--dry-run]
 
 staging     sets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID on the GitHub environment
+preview     generates throwaway keys for pull request previews and sets them, with the deploy
+            credentials and the Turnstile secret, on the GitHub preview environment
 production  generates the production keys, sets them on the production Workers, writes them to
             ~/drupflare-production-secrets.json (0600) and sets the GitHub environment secrets
 --dev-vars  reads CF_API_TOKEN and the sign-in provider secrets from .dev.vars; without it
@@ -184,7 +202,7 @@ async function main(argv: string[]): Promise<number> {
 		}
 	});
 	const environment = positionals[0];
-	if (environment !== 'staging' && environment !== 'production') {
+	if (environment !== 'staging' && environment !== 'production' && environment !== 'preview') {
 		console.error(USAGE);
 		return 2;
 	}
@@ -213,9 +231,12 @@ async function main(argv: string[]): Promise<number> {
 		console.error(`${escrow} exists; use --resume to set the same keys again`);
 		return 1;
 	}
-	const generated = environment === 'production' ? await generateSecrets() : {};
+	const generated =
+		environment === 'production' || environment === 'preview' ? await generateSecrets() : {};
 	const optional = Object.fromEntries(
-		OPTIONAL_FROM_DEV_VARS.flatMap((name) => (fromFile[name] ? [[name, fromFile[name]]] : []))
+		[...OPTIONAL_FROM_DEV_VARS, ...PREVIEW_FROM_DEV_VARS].flatMap((name) =>
+			fromFile[name] ? [[name, fromFile[name]]] : []
+		)
 	);
 	const all: Values = {
 		...generated,

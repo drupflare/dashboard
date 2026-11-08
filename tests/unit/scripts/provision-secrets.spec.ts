@@ -77,6 +77,19 @@ describe('plan', () => {
 		expect(of('drupflare-dispatch', 'CONTROL_PUBLIC_KEY')).toBe('d');
 	});
 
+	it('sets the preview keys and deploy credentials on GitHub only, never on a Worker', () => {
+		const actions = plan('preview', { ...values, NUXT_TURNSTILE_SECRET_KEY: 'k' });
+		expect(actions.every((a) => a.kind === 'github' && a.environment === 'preview')).toBe(true);
+		expect(actions.map((a) => a.name).sort()).toEqual([
+			'AUTH_CODE_SECRET',
+			'CLOUDFLARE_ACCOUNT_ID',
+			'CLOUDFLARE_API_TOKEN',
+			'KEK_V1',
+			'NUXT_TURNSTILE_SECRET_KEY',
+			'START_SECRET'
+		]);
+	});
+
 	it('adds a provider secret only when it was supplied', () => {
 		const names = (extra: Record<string, string>) =>
 			plan('production', { ...values, ...extra })

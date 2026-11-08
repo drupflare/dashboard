@@ -1,0 +1,16 @@
+{
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "drupflare-dashboard-db-preview",
+			"database_id": "ca8bd425-7917-450e-b809-3265c55131c7"
+		}
+	],
+	"kv_namespaces": [
+		{ "binding": "KV", "id": "cc69e4da343449c29cd9ce2d5cdacdef" },
+		{ "binding": "CACHE", "id": "eda2bff3d3574cfa9d265fd31beb705f" },
+		{ "binding": "HOSTS_KV", "id": "4c6e5dc99d2447638eb100eb86ce7cf5" }
+	],
+	"r2_buckets": [{ "binding": "BLOB", "bucket_name": "drupflare-dashboard-blob-preview" }],
+	"services": []
+}

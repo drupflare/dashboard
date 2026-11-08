@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 export const UNITS = ['dashboard', 'engine', 'dispatch'] as const;
-export const ENVIRONMENTS = ['staging', 'production'] as const;
+export const ENVIRONMENTS = ['staging', 'production', 'preview'] as const;
 export type Unit = (typeof UNITS)[number];
 export type Environment = (typeof ENVIRONMENTS)[number];
 
@@ -38,7 +38,7 @@ export function merge(base: Config, overlay: Config): Config {
 // the engine and dispatch configs name their staging block `stage`; a block replaces the top level
 export function resolve(base: Config, unit: Unit, environment: Environment): Config {
 	const { env, ...top } = base;
-	if (unit === 'dashboard' || environment === 'production') return top;
+	if (unit === 'dashboard' || environment !== 'staging') return top;
 	const stage = env?.stage;
 	if (!stage) throw new Error(`${unit} has no stage block`);
 	return { ...top, ...stage };
@@ -61,6 +61,9 @@ export function render(
 	environment: Environment,
 	read: (path: string) => Config = readConfig
 ): Config {
+	if (environment === 'preview' && unit !== 'dashboard') {
+		throw new Error(`${unit} has no preview; only the dashboard is previewed`);
+	}
 	const base = read(
 		unit === 'dashboard' ? '.output/server/wrangler.json' : `${unit}/wrangler.jsonc`
 	);

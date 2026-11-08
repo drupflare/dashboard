@@ -1,0 +1,147 @@
+name: Pull Request Previews
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [master, ver/*, feat/*]
+  schedule:
+    - cron: '41 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy the Preview
+    if: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: preview
+
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+
+    permissions:
+      contents: read
+      packages: read
+      pull-requests: write
+
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 'latest'
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - name: Cache the Bun Install Cache
+        uses: actions/cache@v6
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+      - name: Build
+        run: bun run build
+      - name: Render the Preview Config
+        run: bun scripts/render-deploy.ts dashboard preview
+      - name: Deploy the Preview
+        id: preview
+        uses: drupflare/workforce/action@v0
+        env:
+          KEK_V1: ${{ secrets.KEK_V1 }}
+          START_SECRET: ${{ secrets.START_SECRET }}
+          AUTH_CODE_SECRET: ${{ secrets.AUTH_CODE_SECRET }}
+          NUXT_TURNSTILE_SECRET_KEY: ${{ secrets.NUXT_TURNSTILE_SECRET_KEY }}
+          NUXT_BASE_URL: https://{hostname}
+          WEBAUTHN_RP_ID: '{hostname}'
+          WEBAUTHN_ORIGIN: https://{hostname}
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          gitHubToken: ${{ github.token }}
+          mode: deploy
+          worker: drupflare-dashboard
+          directory: .output/server
+          config: .output/server/wrangler.deploy.json
+          hostnameTemplate: '{branch}-staging-app.drupflare.com'
+          zone: drupflare.com
+          ttl: 7d
+          secrets: |
+            KEK_V1
+            START_SECRET
+            AUTH_CODE_SECRET
+            NUXT_TURNSTILE_SECRET_KEY
+          vars: |
+            NUXT_BASE_URL
+            WEBAUTHN_RP_ID
+            WEBAUTHN_ORIGIN
+      - name: Check the Preview Is Behind Access
+        id: gate
+        env:
+          URL: ${{ steps.preview.outputs.deployment-url }}
+        run: |
+          for attempt in $(seq 1 18); do
+            answer=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 20 "$URL/" || true)
+            case "$answer" in
+              302*cloudflareaccess.com*) echo "behind Access after $attempt tries"; exit 0 ;;
+            esac
+            sleep 10
+          done
+          echo "::error::$URL did not answer with an Access login, so the preview is being removed"
+          exit 1
+      - name: Remove an Unguarded Preview
+        if: ${{ failure() && steps.gate.outcome == 'failure' }}
+        uses: drupflare/workforce/action@v0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          mode: destroy
+          worker: drupflare-dashboard
+
+  destroy:
+    name: Remove the Preview
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: preview
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Remove the Preview
+        uses: drupflare/workforce/action@v0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          mode: destroy
+          worker: drupflare-dashboard
+
+  sweep:
+    name: Sweep Stale Previews
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: preview
+
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Sweep
+        uses: drupflare/workforce/action@v0
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          gitHubToken: ${{ github.token }}
+          mode: sweep
+          worker: drupflare-dashboard
