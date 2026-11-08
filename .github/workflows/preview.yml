@@ -54,7 +54,7 @@ jobs:
         run: bun scripts/render-deploy.ts dashboard preview
       - name: Deploy the Preview
         id: preview
-        uses: drupflare/workforce/action@v0
+        uses: drupflare/workforce/action@v0.3.0
         env:
           KEK_V1: ${{ secrets.KEK_V1 }}
           START_SECRET: ${{ secrets.START_SECRET }}
@@ -99,7 +99,7 @@ jobs:
           exit 1
       - name: Remove an Unguarded Preview
         if: ${{ failure() && steps.gate.outcome == 'failure' }}
-        uses: drupflare/workforce/action@v0
+        uses: drupflare/workforce/action@v0.3.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -118,7 +118,7 @@ jobs:
 
     steps:
       - name: Remove the Preview
-        uses: drupflare/workforce/action@v0
+        uses: drupflare/workforce/action@v0.3.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -138,7 +138,7 @@ jobs:
 
     steps:
       - name: Sweep
-        uses: drupflare/workforce/action@v0
+        uses: drupflare/workforce/action@v0.3.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
