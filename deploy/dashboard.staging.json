@@ -20,6 +20,7 @@
 	"vars": {
 		"MANAGED_ACCOUNT_ID": "2bba2ae752a5bb611580fdccbce6d200",
 		"MANAGED_HOST_SUFFIX": "drupflare.app",
+		"MANAGED_LABEL_SUFFIX": "-staging",
 		"RELEASE_DRUPAL": "v1.0.5",
 		"WEBAUTHN_RP_ID": "staging-app.drupflare.com",
 		"WEBAUTHN_ORIGIN": "https://staging-app.drupflare.com",

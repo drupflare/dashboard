@@ -160,6 +160,19 @@ describe('buildSiteCreateInput name, plan and authority', () => {
 		expect(input.hostname).toBe('quiet-otter.sites.example.net');
 	});
 
+	it('puts the label suffix before the host suffix, as staging sites do', async () => {
+		const input = await buildSiteCreateInput(parts('drupal', { labelSuffix: '-staging' }));
+		expect(input.hostname).toBe(`quiet-otter-staging.${MANAGED_HOST_SUFFIX}`);
+		expect(input.subdomain).toBe('quiet-otter');
+	});
+
+	it('refuses a label that no longer fits a DNS label once the suffix is added', async () => {
+		const base = parts('drupal', { labelSuffix: '-staging' });
+		expect(
+			await refusal({ ...base, site: { ...base.site, label: 'a'.repeat(60) } })
+		).toMatchObject({ code: 'bad_label' });
+	});
+
 	it('proposes the same suggested name for the same site when no label is requested', async () => {
 		const base = parts('drupal');
 		const first = await buildSiteCreateInput({
@@ -266,6 +279,7 @@ describe('siteInputConfigOf', () => {
 		});
 		expect(config).toEqual({
 			hostSuffix: 'sites.example.net',
+			labelSuffix: '',
 			accountId: ACCOUNT,
 			releases: { drupal: 'v1.0.4', smoke: 'v2' }
 		});
@@ -276,8 +290,20 @@ describe('siteInputConfigOf', () => {
 			siteInputConfigOf({ MANAGED_ACCOUNT_ID: '', RELEASE_DRUPAL: '', RELEASE_MYLORA: 5 })
 		).toEqual({
 			hostSuffix: MANAGED_HOST_SUFFIX,
+			labelSuffix: '',
 			accountId: null,
 			releases: {}
 		});
+	});
+
+	it('reads the label suffix and refuses one that is not a hyphen and a word', () => {
+		expect(siteInputConfigOf({ MANAGED_LABEL_SUFFIX: '-staging' }).labelSuffix).toBe(
+			'-staging'
+		);
+		for (const bad of ['staging', '-Staging', '-a.b', '--x']) {
+			expect(() => siteInputConfigOf({ MANAGED_LABEL_SUFFIX: bad }), bad).toThrow(
+				'MANAGED_LABEL_SUFFIX'
+			);
+		}
 	});
 });

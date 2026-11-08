@@ -101,11 +101,13 @@ describe('bootOnce', () => {
 			envWith({
 				MANAGED_ACCOUNT_ID: 'a'.repeat(32),
 				MANAGED_HOST_SUFFIX: 'sites.example.net',
+				MANAGED_LABEL_SUFFIX: '-staging',
 				RELEASE_DRUPAL: 'v1.0.4'
 			})
 		);
 		expect(siteServices().config).toEqual({
 			hostSuffix: 'sites.example.net',
+			labelSuffix: '-staging',
 			accountId: 'a'.repeat(32),
 			releases: { drupal: 'v1.0.4' }
 		});

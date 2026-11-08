@@ -209,6 +209,7 @@ export async function createSite(
 		release: config.releases[input.kind],
 		account: config.accountId,
 		hostSuffix: config.hostSuffix,
+		labelSuffix: config.labelSuffix,
 		...(owner === null ? {} : { ownerEmail: owner.email })
 	}).catch(inputRefusal);
 

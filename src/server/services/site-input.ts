@@ -35,6 +35,8 @@ export class SiteInputError extends Error {
 
 export interface SiteInputConfig {
 	hostSuffix: string;
+	// appended to the label, so staging sites read <name>-staging.<suffix>
+	labelSuffix?: string;
 	// the Cloudflare account the managed plane creates sites in
 	accountId: string | null;
 	// the release a new site of each kind starts from
@@ -46,15 +48,20 @@ const textOf = (env: Record<string, unknown>, name: string): string | undefined 
 	return typeof value === 'string' && value !== '' ? value : undefined;
 };
 
-// MANAGED_ACCOUNT_ID, MANAGED_HOST_SUFFIX and one RELEASE_<KIND> per kind; an unset one stays unset
+// MANAGED_ACCOUNT_ID, MANAGED_HOST_SUFFIX, MANAGED_LABEL_SUFFIX and one RELEASE_<KIND> per kind; an unset one stays unset
 export function siteInputConfigOf(env: Record<string, unknown>): SiteInputConfig {
 	const releases: Partial<Record<SiteKind, string>> = {};
 	for (const kind of SITE_KINDS) {
 		const id = textOf(env, `RELEASE_${kind.toUpperCase()}`);
 		if (id !== undefined) releases[kind] = id;
 	}
+	const labelSuffix = textOf(env, 'MANAGED_LABEL_SUFFIX') ?? '';
+	if (labelSuffix !== '' && !/^-[a-z0-9]+$/.test(labelSuffix)) {
+		throw new Error('MANAGED_LABEL_SUFFIX must be a hyphen and lowercase letters or digits');
+	}
 	return {
 		hostSuffix: textOf(env, 'MANAGED_HOST_SUFFIX') ?? MANAGED_HOST_SUFFIX,
+		labelSuffix,
 		accountId: textOf(env, 'MANAGED_ACCOUNT_ID') ?? null,
 		releases
 	};
@@ -77,6 +84,7 @@ export interface SiteInputParts {
 	release: string | undefined;
 	account: string | null | undefined;
 	hostSuffix?: string;
+	labelSuffix?: string;
 	ownerEmail?: string;
 }
 
@@ -152,7 +160,12 @@ export async function buildSiteCreateInput(parts: SiteInputParts): Promise<SiteC
 		throw new SiteInputError('unusable_plan', `the plan cannot be used: ${plan.reason}`);
 	}
 	const subdomain = site.label ?? suggest(site.id);
-	if (!isValidName(subdomain) || isReserved(subdomain)) {
+	const labelSuffix = parts.labelSuffix ?? '';
+	if (
+		!isValidName(subdomain) ||
+		isReserved(subdomain) ||
+		subdomain.length + labelSuffix.length > 63
+	) {
 		throw new SiteInputError('bad_label', `${subdomain} is not a usable hostname label`);
 	}
 	const firstRun = firstRunCall(recipe, site.name, parts.ownerEmail);
@@ -177,7 +190,7 @@ export async function buildSiteCreateInput(parts: SiteInputParts): Promise<SiteC
 			accountId: account
 		},
 		subdomain,
-		hostname: `${subdomain}.${parts.hostSuffix ?? MANAGED_HOST_SUFFIX}`,
+		hostname: `${subdomain}${labelSuffix}.${parts.hostSuffix ?? MANAGED_HOST_SUFFIX}`,
 		releaseId: release,
 		authority: {
 			risk: organization.planId === FREE_PLAN_ID ? 'new-free' : 'established',
