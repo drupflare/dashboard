@@ -1,5 +1,6 @@
+import { requireFresh } from '../../../services/identities';
 import { revokeAllSessions } from '../../../services/sessions';
-import { authServices, type UserPrincipal } from '../../../utils/auth';
+import { authServices, stepUpAtOf, type UserPrincipal } from '../../../utils/auth';
 import { defineApi } from '../../../utils/define-api';
 
 export default defineApi(
@@ -9,12 +10,14 @@ export default defineApi(
 		rateClass: 'write',
 		tags: ['me'],
 		summary: 'Sign out other devices',
-		description: 'Ends every session except the one making this request.',
+		description:
+			'Ends every session except the one making this request. It needs a fresh authentication.',
 		successStatus: 204
 	},
 	async ({ principal }) => {
-		const { userId, sessionId } = principal as UserPrincipal;
-		await revokeAllSessions(authServices().kv, userId, sessionId);
+		const user = principal as UserPrincipal;
+		requireFresh(stepUpAtOf(user));
+		await revokeAllSessions(authServices().kv, user.userId, user.sessionId);
 		return undefined;
 	}
 );

@@ -293,6 +293,18 @@ describe('GET /api/v1/me', () => {
 });
 
 describe('sessions', () => {
+	async function withStepUp(token: string, email = 'ada@example.com'): Promise<string> {
+		clock.advance(CODE_RESEND_COOLDOWN_MS);
+		await send(codeRequest, ROUTES.request, { method: 'POST', json: { email } });
+		const reply = await send(stepUpRoute, ROUTES.stepUp, {
+			method: 'POST',
+			headers: cookieHeader(token),
+			json: { code: h.mail.lastCode() }
+		});
+		expect(reply.status).toBe(200);
+		return tokenFrom(reply);
+	}
+
 	it('lists devices newest first and marks the current one', async () => {
 		const first = await signIn();
 		const second = await signIn();
@@ -320,28 +332,61 @@ describe('sessions', () => {
 		const other = (list.json as { items: { id: string; current: boolean }[] }).items.find(
 			(i) => !i.current
 		)!;
+		const freshToken = await withStepUp(second.token);
 		const reply = await send(sessionDelete, ROUTES.session, {
 			method: 'DELETE',
 			path: `/api/v1/me/sessions/${other.id}`,
-			headers: cookieHeader(second.token)
+			headers: cookieHeader(freshToken)
 		});
 		expect(reply.status).toBe(204);
 		expect(setCookies(reply)).toEqual([]);
 		expect((await send(me, ROUTES.me, { headers: cookieHeader(first.token) })).status).toBe(
 			401
 		);
-		expect((await send(me, ROUTES.me, { headers: cookieHeader(second.token) })).status).toBe(
+		expect((await send(me, ROUTES.me, { headers: cookieHeader(freshToken) })).status).toBe(200);
+	});
+
+	it('needs a fresh sign-in to revoke another session or sign out other devices', async () => {
+		const first = await signIn();
+		const second = await signIn();
+		const list = await send(sessionsGet, ROUTES.sessions, {
+			headers: cookieHeader(second.token)
+		});
+		const other = (list.json as { items: { id: string; current: boolean }[] }).items.find(
+			(i) => !i.current
+		)!;
+		const one = await send(sessionDelete, ROUTES.session, {
+			method: 'DELETE',
+			path: `/api/v1/me/sessions/${other.id}`,
+			headers: cookieHeader(second.token)
+		});
+		expect(one.status).toBe(403);
+		expect((one.json as { details: { requires: string } }).details.requires).toBe('step-up');
+		const all = await send(sessionsDelete, ROUTES.sessions, {
+			method: 'DELETE',
+			headers: cookieHeader(second.token)
+		});
+		expect(all.status).toBe(403);
+		expect((await send(me, ROUTES.me, { headers: cookieHeader(first.token) })).status).toBe(
 			200
 		);
+		const freshToken = await withStepUp(second.token);
+		clock.advance(11 * 60 * 1000);
+		const expired = await send(sessionsDelete, ROUTES.sessions, {
+			method: 'DELETE',
+			headers: cookieHeader(freshToken)
+		});
+		expect(expired.status).toBe(403);
 	});
 
 	it('signs out every other device and keeps the one making the request', async () => {
 		const first = await signIn();
 		const second = await signIn();
 		const third = await signIn();
+		const freshToken = await withStepUp(second.token);
 		const reply = await send(sessionsDelete, ROUTES.sessions, {
 			method: 'DELETE',
-			headers: cookieHeader(second.token)
+			headers: cookieHeader(freshToken)
 		});
 		expect(reply.status).toBe(204);
 		expect(setCookies(reply)).toEqual([]);
@@ -350,11 +395,9 @@ describe('sessions', () => {
 				401
 			);
 		}
-		expect((await send(me, ROUTES.me, { headers: cookieHeader(second.token) })).status).toBe(
-			200
-		);
+		expect((await send(me, ROUTES.me, { headers: cookieHeader(freshToken) })).status).toBe(200);
 		const list = await send(sessionsGet, ROUTES.sessions, {
-			headers: cookieHeader(second.token)
+			headers: cookieHeader(freshToken)
 		});
 		expect((list.json as { items: unknown[] }).items).toHaveLength(1);
 	});
@@ -365,7 +408,7 @@ describe('sessions', () => {
 		await signIn('ada@example.com');
 		await send(sessionsDelete, ROUTES.sessions, {
 			method: 'DELETE',
-			headers: cookieHeader(mine.token)
+			headers: cookieHeader(await withStepUp(mine.token))
 		});
 		expect((await send(me, ROUTES.me, { headers: cookieHeader(theirs.token) })).status).toBe(
 			200
@@ -376,7 +419,7 @@ describe('sessions', () => {
 		const { token } = await signIn();
 		const alone = await send(sessionsDelete, ROUTES.sessions, {
 			method: 'DELETE',
-			headers: cookieHeader(token)
+			headers: cookieHeader(await withStepUp(token))
 		});
 		expect(alone.status).toBe(204);
 		expect((await send(sessionsDelete, ROUTES.sessions, { method: 'DELETE' })).status).toBe(
@@ -409,11 +452,12 @@ describe('sessions', () => {
 			headers: cookieHeader(theirs.token)
 		});
 		const theirId = (theirList.json as { items: { id: string }[] }).items[0]!.id;
+		const mineFresh = await withStepUp(mine.token);
 		const del = (id: string) =>
 			send(sessionDelete, ROUTES.session, {
 				method: 'DELETE',
 				path: `/api/v1/me/sessions/${id}`,
-				headers: cookieHeader(mine.token)
+				headers: cookieHeader(mineFresh)
 			});
 		expect((await del(theirId)).status).toBe(404);
 		expect((await del('ses_00000000000000000000000000')).status).toBe(404);
