@@ -5,11 +5,12 @@ import {
 	readRateHeaders,
 	Routing,
 	type DispatchPlane,
+	type HttpClient,
 	type Migration,
 	type Resources
 } from '@drupflare/workforce';
 import { RateLimitedError } from '../account-usage';
-import type { Cloudflare } from '../ports';
+import type { Cloudflare, CloudflareUsage } from '../ports';
 import { PermanentError } from '../step';
 import { multipartBody } from '../stream-body';
 
@@ -92,6 +93,20 @@ async function paced<T>(call: () => Promise<T>): Promise<T> {
 	}
 }
 
+// counts come from the listings; the headroom comes from the headers of one more small read
+export async function readUsageOf(
+	http: HttpClient,
+	accountId: string,
+	resources: Pick<Resources, 'listKv' | 'listR2'>
+): Promise<CloudflareUsage> {
+	const kvNamespaces = (await paced(() => resources.listKv())).length;
+	const buckets = (await paced(() => resources.listR2())).length;
+	const response = await paced(() =>
+		http.send(`/accounts/${accountId}/storage/kv/namespaces`, { query: { per_page: 5 } })
+	);
+	return { kvNamespaces, buckets, rate: readRateHeaders(response.headers) };
+}
+
 export function workforceCloudflare(plane: DispatchPlane, resources: Resources): Cloudflare {
 	const account = `/accounts/${plane.accountId}`;
 	const routing = new Routing(plane.http, plane.accountId);
@@ -140,15 +155,7 @@ export function workforceCloudflare(plane: DispatchPlane, resources: Resources):
 			}));
 		},
 
-		// counts come from the listings; the headroom comes from the headers of one more small read
-		async readUsage() {
-			const kvNamespaces = (await paced(() => resources.listKv())).length;
-			const buckets = (await paced(() => resources.listR2())).length;
-			const response = await paced(() =>
-				plane.http.send(`${account}/storage/kv/namespaces`, { query: { per_page: 5 } })
-			);
-			return { kvNamespaces, buckets, rate: readRateHeaders(response.headers) };
-		},
+		readUsage: () => readUsageOf(plane.http, plane.accountId, resources),
 
 		async findResource(kind, name) {
 			const found = (await paced(() => listResources(kind))).find(

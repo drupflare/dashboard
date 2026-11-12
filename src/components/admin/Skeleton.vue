@@ -11,7 +11,7 @@
 			</div>
 			<div class="flex gap-4">
 				<USkeleton
-					v-for="tab in 5"
+					v-for="tab in 6"
 					:key="tab"
 					class="h-8 w-24"
 				/>

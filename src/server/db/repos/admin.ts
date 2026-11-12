@@ -1,4 +1,6 @@
 import type { CollegeDBClient } from '@earth-app/collegedb';
+import type { WorkView } from '../../../shared/capacity';
+import { failureReason } from '../../../shared/operation-copy';
 import { DIRECTORY_KEY } from '../collegedb';
 
 // everything here is metadata about the platform and never reads a site's content
@@ -50,6 +52,8 @@ export interface AdminOperation {
 	type: string;
 	status: string;
 	verification: string;
+	// the plain reason a failed operation stopped; null while it has not failed
+	reason: string | null;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -214,6 +218,7 @@ interface OperationRow {
 	type: string;
 	status: string;
 	verification: string;
+	failed_step: string | null;
 	created_at: number;
 	updated_at: number;
 }
@@ -224,8 +229,11 @@ export async function listAdminOperations(
 ): Promise<Page<AdminOperation>> {
 	const rows = await eachShard<OperationRow>(
 		db,
-		`SELECT id, organization_id, site_id, type, status, verification, created_at, updated_at
-		 FROM operations WHERE created_at < ? ORDER BY created_at DESC LIMIT ?`,
+		`SELECT o.id, o.organization_id, o.site_id, o.type, o.status, o.verification,
+			(SELECT s.id FROM operation_steps s
+			 WHERE s.operation_id = o.id AND s.state = 'failed' ORDER BY s.position LIMIT 1) AS failed_step,
+			o.created_at, o.updated_at
+		 FROM operations o WHERE o.created_at < ? ORDER BY o.created_at DESC LIMIT ?`,
 		[options.before ?? NEWEST, options.limit + 1]
 	);
 	return toPage(
@@ -236,9 +244,71 @@ export async function listAdminOperations(
 			type: row.type,
 			status: row.status,
 			verification: row.verification,
+			reason: failureReason({
+				type: row.type,
+				status: row.status,
+				failedStep: row.failed_step
+			}),
 			createdAt: row.created_at,
 			updatedAt: row.updated_at
 		})),
 		options.limit
 	);
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RECENT_FAILURES = 20;
+
+export async function adminWork(db: CollegeDBClient, now: number): Promise<WorkView> {
+	const since = now - DAY_MS;
+	const running = await eachShard<{ n: number }>(
+		db,
+		`SELECT COUNT(*) AS n FROM operations WHERE status IN ('running', 'verifying')`
+	);
+	const failed = await eachShard<{ n: number }>(
+		db,
+		`SELECT COUNT(*) AS n FROM operations
+		 WHERE status IN ('failed', 'rolled-back') AND updated_at >= ?`,
+		[since]
+	);
+	const recent = await eachShard<{
+		id: string;
+		type: string;
+		site_id: string | null;
+		status: string;
+		failed_step: string | null;
+		updated_at: number;
+	}>(
+		db,
+		`SELECT o.id, o.type, o.site_id, o.status, o.updated_at,
+			(SELECT s.id FROM operation_steps s
+			 WHERE s.operation_id = o.id AND s.state = 'failed' ORDER BY s.position LIMIT 1) AS failed_step
+		 FROM operations o
+		 WHERE o.status IN ('failed', 'rolled-back') AND o.updated_at >= ?
+		 ORDER BY o.updated_at DESC LIMIT ?`,
+		[since, RECENT_FAILURES]
+	);
+	const sites = await eachShard<{ key: string; n: number }>(
+		db,
+		'SELECT state AS key, COUNT(*) AS n FROM sites GROUP BY state'
+	);
+	return {
+		running: running.reduce((sum, row) => sum + row.n, 0),
+		failedLastDay: failed.reduce((sum, row) => sum + row.n, 0),
+		recentFailures: recent
+			.sort((a, b) => b.updated_at - a.updated_at)
+			.slice(0, RECENT_FAILURES)
+			.map((row) => ({
+				id: row.id,
+				type: row.type,
+				siteId: row.site_id,
+				reason: failureReason({
+					type: row.type,
+					status: row.status,
+					failedStep: row.failed_step
+				}),
+				at: row.updated_at
+			})),
+		sites: countsBy(sites)
+	};
 }

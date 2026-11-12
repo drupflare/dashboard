@@ -1,12 +1,18 @@
 import type { CollegeDBClient } from '@earth-app/collegedb';
 import { getRequestHeader, type EventHandler } from 'h3';
 import { afterEach, describe, expect, it } from 'vitest';
+import capacity from '../../../../src/server/api/v1/admin/capacity.get';
 import operations from '../../../../src/server/api/v1/admin/operations.get';
 import organizations from '../../../../src/server/api/v1/admin/organizations.get';
 import overview from '../../../../src/server/api/v1/admin/overview.get';
 import sites from '../../../../src/server/api/v1/admin/sites.get';
 import users from '../../../../src/server/api/v1/admin/users.get';
 import { platformStanding } from '../../../../src/server/services/boot';
+import {
+	resetCapacityServices,
+	setCapacityServices,
+	type CloudflareReads
+} from '../../../../src/server/services/capacity';
 import { loadFacts, type FactsStore } from '../../../../src/server/services/facts';
 import { setOrganizationServices } from '../../../../src/server/services/organizations';
 import { resetApiDeps } from '../../../../src/server/utils/define-api';
@@ -79,6 +85,7 @@ const inside = { ...asUser, 'x-test-access': ADMIN };
 
 afterEach(() => {
 	resetApiDeps();
+	resetCapacityServices();
 	setOrganizationServices(null);
 });
 
@@ -213,5 +220,110 @@ describe('admin lists', () => {
 		world({ role: 'admin' });
 		expect((await send(users, '/api/v1/admin/users?limit=0', inside)).status).toBe(400);
 		expect((await send(users, '/api/v1/admin/users?limit=101', inside)).status).toBe(400);
+	});
+});
+
+describe('admin capacity', () => {
+	const reads = (over: Partial<CloudflareReads> = {}): CloudflareReads => ({
+		credits: async () => ({
+			state: 'ok',
+			currency: 'USD',
+			balanceCents: 999_958,
+			originalCents: 1_000_000,
+			usedCents: 42,
+			daysRemaining: 363,
+			validFrom: null,
+			validTo: null,
+			projectedDepletion: null
+		}),
+		usage: async () => ({
+			state: 'ok',
+			currency: 'USD',
+			from: '2026-11-01',
+			through: '2026-11-12',
+			totalCents: 500,
+			services: [{ name: 'R2', cents: 500 }]
+		}),
+		headroom: async () => ({
+			state: 'ok',
+			kvNamespaces: 3,
+			kvLimit: 1000,
+			buckets: 2,
+			scripts: 4,
+			databases: 1,
+			rate: { remaining: 1100, quota: 1200, resetSeconds: 250, windowSeconds: 300 }
+		}),
+		...over
+	});
+
+	function install(upstream: CloudflareReads | null) {
+		world({ role: 'admin' });
+		setCapacityServices({
+			getDb: async () => fakeDb({ role: 'admin' }).db,
+			reads: upstream
+		});
+	}
+
+	it('returns the capacity to an admin with a verified Access login', async () => {
+		install(reads());
+		const reply = await send(capacity, '/api/v1/admin/capacity', inside);
+		expect(reply.status).toBe(200);
+		expect(reply.headers.get('cache-control')).toBe('no-store');
+		expect(reply.json).toMatchObject({
+			credits: { state: 'ok', balanceCents: 999_958 },
+			usage: { state: 'ok', services: [{ name: 'R2', cents: 500 }] },
+			headroom: { state: 'ok', kvNamespaces: 3, kvLimit: 1000 },
+			work: { running: 0, failedLastDay: 0, recentFailures: [], sites: { active: 3 } }
+		});
+	});
+
+	it('answers a plain refusal for the credits and still returns everything else', async () => {
+		const { BillingAccessError } =
+			await import('../../../../src/server/integrations/cloudflare-billing');
+		install(
+			reads({
+				credits: async () => {
+					throw new BillingAccessError();
+				}
+			})
+		);
+		const reply = await send(capacity, '/api/v1/admin/capacity', inside);
+		expect(reply.status).toBe(200);
+		expect(reply.json).toMatchObject({
+			credits: { state: 'no_billing_access' },
+			headroom: { state: 'ok' },
+			work: { sites: { active: 3 } }
+		});
+	});
+
+	it('refuses a person with no Access login, no role, an unknown role or an API key', async () => {
+		install(reads());
+		expect((await send(capacity, '/api/v1/admin/capacity', asUser)).status).toBe(403);
+		expect(
+			(await send(capacity, '/api/v1/admin/capacity', { 'x-test-access': ADMIN })).status
+		).toBe(401);
+		expect(
+			(await send(capacity, '/api/v1/admin/capacity', { ...asKey, 'x-test-access': ADMIN }))
+				.status
+		).toBe(403);
+		for (const role of [null, 'owner']) {
+			world({ role });
+			setCapacityServices({ getDb: async () => fakeDb({ role }).db, reads: reads() });
+			expect((await send(capacity, '/api/v1/admin/capacity', inside)).status).toBe(403);
+		}
+	});
+
+	it('does not call Cloudflare for a refused request', async () => {
+		let called = 0;
+		install(
+			reads({
+				credits: async () => {
+					called++;
+					throw new Error('should not run');
+				}
+			})
+		);
+		await send(capacity, '/api/v1/admin/capacity', asUser);
+		expect(called).toBe(0);
 	});
 });

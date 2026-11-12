@@ -98,4 +98,14 @@ describe('plan', () => {
 		expect(names({})).not.toContain('NUXT_GITHUB_CLIENT_SECRET');
 		expect(names({ NUXT_GITHUB_CLIENT_SECRET: 'z' })).toContain('NUXT_GITHUB_CLIENT_SECRET');
 	});
+
+	it('gives the dashboard a billing token only when one was supplied, never the primary token', () => {
+		const names = (extra: Record<string, string>) =>
+			plan('production', { ...values, ...extra })
+				.filter((a) => a.kind === 'worker' && a.worker === 'drupflare-dashboard')
+				.map((a) => a.name);
+		expect(names({})).not.toContain('CF_BILLING_TOKEN');
+		expect(names({ CF_BILLING_TOKEN: 'b' })).toContain('CF_BILLING_TOKEN');
+		expect(names({ CF_BILLING_TOKEN: 'b' })).not.toContain('CF_API_TOKEN');
+	});
 });

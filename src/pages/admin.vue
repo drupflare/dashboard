@@ -9,7 +9,8 @@ const tabs = [
 	{ label: 'Users', icon: 'i-lucide-users', value: 'users' },
 	{ label: 'Organizations', icon: 'i-lucide-building-2', value: 'organizations' },
 	{ label: 'Sites', icon: 'i-lucide-globe', value: 'sites' },
-	{ label: 'Operations', icon: 'i-lucide-list-checks', value: 'operations' }
+	{ label: 'Operations', icon: 'i-lucide-list-checks', value: 'operations' },
+	{ label: 'Capacity', icon: 'i-lucide-gauge', value: 'capacity' }
 ];
 const tab = ref('overview');
 
@@ -52,6 +53,7 @@ const lists = {
 			{ key: 'type', label: 'Type' },
 			{ key: 'status', label: 'Status' },
 			{ key: 'verification', label: 'Verification' },
+			{ key: 'reason', label: 'Reason' },
 			{ key: 'id', label: 'ID', kind: 'mono' as const },
 			{ key: 'createdAt', label: 'Created', kind: 'date' as const }
 		]
@@ -87,6 +89,7 @@ const listFor = computed(() => (tab.value in lists ? lists[tab.value as ListTab]
 				variant="link"
 			/>
 			<AdminOverview v-if="tab === 'overview'" />
+			<AdminCapacity v-else-if="tab === 'capacity'" />
 			<AdminList
 				v-else-if="listFor"
 				:key="tab"
