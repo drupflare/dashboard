@@ -2,6 +2,7 @@ import { siteId } from '@contracts/common';
 import { operationSchema } from '@contracts/operations';
 import { z } from 'zod';
 import { ApiError } from '../../../../../shared/errors';
+import { failedStepError, failedStepId, failureReason } from '../../../../../shared/operation-copy';
 import { listOperationsForSite } from '../../../../db/repos/operations';
 import { getReadySite } from '../../../../db/repos/sites';
 import { siteServices } from '../../../../services/sites';
@@ -23,7 +24,10 @@ export default defineApi(
 			cursor: z.string().optional(),
 			limit: z.string().regex(/^\d+$/).optional()
 		}),
-		response: z.object({ items: z.array(operationSchema), nextCursor: z.string().nullable() })
+		response: z.object({
+			items: z.array(operationSchema.extend({ reason: z.string().nullable() })),
+			nextCursor: z.string().nullable()
+		})
 	},
 	async ({ resource, query }) => {
 		const { orgId, siteId: id } = resource;
@@ -41,6 +45,15 @@ export default defineApi(
 			createdAt: Date.parse(row.operation.createdAt),
 			id: row.operation.id
 		}));
-		return { items: page.items.map((row) => row.operation), nextCursor: page.nextCursor };
+		const items = page.items.map(({ operation }) => ({
+			...operation,
+			reason: failureReason({
+				type: operation.type,
+				status: operation.status,
+				failedStep: failedStepId(operation.steps),
+				failedError: failedStepError(operation.steps)
+			})
+		}));
+		return { items, nextCursor: page.nextCursor };
 	}
 );

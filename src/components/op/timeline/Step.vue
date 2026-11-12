@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { Operation } from '@contracts/operations';
+import { stepLabel } from '~/shared/operation-copy';
 
 type Step = Operation['steps'][number];
 
-const props = defineProps<{ step: Step }>();
+const props = defineProps<{ step: Step; type: string }>();
 
 const STATE: Record<Step['state'], { label: string; icon: string; tone: string }> = {
 	pending: { label: 'Pending', icon: 'i-lucide-circle-dashed', tone: 'text-muted' },
@@ -22,6 +23,7 @@ const STATE: Record<Step['state'], { label: string; icon: string; tone: string }
 };
 
 const meta = computed(() => STATE[props.step.state]);
+const label = computed(() => stepLabel(props.type, props.step.id));
 </script>
 
 <template>
@@ -41,13 +43,7 @@ const meta = computed(() => STATE[props.step.state]);
 				/>
 				<span>{{ meta.label }}</span>
 			</span>
-			<span class="font-medium text-highlighted">{{ step.name }}</span>
+			<span class="font-medium text-highlighted">{{ label }}</span>
 		</div>
-		<p
-			v-if="step.error"
-			class="text-sm text-red-700 dark:text-red-400"
-		>
-			{{ step.error }}
-		</p>
 	</li>
 </template>

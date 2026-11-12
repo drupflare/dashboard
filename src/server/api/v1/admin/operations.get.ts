@@ -12,7 +12,7 @@ export default defineApi(
 		tags: ['admin'],
 		summary: 'List operations',
 		description:
-			'The newest operations first across every shard: type, status and verification.',
+			'The newest operations first across every shard: type, status, verification and, for a failed one, the plain reason it stopped.',
 		query: adminPageQuery,
 		response: adminPageOf(
 			z.object({
@@ -22,6 +22,7 @@ export default defineApi(
 				type: z.string(),
 				status: z.string(),
 				verification: z.string(),
+				reason: z.string().nullable(),
 				createdAt: z.number(),
 				updatedAt: z.number()
 			})

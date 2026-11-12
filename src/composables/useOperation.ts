@@ -11,7 +11,7 @@ const TERMINAL: ReadonlySet<Operation['status']> = new Set([
 	'rolled-back'
 ]);
 
-export function isTerminal(status: Operation['status']): boolean {
+function isTerminal(status: Operation['status']): boolean {
 	return TERMINAL.has(status);
 }
 

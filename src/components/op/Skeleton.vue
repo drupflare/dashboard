@@ -1,6 +1,6 @@
 <template>
 	<div role="status">
-		<span class="sr-only">Loading the operation</span>
+		<span class="sr-only">Loading the activity</span>
 		<div
 			aria-hidden="true"
 			class="flex flex-col gap-6"

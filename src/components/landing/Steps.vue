@@ -1,14 +1,14 @@
 <script setup lang="ts">
 const steps = [
-	'Take the site writer lease',
-	'Reserve quiet-otter-lamp',
-	'Create the site storage',
-	'Upload static assets',
-	'Upload the script',
-	'Write site authority',
-	'Route quiet-otter-lamp.drupflare.app',
-	'Probe the site',
-	'Mark the site active'
+	'Locking the site for this change',
+	'Reserving quiet-otter-lamp',
+	'Creating the site storage',
+	'Uploading static files',
+	'Uploading the site code',
+	"Recording the site's access rules",
+	'Connecting quiet-otter-lamp.drupflare.app',
+	'Checking that the site answers',
+	'Marking the site ready'
 ];
 </script>
 
@@ -33,7 +33,7 @@ const steps = [
 			</li>
 		</ol>
 		<p class="border-t border-default px-5 py-3 text-xs text-muted">
-			An example run. The operation records each step.
+			An example run. The dashboard shows each step as it finishes.
 		</p>
 	</figure>
 </template>

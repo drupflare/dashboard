@@ -32,7 +32,7 @@ const included = [
 	},
 	{
 		term: 'A Record of Every Action',
-		text: 'Creating, updating, backing up, restoring and deleting a site are each an operation, with every step listed.'
+		text: 'Creating, updating, backing up, restoring and deleting a site each show up as an activity, with every step listed.'
 	}
 ];
 </script>

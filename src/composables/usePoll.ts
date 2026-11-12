@@ -8,7 +8,7 @@ export interface PollOptions {
 
 const DEFAULTS: Required<PollOptions> = { minMs: 2000, maxMs: 60_000, factor: 2 };
 
-export function pollDelay(tick: number, options: PollOptions = {}): number {
+function pollDelay(tick: number, options: PollOptions = {}): number {
 	const { minMs, maxMs, factor } = { ...DEFAULTS, ...options };
 	return Math.min(maxMs, minMs * factor ** tick);
 }

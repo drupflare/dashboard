@@ -1,19 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { pollDelay, usePoll } from '~/composables/usePoll';
+import { usePoll } from '~/composables/usePoll';
 
 const options = { minMs: 1000, maxMs: 8000, factor: 2 };
-
-describe('pollDelay', () => {
-	it('grows with each tick and stops at the ceiling', () => {
-		const delays = [0, 1, 2, 3, 4, 5, 6].map((tick) => pollDelay(tick, options));
-		expect(delays[0]).toBe(options.minMs);
-		delays.slice(1).forEach((delay, i) => {
-			expect(delay).toBeGreaterThanOrEqual(delays[i] ?? 0);
-			expect(delay).toBeLessThanOrEqual(options.maxMs);
-		});
-		expect(delays.at(-1)).toBe(options.maxMs);
-	});
-});
 
 describe('usePoll', () => {
 	let hidden = false;
@@ -55,6 +43,8 @@ describe('usePoll', () => {
 		poll.stop();
 
 		expect(gaps.length).toBeGreaterThan(3);
+		// the first wait after the first call is minMs times factor, one tick into the schedule
+		expect(gaps[0]).toBe(options.minMs * options.factor);
 		gaps.slice(1).forEach((gap, i) => {
 			expect(gap).toBeGreaterThanOrEqual(gaps[i] ?? 0);
 		});

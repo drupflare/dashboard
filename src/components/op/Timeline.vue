@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Operation } from '@contracts/operations';
 
-defineProps<{ steps: Operation['steps'] }>();
+defineProps<{ steps: Operation['steps']; type: string }>();
 </script>
 
 <template>
@@ -10,6 +10,7 @@ defineProps<{ steps: Operation['steps'] }>();
 			v-for="step in steps"
 			:key="step.id"
 			:step="step"
+			:type="type"
 		/>
 	</ol>
 </template>
