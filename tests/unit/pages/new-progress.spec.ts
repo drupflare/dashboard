@@ -111,35 +111,36 @@ function revealButton(wrapper: {
 }
 
 describe('create progress', () => {
-	it('shows a skeleton shaped like the timeline until the operation arrives', async () => {
+	it('shows a skeleton shaped like the timeline until the activity arrives', async () => {
 		let release: () => void = () => undefined;
 		const gate = new Promise<void>((resolve) => {
 			release = resolve;
 		});
 		opReply = async () => {
 			await gate;
-			return { body: operation('running', [step('a', 'Probe the site', 'running')]) };
+			return { body: operation('running', [step('verify', 'Probe the site', 'running')]) };
 		};
 		const wrapper = await mountPage();
 
 		const loading = wrapper.find('[role="status"]');
-		expect(loading.text()).toBe('Loading the operation');
+		expect(loading.text()).toBe('Loading the activity');
 		expect(loading.findAll('.animate-pulse').length).toBeGreaterThan(5);
-		expect(wrapper.text()).not.toContain('Loading the operation...');
+		expect(wrapper.text()).not.toContain('Loading the activity...');
 
 		release();
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Probe the site'));
-		expect(wrapper.text()).not.toContain('Loading the operation');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Checking that the site answers'));
+		expect(wrapper.text()).not.toContain('Probe the site');
+		expect(wrapper.text()).not.toContain('Loading the activity');
 	});
 
-	it('renders every step state with an icon and text, and names the running step', async () => {
+	it('renders every step state with an icon and text, and names the running step in plain words', async () => {
 		opReply = () => ({
 			body: operation('running', [
-				step('a', 'Take the site writer lease', 'succeeded'),
-				step('b', 'Upload static assets', 'running'),
-				step('c', 'Upload the script', 'pending'),
-				step('d', 'Probe the site', 'skipped'),
-				step('e', 'Route the hostname', 'failed')
+				step('lease', 'Take the site writer lease', 'succeeded'),
+				step('assets', 'Upload static assets', 'running'),
+				step('upload-script', 'Upload the script', 'pending'),
+				step('verify', 'Probe the site', 'skipped'),
+				step('route', 'Route quiet-oak-harbor.drupflare.app', 'failed')
 			])
 		});
 		const wrapper = await mountPage();
@@ -150,7 +151,21 @@ describe('create progress', () => {
 			expect(text).toContain(label);
 		}
 		expect(wrapper.html()).toContain('loader-circle');
-		expect(text).toContain('Now: Upload static assets');
+		expect(text).toContain('Now: Uploading static files');
+		expect(text).toContain('Locking the site for this change');
+		expect(text).toContain('Connecting the site address');
+		expect(text).not.toContain('Take the site writer lease');
+		expect(text).not.toContain('quiet-oak-harbor.drupflare.app');
+	});
+
+	it('names an unknown step in a generic phrase and never shows its raw name', async () => {
+		opReply = () => ({
+			body: operation('running', [step('made-up', 'Reserve the widget table', 'running')])
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Now: Working on this step'));
+		expect(wrapper.text()).not.toContain('widget');
 	});
 
 	it('reveals the admin password once, then shows Already Shown on a second reveal', async () => {
@@ -232,26 +247,30 @@ describe('create progress', () => {
 		expect(document.body.innerHTML).not.toContain(password);
 	});
 
-	it('shows the failed step, the server reason, the rollback and a Try Again that starts over', async () => {
+	it('shows the failed step in plain words, the plain reason and the rollback', async () => {
 		opReply = () => ({
 			body: {
 				...operation('rolled-back', [
-					step('a', 'Reserve quiet-oak-harbor', 'succeeded'),
-					step('b', 'Upload static assets', 'failed', 'Upload rejected by the worker')
+					step('reserve-name', 'Reserve quiet-oak-harbor', 'succeeded'),
+					step(
+						'assets',
+						'Upload static assets',
+						'failed',
+						'assets: name_taken: raw 10000'
+					)
 				]),
-				finalObservation: null
+				finalObservation: { at: '2026-01-01T00:00:00Z', summary: 'assets: raw summary' }
 			}
 		});
 		const wrapper = await mountPage();
 
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Could Not Create the Site'));
-		expect(wrapper.text()).toContain('Upload rejected by the worker');
-		expect(wrapper.text()).toContain('Failed step: Upload static assets');
+		expect(wrapper.text()).toContain('Stopped while uploading static files.');
+		expect(wrapper.text()).toContain('Failed step: Uploading static files');
 		expect(wrapper.text()).toContain('rolled back');
-
-		const retry = wrapper.findAll('button').find((b) => b.text().trim() === 'Try Again');
-		await retry?.trigger('click');
-		await vi.waitFor(() => expect(useRouter().currentRoute.value.path).toBe('/new'));
+		expect(wrapper.text()).not.toContain('name_taken');
+		expect(wrapper.text()).not.toContain('raw summary');
+		expect(wrapper.text()).not.toContain('assets:');
 	});
 
 	it('shows the operation as not found without an error banner', async () => {
@@ -261,20 +280,20 @@ describe('create progress', () => {
 		});
 		const wrapper = await mountPage();
 
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Operation Not Found'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Activity Not Found'));
 	});
 
-	it('reports a failed operation read with its request id', async () => {
+	it('reports a failed activity read with its request id', async () => {
 		opReply = () => failure('internal', 'Failed', 'req_read');
 		const wrapper = await mountPage();
 
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Could Not Load the Operation'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Could Not Load the Activity'));
 		expect(wrapper.text()).toContain('req_read');
 	});
 });
 
 describe('progress for each operation type', () => {
-	const ended = [step('a', 'Take the site writer lease', 'succeeded')];
+	const ended = [step('lease', 'Take the site writer lease', 'succeeded')];
 	const wording: [string, string, string, string][] = [
 		[
 			'site.create',
@@ -319,13 +338,21 @@ describe('progress for each operation type', () => {
 			opReply = () => ({
 				body: operation(
 					'failed',
-					[step('a', 'Take the site writer lease', 'failed', 'The lease was lost')],
+					[
+						step(
+							'lease',
+							'Take the site writer lease',
+							'failed',
+							'lease: the lease was lost'
+						)
+					],
 					type
 				)
 			});
 			const failed = await mountPage();
 			await vi.waitFor(() => expect(failed.text()).toContain(failureTitle));
-			expect(failed.text()).toContain('The lease was lost');
+			expect(failed.text()).toContain('Stopped while locking the site for this change.');
+			expect(failed.text()).not.toContain('the lease was lost');
 		});
 	}
 
@@ -362,16 +389,158 @@ describe('progress for each operation type', () => {
 		opReply = () => ({
 			body: operation(
 				'failed',
-				[step('a', 'Drop the hostname routes', 'failed', 'Cloudflare timed out')],
+				[step('route', 'Drop the hostname routes', 'failed', 'Cloudflare timed out')],
 				'site.delete'
 			)
 		});
 		const wrapper = await mountPage();
 
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Could Not Delete the Site'));
+		expect(wrapper.text()).toContain('Stopped while removing the site address.');
+		expect(wrapper.text()).not.toContain('Cloudflare timed out');
 		expect(wrapper.text()).toContain('Deleting the site again finishes it');
 		const back = wrapper.findAll('button').find((b) => b.text().trim() === 'Back to the Site');
 		await back?.trigger('click');
 		await vi.waitFor(() => expect(useRouter().currentRoute.value.path).toBe('/sites/site_1'));
+	});
+});
+
+describe('retry and cleanup of a failed create', () => {
+	const retryKey = `POST /api/v1/orgs/${personal.id}/operations/op_1/retry`;
+	const cleanupKey = `POST /api/v1/orgs/${personal.id}/sites/site_1/cleanup`;
+	const failedCreate = () =>
+		operation('rolled-back', [
+			step('assets', 'Upload static assets', 'failed', 'assets: name_taken')
+		]);
+	const button = (wrapper: Awaited<ReturnType<typeof mountPage>>, label: string) =>
+		wrapper.findAll('button').find((b) => b.text().trim() === label);
+
+	function registerWith(extra: Record<string, () => Reply>) {
+		cleanup();
+		cleanup = registerApi({
+			'GET /api/v1/me': { body: me },
+			'GET /api/v1/me/organizations': { body: { items: [personal], nextCursor: null } },
+			[opKey]: () => opReply(),
+			[siteKey]: { body: site },
+			[secretKey]: () => secretReply(),
+			...extra
+		});
+	}
+
+	it('starts the retry and opens the progress page of the new attempt', async () => {
+		opReply = () => ({ body: failedCreate() });
+		registerWith({
+			[retryKey]: () => ({
+				status: 202,
+				body: { ...operation('planned', [], 'site.create'), id: 'op_2' }
+			})
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(button(wrapper, 'Try Again')).toBeDefined());
+		await button(wrapper, 'Try Again')?.trigger('click');
+
+		await vi.waitFor(() =>
+			expect(useRouter().currentRoute.value.path).toBe('/new/progress/op_2')
+		);
+		const call = calls.find((entry) => entry.path.endsWith('/retry'));
+		expect(call?.headers['idempotency-key']).toBeTruthy();
+	});
+
+	it('shows the plain reason when the retry is refused and keeps the failure panel', async () => {
+		opReply = () => ({ body: failedCreate() });
+		registerWith({
+			[retryKey]: () => ({
+				status: 409,
+				body: {
+					code: 'conflict',
+					message: 'Another change to this site is still running',
+					details: {
+						reason: 'site_busy',
+						operationId: 'op_9',
+						operation: 'site.upgrade'
+					},
+					requestId: 'req_busy'
+				}
+			})
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(button(wrapper, 'Try Again')).toBeDefined());
+		await button(wrapper, 'Try Again')?.trigger('click');
+
+		await vi.waitFor(() =>
+			expect(wrapper.findAll('[role="alert"]').map((a) => a.text())).toContain(
+				'Another change to this site is still running. Wait for it to finish, then try again.'
+			)
+		);
+		expect(wrapper.text()).not.toContain('site_busy');
+		expect(wrapper.text()).toContain('Could Not Create the Site');
+	});
+
+	it('offers no Try Again for a failed purge, and shows its plain reason', async () => {
+		opReply = () => ({
+			body: operation(
+				'failed',
+				[step('lease', 'Take the site writer lease', 'failed', 'lease: lost')],
+				'site.purge'
+			)
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Stopped while locking the site'));
+		expect(button(wrapper, 'Try Again')).toBeUndefined();
+		expect(button(wrapper, 'Remove This Attempt')).toBeUndefined();
+	});
+
+	it('removes the first attempt, then offers Start Over', async () => {
+		opReply = () => ({ body: failedCreate() });
+		registerWith({
+			[cleanupKey]: () => ({
+				status: 202,
+				body: { ...operation('planned', [], 'repair.run'), id: 'op_3' }
+			}),
+			[`GET /api/v1/orgs/${personal.id}/operations/op_3`]: () => ({
+				body: { ...operation('succeeded', [], 'repair.run'), id: 'op_3' }
+			})
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(button(wrapper, 'Remove This Attempt')).toBeDefined());
+		await button(wrapper, 'Remove This Attempt')?.trigger('click');
+
+		await vi.waitFor(() => expect(wrapper.find('a[href="/new"]').text()).toBe('Start Over'));
+		expect(button(wrapper, 'Remove This Attempt')).toBeUndefined();
+		const call = calls.find((entry) => entry.path.endsWith('/cleanup'));
+		expect(call?.headers['idempotency-key']).toBeTruthy();
+	});
+
+	it('refuses to remove a site that went live, and says why', async () => {
+		opReply = () => ({ body: failedCreate() });
+		registerWith({
+			[cleanupKey]: () => ({
+				status: 409,
+				body: {
+					code: 'conflict',
+					message: 'This site is live, so it is not cleaned up',
+					details: { reason: 'site_active' },
+					requestId: 'req_live'
+				}
+			})
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(button(wrapper, 'Remove This Attempt')).toBeDefined());
+		await button(wrapper, 'Remove This Attempt')?.trigger('click');
+
+		await vi.waitFor(() =>
+			expect(
+				wrapper
+					.findAll('[role="alert"]')
+					.map((a) => a.text())
+					.join(' ')
+			).toContain('This site is live, so it is not removed.')
+		);
+		expect(button(wrapper, 'Start Over')).toBeUndefined();
 	});
 });

@@ -83,8 +83,42 @@ describe('site page', () => {
 		expect(wrapper.text()).toContain('quiet-oak-harbor.drupflare.app');
 		expect(wrapper.text()).toContain('Active');
 		await vi.waitFor(() => expect(wrapper.findAll('li')).toHaveLength(1));
-		expect(wrapper.text()).toContain('site.create');
+		expect(wrapper.text()).toContain('Create');
+		expect(wrapper.text()).not.toContain('site.create');
 		expect(wrapper.text()).toContain('Succeeded');
+	});
+
+	it('shows the plain reason on a failed activity row and a generic label for an unknown type', async () => {
+		opsReply = () => ({
+			body: {
+				items: [
+					{
+						id: 'op_2',
+						type: 'site.upgrade',
+						status: 'rolled-back',
+						reason: 'Stopped while checking that the site answers.',
+						updatedAt: '2026-01-01T00:00:00Z'
+					},
+					{
+						id: 'op_3',
+						type: 'repair.run',
+						status: 'succeeded',
+						reason: null,
+						updatedAt: '2026-01-01T00:00:00Z'
+					}
+				],
+				nextCursor: null
+			}
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.findAll('li')).toHaveLength(2));
+		const [failed, other] = wrapper.findAll('li');
+		expect(failed?.text()).toContain('Update');
+		expect(failed?.text()).toContain('Stopped while checking that the site answers.');
+		expect(other?.text()).toContain('Change');
+		expect(other?.text()).not.toContain('repair.run');
+		expect(other?.text()).not.toContain('Stopped');
 	});
 
 	it('links Open Admin for a Drupal site', async () => {
@@ -130,14 +164,15 @@ describe('site page', () => {
 		const wrapper = await mountPage();
 
 		expect(wrapper.text()).toContain('Loading the site');
-		expect(wrapper.text()).toContain('Loading operations');
+		expect(wrapper.text()).toContain('Loading activity');
 		expect(wrapper.findAll('.animate-pulse').length).toBeGreaterThan(8);
 		expect(wrapper.text()).not.toContain('Loading the site...');
 
 		release();
 		await vi.waitFor(() => expect(wrapper.find('h1').text()).toBe('quiet-oak-harbor'));
-		await vi.waitFor(() => expect(wrapper.text()).toContain('No Operations Yet'));
-		expect(wrapper.text()).not.toContain('Loading operations');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('No Activity Yet'));
+		expect(wrapper.text()).not.toContain('Loading activity');
+		expect(wrapper.text()).not.toContain('Operation');
 	});
 
 	it('shows the server message when the site cannot be loaded', async () => {
@@ -165,5 +200,184 @@ describe('site page', () => {
 		const wrapper = await mountPage();
 
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Site Not Found'));
+	});
+});
+
+describe('site page retry', () => {
+	const failedRows = () => ({
+		body: {
+			items: [
+				{
+					id: 'op_2',
+					type: 'site.upgrade',
+					status: 'failed',
+					reason: 'Stopped while checking that the site answers.',
+					updatedAt: '2026-01-01T00:00:00Z'
+				},
+				{
+					id: 'op_3',
+					type: 'site.delete',
+					status: 'failed',
+					reason: 'Stopped while removing the site address.',
+					updatedAt: '2026-01-01T00:00:00Z'
+				},
+				{
+					id: 'op_4',
+					type: 'backup.create',
+					status: 'rolled-back',
+					reason: null,
+					updatedAt: '2026-01-01T00:00:00Z'
+				}
+			],
+			nextCursor: null
+		}
+	});
+
+	function registerWith(extra: Record<string, () => Reply>) {
+		cleanup();
+		cleanup = registerApi({
+			'GET /api/v1/me': { body: me },
+			'GET /api/v1/sites/site_1': () => siteReply(),
+			'GET /api/v1/sites/site_1/operations': () => failedRows(),
+			'GET /api/v1/orgs/org_personal/sites/site_1/first-run-secret': () => stateReply(),
+			...extra
+		});
+	}
+
+	it('offers Try Again on failed rows that can be retried, and opens the progress page of the retry', async () => {
+		registerWith({
+			'POST /api/v1/orgs/org_personal/operations/op_2/retry': () => ({
+				status: 202,
+				body: { id: 'op_9', type: 'site.upgrade', status: 'planned', targetIds: ['site_1'] }
+			})
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.findAll('li')).toHaveLength(3));
+		const [upgrade, deleted, backup] = wrapper.findAll('li');
+		expect(upgrade?.findAll('button').map((b) => b.text().trim())).toEqual(['Try Again']);
+		expect(deleted?.findAll('button')).toHaveLength(0);
+		expect(backup?.findAll('button').map((b) => b.text().trim())).toEqual(['Try Again']);
+
+		await upgrade?.findAll('button')[0]?.trigger('click');
+		await vi.waitFor(() =>
+			expect(useRouter().currentRoute.value.path).toBe('/new/progress/op_9')
+		);
+	});
+
+	it('shows the plain reason beside the list when the retry is refused', async () => {
+		registerWith({
+			'POST /api/v1/orgs/org_personal/operations/op_2/retry': () => ({
+				status: 422,
+				body: {
+					code: 'unprocessable',
+					message: 'This site is not live, so the work cannot be retried',
+					details: { reason: 'site_not_live' },
+					requestId: 'req_live'
+				}
+			})
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.findAll('li')).toHaveLength(3));
+		await wrapper.findAll('li')[0]?.findAll('button')[0]?.trigger('click');
+
+		await vi.waitFor(() =>
+			expect(wrapper.findAll('[role="alert"]').map((a) => a.text())).toContain(
+				'The site is not live, so this cannot be tried again.'
+			)
+		);
+	});
+});
+
+describe('adopting a self-managed site', () => {
+	const selfManaged = () => ({ ...site('drupal'), plane: 'self-managed' });
+
+	it('shows Adopt only for an active self-managed site', async () => {
+		siteReply = () => ({ body: selfManaged() });
+		const wrapper = await mountPage();
+		await vi.waitFor(() =>
+			expect(wrapper.findAll('button').some((button) => button.text() === 'Adopt')).toBe(true)
+		);
+	});
+
+	it('does not show Adopt for a managed site', async () => {
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(wrapper.findAll('li')).toHaveLength(1));
+		expect(wrapper.findAll('button').some((button) => button.text() === 'Adopt')).toBe(false);
+	});
+
+	it('does not show Adopt for a self-managed site that is no longer active', async () => {
+		siteReply = () => ({ body: { ...selfManaged(), state: 'tombstoned' } });
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(wrapper.findAll('li')).toHaveLength(1));
+		expect(wrapper.findAll('button').some((button) => button.text() === 'Adopt')).toBe(false);
+	});
+
+	it('waits for the activity list before it offers Adopt', async () => {
+		siteReply = () => ({ body: selfManaged() });
+		let release: () => void = () => undefined;
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const original = opsReply;
+		opsReply = async () => {
+			await gate;
+			return original();
+		};
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(wrapper.find('h1').exists()).toBe(true));
+		expect(wrapper.findAll('button').some((button) => button.text() === 'Adopt')).toBe(false);
+		release();
+		await vi.waitFor(() =>
+			expect(wrapper.findAll('button').some((button) => button.text() === 'Adopt')).toBe(true)
+		);
+	});
+
+	it('shows a link to the managed copy instead of Adopt once an adoption succeeded', async () => {
+		siteReply = () => ({ body: selfManaged() });
+		opsReply = () => ({
+			body: {
+				items: [
+					{
+						id: 'op_9',
+						type: 'site.adopt',
+						status: 'succeeded',
+						targetIds: ['site_9', 'site_1'],
+						reason: null,
+						updatedAt: '2026-01-01T00:00:00Z'
+					}
+				],
+				nextCursor: null
+			}
+		});
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(wrapper.text()).toContain('This site was adopted.'));
+		expect(wrapper.find('a[href="/sites/site_9"]').text()).toBe('Open the managed copy');
+		expect(wrapper.findAll('button').some((button) => button.text() === 'Adopt')).toBe(false);
+	});
+
+	it('still offers Adopt when the only adoption failed', async () => {
+		siteReply = () => ({ body: selfManaged() });
+		opsReply = () => ({
+			body: {
+				items: [
+					{
+						id: 'op_8',
+						type: 'site.adopt',
+						status: 'rolled-back',
+						targetIds: ['site_8', 'site_1'],
+						reason: 'Stopped while copying your site database.',
+						updatedAt: '2026-01-01T00:00:00Z'
+					}
+				],
+				nextCursor: null
+			}
+		});
+		const wrapper = await mountPage();
+		await vi.waitFor(() =>
+			expect(wrapper.findAll('button').some((button) => button.text() === 'Adopt')).toBe(true)
+		);
+		expect(wrapper.text()).toContain('Stopped while copying your site database.');
 	});
 });

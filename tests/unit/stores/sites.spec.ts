@@ -180,3 +180,51 @@ describe('sites store remove', () => {
 		expect(useSessionStore().me).toBeNull();
 	});
 });
+
+describe('sites store cleanup', () => {
+	const cleanupPath = 'POST /api/v1/orgs/org_a/sites/site_1/cleanup';
+
+	it('sends a key, returns the cleanup operation and drops the cached site and list', async () => {
+		cleanup = registerApi({
+			[sitesPath('org_a')]: { body: { items: [site('site_1', 'org_a')], nextCursor: null } },
+			[cleanupPath]: {
+				status: 202,
+				body: {
+					id: 'op_clean',
+					type: 'repair.run',
+					status: 'planned',
+					targetIds: ['site_1']
+				}
+			}
+		});
+		const sites = useSitesStore();
+		await sites.load('org_a');
+
+		const operation = await sites.cleanup('org_a', 'site_1');
+
+		expect(operation).toMatchObject({ id: 'op_clean', type: 'repair.run' });
+		const call = calls.find((entry) => entry.path.endsWith('/cleanup'));
+		expect(call?.headers['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);
+		expect(sites.lists.get('org_a')).toBeUndefined();
+		expect(sites.byId.has('site_1')).toBe(false);
+	});
+
+	it('throws the refusal with its reason when the site is live', async () => {
+		cleanup = registerApi({
+			[cleanupPath]: {
+				status: 409,
+				body: {
+					code: 'conflict',
+					message: 'This site is live, so it is not cleaned up',
+					details: { reason: 'site_active' },
+					requestId: 'req_live'
+				}
+			}
+		});
+
+		await expect(useSitesStore().cleanup('org_a', 'site_1')).rejects.toMatchObject({
+			status: 409,
+			details: { reason: 'site_active' }
+		});
+	});
+});

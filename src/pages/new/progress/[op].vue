@@ -1,12 +1,26 @@
 <script setup lang="ts">
+import type { Operation } from '@contracts/operations';
 import type { ApiClientError } from '~/composables/useApi';
 import { toApiClientError, useApi } from '~/composables/useApi';
 import { adminUrlFor } from '~/composables/useOnboarding';
 import { useOperation } from '~/composables/useOperation';
-import { copyFor } from '~/shared/operation-copy';
-import type { SiteSummary } from '~/stores/sites';
+import { usePoll } from '~/composables/usePoll';
+import {
+	canRetry,
+	copyFor,
+	failedStepError,
+	failedStepId,
+	failureReason,
+	LARGER_RESTORE_TITLE,
+	needsLargerRestore,
+	refusalReason,
+	stepLabel
+} from '~/shared/operation-copy';
+import { useOperationsStore } from '~/stores/operations';
+import { type SiteSummary, useSitesStore } from '~/stores/sites';
 
-definePageMeta({ middleware: ['auth', 'org'] });
+// a retry opens a new operation on the same route, so the page remounts per operation id
+definePageMeta({ middleware: ['auth', 'org'], key: (route) => route.fullPath });
 
 const route = useRoute();
 const router = useRouter();
@@ -62,18 +76,34 @@ watch(
 
 const reason = computed(
 	() =>
-		failedStep.value?.error ??
-		operation.value?.finalObservation?.summary ??
-		'The server did not give a reason.'
+		failureReason({
+			type: operation.value?.type,
+			status: operation.value?.status ?? '',
+			failedStep: failedStepId(operation.value?.steps ?? []),
+			failedError: failedStepError(operation.value?.steps ?? [])
+		}) ?? ''
+);
+
+const failureTitle = computed(() =>
+	needsLargerRestore({
+		type: operation.value?.type,
+		failedStep: failedStepId(operation.value?.steps ?? []),
+		failedError: failedStepError(operation.value?.steps ?? [])
+	})
+		? LARGER_RESTORE_TITLE
+		: copy.value.failure
 );
 
 const rollbackText = computed(() => {
 	if (operation.value?.type === 'site.delete') {
 		return 'The delete stopped part way. Deleting the site again finishes it.';
 	}
+	if (operation.value?.type === 'site.adopt') {
+		return 'Your original site was not changed. Whatever the adoption made was removed.';
+	}
 	return operation.value?.status === 'rolled-back'
 		? 'Changes made before the failure were rolled back.'
-		: 'No rollback is recorded for this operation.';
+		: 'No rollback is recorded for this activity.';
 });
 
 const adminUrl = computed(() => (site.value ? adminUrlFor(site.value) : null));
@@ -86,6 +116,85 @@ const successLink = computed(() => (operation.value ? copy.value.link(operation.
 function followFailureLink(): void {
 	if (failureLink.value) void router.push(failureLink.value.to);
 }
+
+const operations = useOperationsStore();
+const sites = useSitesStore();
+const actionError = ref<string | null>(null);
+const retrying = ref(false);
+const removing = ref(false);
+const retryable = computed(() => canRetry(operation.value?.type, operation.value?.status ?? ''));
+// a create that failed leaves a half-made site behind; only the create has that attempt to remove
+const attemptFailed = computed(
+	() =>
+		showsSite.value &&
+		(operation.value?.status === 'failed' || operation.value?.status === 'rolled-back')
+);
+
+const cleanupOp = ref<Operation | null>(null);
+const cleanupRunning = computed(() => {
+	const status = cleanupOp.value?.status;
+	return status === 'planned' || status === 'running' || status === 'verifying';
+});
+// a cleanup of a site that is already gone answers with the create it was cleaning up
+const attemptRemoved = computed(
+	() =>
+		cleanupOp.value !== null &&
+		(cleanupOp.value.status === 'succeeded' || cleanupOp.value.type !== 'repair.run')
+);
+
+const cleanupReason = computed(() =>
+	cleanupOp.value && !attemptRemoved.value
+		? failureReason({
+				type: cleanupOp.value.type,
+				status: cleanupOp.value.status,
+				failedStep: failedStepId(cleanupOp.value.steps)
+			})
+		: null
+);
+
+const cleanupPoll = usePoll(async () => {
+	const org = orgId.value;
+	const id = cleanupOp.value?.id;
+	if (!org || !id) return;
+	const next = await operations.fetchOne(org, id);
+	if (next === null) {
+		cleanupPoll.stop();
+		return;
+	}
+	cleanupOp.value = next;
+	if (!['planned', 'running', 'verifying'].includes(next.status)) cleanupPoll.stop();
+});
+
+async function tryAgain(): Promise<void> {
+	const org = orgId.value;
+	if (!org) return;
+	actionError.value = null;
+	retrying.value = true;
+	try {
+		const next = await operations.retry(org, opId);
+		await router.push(`/new/progress/${encodeURIComponent(next.id)}`);
+	} catch (failure) {
+		actionError.value = refusalReason(toApiClientError(failure));
+	} finally {
+		retrying.value = false;
+	}
+}
+
+async function removeAttempt(): Promise<void> {
+	const org = orgId.value;
+	const hidden = operation.value?.targetIds[0];
+	if (!org || !hidden) return;
+	actionError.value = null;
+	removing.value = true;
+	try {
+		cleanupOp.value = await sites.cleanup(org, hidden);
+		cleanupPoll.start();
+	} catch (failure) {
+		actionError.value = refusalReason(toApiClientError(failure));
+	} finally {
+		removing.value = false;
+	}
+}
 </script>
 
 <template>
@@ -95,7 +204,7 @@ function followFailureLink(): void {
 
 			<UiErrorState
 				v-if="missing"
-				title="Operation Not Found"
+				title="Activity Not Found"
 				text="Check the link, or start a new site."
 			>
 				<UButton
@@ -108,7 +217,7 @@ function followFailureLink(): void {
 
 			<UiErrorState
 				v-else-if="error && !operation"
-				title="Could Not Load the Operation"
+				title="Could Not Load the Activity"
 				:text="error.message"
 				:request-id="error.requestId"
 			>
@@ -130,7 +239,7 @@ function followFailureLink(): void {
 						role="status"
 						class="text-sm text-muted"
 					>
-						Now: {{ runningStep.name }}
+						Now: {{ stepLabel(operation.type, runningStep.id) }}
 					</p>
 				</div>
 
@@ -141,24 +250,69 @@ function followFailureLink(): void {
 					{{ copy.running }}
 				</p>
 
-				<OpTimeline :steps="operation.steps" />
+				<OpTimeline
+					:steps="operation.steps"
+					:type="operation.type"
+				/>
 
 				<UiErrorState
 					v-if="failed"
-					:title="copy.failure"
+					:title="failureTitle"
 					:text="reason"
 				>
 					<div class="flex flex-col gap-2 text-sm text-muted">
-						<p v-if="failedStep">Failed step: {{ failedStep.name }}</p>
+						<p v-if="failedStep">
+							Failed step: {{ stepLabel(operation.type, failedStep.id) }}
+						</p>
 						<p>{{ rollbackText }}</p>
 					</div>
-					<UButton
-						v-if="failureLink"
-						color="neutral"
-						@click="followFailureLink"
+					<div class="flex flex-wrap gap-3">
+						<UButton
+							v-if="retryable"
+							color="neutral"
+							:loading="retrying"
+							@click="tryAgain"
+						>
+							Try Again
+						</UButton>
+						<UButton
+							v-if="failureLink"
+							color="neutral"
+							@click="followFailureLink"
+						>
+							{{ failureLink.label }}
+						</UButton>
+						<UButton
+							v-if="attemptFailed && !attemptRemoved && !cleanupRunning"
+							color="neutral"
+							variant="outline"
+							:loading="removing"
+							@click="removeAttempt"
+						>
+							Remove This Attempt
+						</UButton>
+						<UButton
+							v-if="attemptRemoved"
+							color="primary"
+							to="/new"
+						>
+							Start Over
+						</UButton>
+					</div>
+					<p
+						v-if="cleanupRunning"
+						role="status"
+						class="text-sm text-muted"
 					>
-						{{ failureLink.label }}
-					</UButton>
+						Removing the first attempt. Leaving this page does not stop it.
+					</p>
+					<p
+						v-if="actionError || cleanupReason"
+						role="alert"
+						class="text-sm text-red-700 dark:text-red-400"
+					>
+						{{ actionError ?? cleanupReason }}
+					</p>
 				</UiErrorState>
 
 				<section

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { useOperationsStore } from '~/stores/operations';
-import { clearBrowserState, failure, registerApi } from './store-support';
+import { calls, clearBrowserState, failure, registerApi } from './store-support';
 
 let cleanup: () => void = () => undefined;
 
@@ -42,6 +42,46 @@ describe('operations store', () => {
 
 		const store = useOperationsStore();
 		await expect(store.fetchOne('org_1', 'op_bad')).rejects.toMatchObject({ status: 500 });
+		expect(store.byId.has('op_bad')).toBe(false);
+	});
+});
+
+describe('operations store retry', () => {
+	const retryPath = 'POST /api/v1/orgs/org_1/operations/op_bad/retry';
+
+	it('sends a key, caches the new operation and returns it', async () => {
+		cleanup = registerApi({
+			[retryPath]: {
+				status: 202,
+				body: { id: 'op_new', status: 'planned', type: 'site.create' }
+			}
+		});
+
+		const store = useOperationsStore();
+		await expect(store.retry('org_1', 'op_bad')).resolves.toMatchObject({ id: 'op_new' });
+		expect(store.byId.get('op_new')).toMatchObject({ id: 'op_new' });
+		const call = calls.find((entry) => entry.path.endsWith('/retry'));
+		expect(call?.headers['idempotency-key']).toMatch(/^[0-9a-f-]{36}$/);
+	});
+
+	it('throws the refusal with its reason and leaves the cache alone', async () => {
+		cleanup = registerApi({
+			[retryPath]: {
+				status: 409,
+				body: {
+					code: 'conflict',
+					message: 'Only an operation that failed can be retried.',
+					details: { reason: 'not_failed', status: 'running' },
+					requestId: 'req_nf'
+				}
+			}
+		});
+
+		const store = useOperationsStore();
+		await expect(store.retry('org_1', 'op_bad')).rejects.toMatchObject({
+			status: 409,
+			details: { reason: 'not_failed' }
+		});
 		expect(store.byId.has('op_bad')).toBe(false);
 	});
 });

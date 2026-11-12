@@ -135,6 +135,25 @@ export const useSitesStore = defineStore('sites', {
 				throw failure;
 			}
 		},
+		// the adoption makes a new site, so the list reads fresh once it has started
+		async adopt(orgId: string, siteId: string, idempotencyKey: string): Promise<Operation> {
+			const fetcher = $fetch as unknown as (
+				url: string,
+				options: { method: 'POST'; headers: Record<string, string> }
+			) => Promise<Operation>;
+			try {
+				const operation = await fetcher(
+					`/api/v1/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/adopt`,
+					{ method: 'POST', headers: { 'Idempotency-Key': idempotencyKey } }
+				);
+				this.lists.delete(orgId);
+				return operation;
+			} catch (error) {
+				const failure = toApiClientError(error);
+				if (failure.status === 401) useSessionStore().clear();
+				throw failure;
+			}
+		},
 		// the delete runs as an operation; the list reads fresh once it has started
 		async remove(
 			orgId: string,
@@ -159,6 +178,26 @@ export const useSitesStore = defineStore('sites', {
 						body: { confirm }
 					}
 				);
+				this.lists.delete(orgId);
+				return operation;
+			} catch (error) {
+				const failure = toApiClientError(error);
+				if (failure.status === 401) useSessionStore().clear();
+				throw failure;
+			}
+		},
+		// cleanup removes a half-made site, so the cached row and list are stale
+		async cleanup(orgId: string, siteId: string): Promise<Operation> {
+			const fetcher = $fetch as unknown as (
+				url: string,
+				options: { method: 'POST'; headers: Record<string, string> }
+			) => Promise<Operation>;
+			try {
+				const operation = await fetcher(
+					`/api/v1/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/cleanup`,
+					{ method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() } }
+				);
+				this.byId.delete(siteId);
 				this.lists.delete(orgId);
 				return operation;
 			} catch (error) {
