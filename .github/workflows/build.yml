@@ -135,7 +135,6 @@ jobs:
         run: |
           bun scripts/render-deploy.ts dispatch staging
           bun scripts/render-deploy.ts engine staging
-          bun scripts/render-deploy.ts dashboard staging
       - name: Deploy the Dispatch Worker
         uses: cloudflare/wrangler-action@v3
         with:
@@ -150,9 +149,3 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: engine
           command: deploy -c wrangler.deploy.json
-      - name: Deploy the Dashboard
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy -c .output/server/wrangler.deploy.json
