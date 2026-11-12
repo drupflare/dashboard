@@ -342,10 +342,11 @@ describe('GET /api/v1/orgs/:orgId/entitlement', () => {
 		if (!result.ok) throw new Error(result.reason);
 		return result.entitlement;
 	});
+	const billingAccountOf = vi.fn(async () => false);
 
 	it('gives any member the plan, with the custom code feature off on the free plan', async () => {
 		world('viewer');
-		setSiteServices({ planOf });
+		setSiteServices({ planOf, billingAccountOf });
 		const reply = await send(entitlementRead, route, {
 			path: `/api/v1/orgs/${ORG}/entitlement`,
 			headers: asUser
@@ -353,9 +354,20 @@ describe('GET /api/v1/orgs/:orgId/entitlement', () => {
 		expect(reply.status).toBe(200);
 		expect(reply.json).toMatchObject({
 			planId: FREE_PLAN_ID,
-			features: { customCode: false }
+			features: { customCode: false },
+			billingAccount: false
 		});
 		expect(planOf).toHaveBeenCalledWith(ORG);
+	});
+
+	it('says whether the organization has a billing account', async () => {
+		world('viewer');
+		setSiteServices({ planOf, billingAccountOf: async () => true });
+		const reply = await send(entitlementRead, route, {
+			path: `/api/v1/orgs/${ORG}/entitlement`,
+			headers: asUser
+		});
+		expect(reply.json).toMatchObject({ billingAccount: true });
 	});
 
 	it('answers 404 to a caller with no relationship to the path organisation, and never reads', async () => {

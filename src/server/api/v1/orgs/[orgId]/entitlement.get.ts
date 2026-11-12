@@ -15,7 +15,7 @@ export default defineApi(
 		tags: ['orgs'],
 		summary: 'Read the plan',
 		description:
-			'Reads what the organisation in the path may do on its current plan. A null limit is unknown or negotiated and counts as no allowance. Only an activated subscription changes the plan; every other account reads as the free plan.',
+			'Reads what the organisation in the path may do on its current plan. A null limit is unknown or negotiated and counts as no allowance. Only an activated subscription changes the plan; every other account reads as the free plan. billingAccount is true when the organisation has a Stripe customer, so the billing portal can open for it.',
 		params: z.object({ orgId: z.string().min(1) }),
 		response: z.object({
 			planId: z.string(),
@@ -31,14 +31,20 @@ export default defineApi(
 			environments: z.boolean(),
 			customDomains: limit,
 			backupDays: limit,
-			features: z.object(Object.fromEntries(FEATURES.map((name) => [name, z.boolean()])))
+			features: z.object(Object.fromEntries(FEATURES.map((name) => [name, z.boolean()]))),
+			billingAccount: z.boolean()
 		})
 	},
 	async ({ resource, params }) => {
 		const orgId = resource.orgId;
 		if (orgId === undefined || orgId !== params.orgId)
 			throw new ApiError('not_found', 'Not found');
-		const plan = await siteServices().planOf(orgId);
-		return { ...plan, addOns: [...plan.addOns] };
+		const services = siteServices();
+		const plan = await services.planOf(orgId);
+		return {
+			...plan,
+			addOns: [...plan.addOns],
+			billingAccount: await services.billingAccountOf(orgId)
+		};
 	}
 );

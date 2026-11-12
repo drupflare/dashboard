@@ -131,4 +131,14 @@ describe('SideNav', () => {
 		const wrapper = await mount(SideNav);
 		expect(wrapper.find('a[href="/admin"]').exists()).toBe(false);
 	});
+
+	it('links billing as a client route', async () => {
+		useSessionStore().me = me;
+		const wrapper = await mount(SideNav);
+		const billing = wrapper
+			.findAllComponents(NuxtLink)
+			.find((link) => link.props('to') === '/org/billing');
+		expect(billing?.text()).toBe('Billing');
+		expect(billing?.props('external')).toBe(false);
+	});
 });
