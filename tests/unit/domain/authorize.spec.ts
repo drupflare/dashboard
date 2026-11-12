@@ -376,8 +376,9 @@ describe('authorize: delegation', () => {
 						actionDef(action).scope === 'site' &&
 						delegated.includes(action) &&
 						member_.includes(action);
+					const allowed = actionDef(action).stepUp ? 'step_up_required' : 'allow';
 					expect(check(action, f), `${role}/${dRole} ${action}`).toBe(
-						inBoth ? 'allow' : 'forbidden'
+						inBoth ? allowed : 'forbidden'
 					);
 				}
 			}

@@ -69,8 +69,10 @@ Organisation roles are `owner`, `admin`, `developer`, `billing`, `viewer`. Site 
 | `operation.read`                 | org        | x         | x         | x             |             | x          |                 |                 |             |                                   |
 | `operation.approve`              | org        | x         | x         |               |             |            |                 |                 |             |                                   |
 | `operation.cancel`               | org        | x         | x         | x             |             |            |                 |                 |             |                                   |
+| `operation.retry`                | org        | x         | x         | x             |             |            |                 |                 |             |                                   |
 | `plane.read`                     | org        | x         | x         | x             |             | x          |                 |                 |             |                                   |
 | `plane.manage`                   | org        | x         | x         |               |             |            |                 |                 |             |                                   |
+| `plane.connect`                  | department | x         | x         | x             |             |            |                 |                 |             | session only                      |
 | `release.read`                   | org        | x         | x         | x             |             | x          |                 |                 |             |                                   |
 | `release.manage`                 | org        | x         | x         |               |             |            |                 |                 |             |                                   |
 | `import.manage`                  | org        | x         | x         | x             |             |            |                 |                 |             |                                   |
@@ -93,6 +95,8 @@ Organisation roles are `owner`, `admin`, `developer`, `billing`, `viewer`. Site 
 | `site.deploy`                    | site       | x         | x         | x             |             |            | x               | x               |             | budget production-deploys         |
 | `site.rollback`                  | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.upgrade`                   | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
+| `site.cleanup`                   | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
+| `site.adopt`                     | site       | x         | x         | x             |             |            | x               | x               |             | session only, step-up             |
 | `site.pull`                      | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.modify`                    | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.heal`                      | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
@@ -138,6 +142,7 @@ Platform admin actions need the admin flag, the Cloudflare Access fact and the n
 | `account.security.manage`     | any signed-in user              | session only |
 | `admin.aggregates.read`       | platform admin, read            |              |
 | `admin.metadata.read`         | platform admin, read            |              |
+| `admin.capacity.read`         | platform admin, read            |              |
 | `admin.audit.read`            | platform admin, read            |              |
 | `admin.abuse.manage`          | platform admin, support         |              |
 | `admin.break-glass.start`     | platform admin, support         | step-up      |
@@ -153,6 +158,8 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `org.delete`
 - `key.create`
 - `billing.portal`
+- `plane.connect`
+- `site.adopt`
 - `site.owner-token.reveal`
 - `site.owner-token.rotate`
 - `site.backup.export`
@@ -165,6 +172,7 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `transfer.accept`
 - `site.delete`
 - `site.transfer`
+- `site.adopt`
 - `site.domain.rename`
 - `site.credentials.rotate`
 - `site.owner-token.reveal`
