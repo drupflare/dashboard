@@ -1,0 +1,8 @@
+{
+	"name": "spike-convert",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": { "enabled": true },
+	"r2_buckets": [{ "binding": "BLOB", "bucket_name": "spike-convert" }]
+}
