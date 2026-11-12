@@ -13,6 +13,7 @@ import {
 	webauthnConfig,
 	type BootEnv
 } from '../../../../src/server/services/boot';
+import { capacityServices } from '../../../../src/server/services/capacity';
 import { consoleMailSender } from '../../../../src/server/services/email-codes';
 import { factsLoader } from '../../../../src/server/services/facts';
 import { siteServices } from '../../../../src/server/services/sites';
@@ -113,6 +114,19 @@ describe('bootOnce', () => {
 		});
 		resetBoot();
 		expect(siteServices().config.accountId).toBeNull();
+	});
+
+	it('reads Cloudflare only with the managed account id and a token, and takes the install away on reset', async () => {
+		const account = 'a'.repeat(32);
+		expect(buildServices(envWith()).capacity.reads).toBeNull();
+		expect(buildServices(envWith({ MANAGED_ACCOUNT_ID: account })).capacity.reads).toBeNull();
+		expect(buildServices(envWith({ CF_BILLING_TOKEN: 't' })).capacity.reads).toBeNull();
+		const built = bootOnce(envWith({ MANAGED_ACCOUNT_ID: account, CF_BILLING_TOKEN: 't' }));
+		expect(built.capacity.reads).not.toBeNull();
+		expect(capacityServices().reads).toBe(built.capacity.reads);
+		expect(capacityServices().getDb).toBe(built.capacity.getDb);
+		resetBoot();
+		expect(capacityServices().reads).toBeNull();
 	});
 
 	it('installs the backup services from the bindings and takes them away on reset', async () => {

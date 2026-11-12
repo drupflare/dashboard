@@ -34,6 +34,12 @@ import {
 	type BackupServices
 } from './backups';
 import { collegeBillingStore, entitlementOf } from './billing';
+import {
+	cloudflareReadsOf,
+	resetCapacityServices,
+	setCapacityServices,
+	type CapacityServices
+} from './capacity';
 import { collegeAttemptStore, consoleMailSender, type MailSender } from './email-codes';
 import { collegeFactsStore, factsLoader, type FactsDeps } from './facts';
 import { collegeIdentityStore, setIdentityServices, type IdentityServices } from './identities';
@@ -284,6 +290,7 @@ export interface BuiltServices {
 	sites: SiteServices;
 	backups: BackupServices;
 	siteHealth: Partial<SiteHealthServices>;
+	capacity: Partial<CapacityServices>;
 	pendingSecrets: () => Promise<PendingSecretDeps>;
 	heads: HeadStore;
 }
@@ -299,6 +306,8 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 	const baseUrl = options.baseUrl ?? 'https://app.drupflare.com';
 	const billing = collegeBillingStore(getDb);
 	const planOf = async (orgId: string) => entitlementOf(await billing.getAccount(orgId));
+	const billingAccountOf = async (orgId: string) =>
+		Boolean((await billing.getAccount(orgId))?.stripeCustomerId);
 	const startOperation = engineStarter({ ...engineConfigOf(env), now: Date.now });
 	const ownerTokens = collegeOwnerTokenStore(getDb);
 	let ring: Promise<KeyRing> | undefined;
@@ -360,6 +369,7 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			getDb,
 			entitlements: collegeSiteEntitlements(getDb, billing),
 			planOf,
+			billingAccountOf,
 			startOperation,
 			config: siteInputConfigOf(env)
 		},
@@ -370,6 +380,16 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 				const pending = await pendingSecrets();
 				return { store: ownerTokens, audit: pending.audit, ring: pending.ring };
 			}
+		},
+		capacity: {
+			getDb,
+			reads: cloudflareReadsOf(
+				{
+					accountId: text(env, 'MANAGED_ACCOUNT_ID'),
+					token: text(env, 'CF_BILLING_TOKEN')
+				},
+				(input, init) => fetch(input, init)
+			)
 		},
 		pendingSecrets,
 		heads
@@ -389,6 +409,7 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	setSiteServices(built.sites);
 	setBackupServices(built.backups);
 	setSiteHealthServices(built.siteHealth);
+	setCapacityServices(built.capacity);
 	setPendingSecretDeps(built.pendingSecrets);
 	booted = built;
 	return built;
@@ -408,6 +429,7 @@ export function resetBoot(): void {
 	resetSiteServices();
 	resetBackupServices();
 	resetSiteHealthServices();
+	resetCapacityServices();
 	resetPendingSecretDeps();
 }
 
