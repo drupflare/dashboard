@@ -73,6 +73,26 @@ describe('gen-openapi: committed file', () => {
 	});
 });
 
+describe('gen-openapi: live route tree', () => {
+	it('documents one operation for every live route, with its action', async () => {
+		const { routes } = await scanRoutes(API_ROOT);
+		const doc = JSON.parse(await renderOpenApi(API_ROOT)) as Json;
+		expect(operations(doc)).toHaveLength(routes.length);
+		for (const route of routes) {
+			const op = doc.paths[route.path]?.[route.method];
+			expect(op, `${route.method} ${route.path}`).toBeDefined();
+			expect(op['x-action'], `${route.method} ${route.path}`).toBe(route.meta.action);
+		}
+	});
+
+	it('documents the capacity route with its action and a 200 response', async () => {
+		const doc = JSON.parse(await renderOpenApi(API_ROOT)) as Json;
+		const op = doc.paths['/api/v1/admin/capacity']?.get;
+		expect(op['x-action']).toBe('admin.capacity.read');
+		expect(op.responses['200']).toBeDefined();
+	});
+});
+
 describe('gen-openapi: sample routes', () => {
 	it('is deterministic and sorted by path then method', async () => {
 		expect(await renderOpenApi(FIXTURES)).toBe(sampleText);

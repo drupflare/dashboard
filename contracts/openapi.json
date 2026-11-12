@@ -41,11 +41,326 @@
 		{ "name": "system", "description": "Liveness and API documentation." }
 	],
 	"paths": {
+		"/api/v1/admin/capacity": {
+			"get": {
+				"operationId": "getApiV1AdminCapacity",
+				"summary": "Read the platform capacity",
+				"description": "Cloudflare credit balance, billable usage by service, account headroom, and the work in flight. The Cloudflare reads are cached for 60 seconds. Needs the admin role and a Cloudflare Access login.",
+				"tags": ["admin"],
+				"x-action": "admin.capacity.read",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }],
+				"parameters": [{ "$ref": "#/components/parameters/ContractHeader" }],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"generatedAt": { "type": "number" },
+										"credits": {
+											"oneOf": [
+												{
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"const": "ok"
+														},
+														"currency": { "type": "string" },
+														"balanceCents": {
+															"type": "integer",
+															"minimum": -9007199254740991,
+															"maximum": 9007199254740991
+														},
+														"originalCents": {
+															"type": "integer",
+															"minimum": -9007199254740991,
+															"maximum": 9007199254740991
+														},
+														"usedCents": {
+															"type": "integer",
+															"minimum": -9007199254740991,
+															"maximum": 9007199254740991
+														},
+														"daysRemaining": {
+															"type": ["number", "null"]
+														},
+														"validFrom": { "type": ["string", "null"] },
+														"validTo": { "type": ["string", "null"] },
+														"projectedDepletion": {
+															"type": ["string", "null"]
+														}
+													},
+													"required": [
+														"state",
+														"currency",
+														"balanceCents",
+														"originalCents",
+														"usedCents",
+														"daysRemaining",
+														"validFrom",
+														"validTo",
+														"projectedDepletion"
+													]
+												},
+												{
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"enum": [
+																"none",
+																"no_billing_access",
+																"not_configured",
+																"unavailable"
+															]
+														}
+													},
+													"required": ["state"]
+												}
+											]
+										},
+										"usage": {
+											"oneOf": [
+												{
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"const": "ok"
+														},
+														"currency": { "type": ["string", "null"] },
+														"from": { "type": ["string", "null"] },
+														"through": { "type": ["string", "null"] },
+														"totalCents": {
+															"type": "integer",
+															"minimum": -9007199254740991,
+															"maximum": 9007199254740991
+														},
+														"services": {
+															"type": "array",
+															"items": {
+																"type": "object",
+																"properties": {
+																	"name": { "type": "string" },
+																	"cents": {
+																		"type": "integer",
+																		"minimum": -9007199254740991,
+																		"maximum": 9007199254740991
+																	}
+																},
+																"required": ["name", "cents"]
+															}
+														}
+													},
+													"required": [
+														"state",
+														"currency",
+														"from",
+														"through",
+														"totalCents",
+														"services"
+													]
+												},
+												{
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"enum": [
+																"not_configured",
+																"unavailable"
+															]
+														}
+													},
+													"required": ["state"]
+												}
+											]
+										},
+										"headroom": {
+											"oneOf": [
+												{
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"const": "ok"
+														},
+														"kvNamespaces": {
+															"type": "integer",
+															"minimum": 0,
+															"maximum": 9007199254740991
+														},
+														"kvLimit": {
+															"type": "integer",
+															"minimum": 0,
+															"maximum": 9007199254740991
+														},
+														"buckets": {
+															"type": "integer",
+															"minimum": 0,
+															"maximum": 9007199254740991
+														},
+														"scripts": {
+															"anyOf": [
+																{
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																{ "type": "null" }
+															]
+														},
+														"databases": {
+															"anyOf": [
+																{
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																{ "type": "null" }
+															]
+														},
+														"rate": {
+															"type": "object",
+															"properties": {
+																"remaining": {
+																	"type": ["number", "null"]
+																},
+																"quota": {
+																	"type": ["number", "null"]
+																},
+																"resetSeconds": {
+																	"type": ["number", "null"]
+																},
+																"windowSeconds": {
+																	"type": ["number", "null"]
+																}
+															},
+															"required": [
+																"remaining",
+																"quota",
+																"resetSeconds",
+																"windowSeconds"
+															]
+														}
+													},
+													"required": [
+														"state",
+														"kvNamespaces",
+														"kvLimit",
+														"buckets",
+														"scripts",
+														"databases",
+														"rate"
+													]
+												},
+												{
+													"type": "object",
+													"properties": {
+														"state": {
+															"type": "string",
+															"enum": [
+																"not_configured",
+																"unavailable"
+															]
+														}
+													},
+													"required": ["state"]
+												}
+											]
+										},
+										"work": {
+											"type": "object",
+											"properties": {
+												"running": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"failedLastDay": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"recentFailures": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"id": { "type": "string" },
+															"type": { "type": "string" },
+															"siteId": {
+																"type": ["string", "null"]
+															},
+															"reason": {
+																"type": ["string", "null"]
+															},
+															"at": { "type": "number" }
+														},
+														"required": [
+															"id",
+															"type",
+															"siteId",
+															"reason",
+															"at"
+														]
+													}
+												},
+												"sites": {
+													"type": "object",
+													"propertyNames": { "type": "string" },
+													"additionalProperties": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													}
+												}
+											},
+											"required": [
+												"running",
+												"failedLastDay",
+												"recentFailures",
+												"sites"
+											]
+										}
+									},
+									"required": [
+										"generatedAt",
+										"credits",
+										"usage",
+										"headroom",
+										"work"
+									]
+								}
+							}
+						}
+					},
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/admin/operations": {
 			"get": {
 				"operationId": "getApiV1AdminOperations",
 				"summary": "List operations",
-				"description": "The newest operations first across every shard: type, status and verification.",
+				"description": "The newest operations first across every shard: type, status, verification and, for a failed one, the plain reason it stopped.",
 				"tags": ["admin"],
 				"x-action": "admin.metadata.read",
 				"x-rate-class": "read",
@@ -97,6 +412,7 @@
 													"type": { "type": "string" },
 													"status": { "type": "string" },
 													"verification": { "type": "string" },
+													"reason": { "type": ["string", "null"] },
 													"createdAt": { "type": "number" },
 													"updatedAt": { "type": "number" }
 												},
@@ -107,6 +423,7 @@
 													"type",
 													"status",
 													"verification",
+													"reason",
 													"createdAt",
 													"updatedAt"
 												]
@@ -2258,7 +2575,7 @@
 			"delete": {
 				"operationId": "deleteApiV1MeSessions",
 				"summary": "Sign out other devices",
-				"description": "Ends every session except the one making this request.",
+				"description": "Ends every session except the one making this request. It needs a fresh authentication.",
 				"tags": ["me"],
 				"x-action": "account.security.manage",
 				"x-rate-class": "write",
@@ -2294,7 +2611,7 @@
 			"delete": {
 				"operationId": "deleteApiV1MeSessionsId",
 				"summary": "Revoke a session",
-				"description": "Ends one of your sessions. Revoking the session you are using also clears its cookie.",
+				"description": "Ends one of your sessions. Revoking another session needs a fresh authentication. Revoking the session you are using needs none and also clears its cookie.",
 				"tags": ["me"],
 				"x-action": "account.security.manage",
 				"x-rate-class": "write",
@@ -2336,7 +2653,7 @@
 			"get": {
 				"operationId": "getApiV1OrgsOrgIdEntitlement",
 				"summary": "Read the plan",
-				"description": "Reads what the organisation in the path may do on its current plan. A null limit is unknown or negotiated and counts as no allowance. Only an activated subscription changes the plan; every other account reads as the free plan.",
+				"description": "Reads what the organisation in the path may do on its current plan. A null limit is unknown or negotiated and counts as no allowance. Only an activated subscription changes the plan; every other account reads as the free plan. billingAccount is true when the organisation has a Stripe customer, so the billing portal can open for it.",
 				"tags": ["orgs"],
 				"x-action": "org.read",
 				"x-rate-class": "read",
@@ -2406,7 +2723,8 @@
 												"strata",
 												"ssoSaml"
 											]
-										}
+										},
+										"billingAccount": { "type": "boolean" }
 									},
 									"required": [
 										"planId",
@@ -2422,7 +2740,8 @@
 										"environments",
 										"customDomains",
 										"backupDays",
-										"features"
+										"features",
+										"billingAccount"
 									]
 								}
 							}
@@ -2696,6 +3015,15 @@
 												"bulkDeleteConfirmation"
 											]
 										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
 										"createdAt": {
 											"type": "string",
 											"format": "date-time",
@@ -2735,6 +3063,482 @@
 					"401": { "$ref": "#/components/responses/Unauthenticated" },
 					"403": { "$ref": "#/components/responses/Forbidden" },
 					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/operations/{id}/retry": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdOperationsIdRetry",
+				"summary": "Retry a failed operation",
+				"description": "Starts the same work again as a new operation that carries the failed one in retryOf, and returns it. The request has no body. Only an operation that failed can be retried, and only for site creates, site updates, backups, restores and cleanups; any other type answers 422 with a plain reason. A failed create cleans up its earlier attempt first and then creates the site again under the same name. The caller needs the permission the operation was first started with. A retry that is already running or has succeeded is returned instead of starting another. Send an Idempotency-Key header; a repeat returns the same operation.",
+				"tags": ["operations"],
+				"x-action": "operation.retry",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }, { "apiKey": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^op_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^op_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"type": {
+											"type": "string",
+											"enum": [
+												"site.create",
+												"site.adopt",
+												"site.import",
+												"migration.cutover",
+												"estate.assess",
+												"site.upgrade",
+												"site.rollback",
+												"site.delete",
+												"site.restore",
+												"site.purge",
+												"site.transfer",
+												"config.apply",
+												"git.pull",
+												"git.preview",
+												"modify.apply",
+												"module.install",
+												"module.enable",
+												"domain.attach",
+												"backup.create",
+												"backup.verify",
+												"backup.restore",
+												"backup.export",
+												"env.create",
+												"env.fork",
+												"env.promote",
+												"env.delete",
+												"preview.create",
+												"preview.delete",
+												"repair.run",
+												"node.pair",
+												"node.command",
+												"fleet.upgrade",
+												"repo.install"
+											]
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"planned",
+												"awaiting-approval",
+												"running",
+												"verifying",
+												"succeeded",
+												"failed",
+												"cancelled",
+												"rolled-back"
+											]
+										},
+										"idempotencyKey": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 128
+										},
+										"targetIds": {
+											"type": "array",
+											"items": { "type": "string", "minLength": 1 }
+										},
+										"preconditions": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"planDigest": {
+											"type": "string",
+											"pattern": "^sha256:[0-9a-f]{64}$"
+										},
+										"fencingEpoch": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"blastRadius": {
+											"type": "object",
+											"properties": {
+												"sites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"destructiveSites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"productionDeploys": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											},
+											"required": [
+												"sites",
+												"destructiveSites",
+												"productionDeploys"
+											]
+										},
+										"rollbackPoint": { "type": ["string", "null"] },
+										"cursor": { "type": ["string", "null"] },
+										"steps": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"running",
+															"succeeded",
+															"failed",
+															"skipped"
+														]
+													},
+													"attempt": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"startedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"finishedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"error": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"state",
+													"attempt",
+													"startedAt",
+													"finishedAt",
+													"error"
+												]
+											}
+										},
+										"verification": {
+											"type": "string",
+											"enum": ["pending", "passed", "failed", "not-required"]
+										},
+										"finalObservation": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"at": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														"summary": { "type": "string" }
+													},
+													"required": ["at", "summary"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"budget": {
+											"type": "object",
+											"properties": {
+												"maxDestructiveSites": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"maxConcurrentProductionDeploys": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"elevated": { "type": "boolean" },
+												"bulkDeleteConfirmation": {
+													"type": ["string", "null"]
+												}
+											},
+											"required": [
+												"maxDestructiveSites",
+												"maxConcurrentProductionDeploys",
+												"elevated",
+												"bulkDeleteConfirmation"
+											]
+										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"type",
+										"status",
+										"idempotencyKey",
+										"targetIds",
+										"preconditions",
+										"planDigest",
+										"fencingEpoch",
+										"blastRadius",
+										"rollbackPoint",
+										"cursor",
+										"steps",
+										"verification",
+										"finalObservation",
+										"budget",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/planes/cloudflare/probe": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdPlanesCloudflareProbe",
+				"summary": "Check what a Cloudflare token can do",
+				"description": "Reads what the token can see and do on the account it names. Nothing is stored and the token is not returned. It needs a signed-in session, so an API key is refused.",
+				"tags": ["planes"],
+				"x-action": "plane.connect",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"token": { "type": "string", "minLength": 1, "maxLength": 512 },
+									"accountId": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 64
+									}
+								},
+								"required": ["token"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"status": {
+											"type": "string",
+											"enum": [
+												"active",
+												"expired",
+												"disabled",
+												"invalid",
+												"unknown"
+											]
+										},
+										"kind": {
+											"anyOf": [
+												{ "type": "string", "enum": ["user", "account"] },
+												{ "type": "null" }
+											]
+										},
+										"tokenId": { "type": ["string", "null"] },
+										"expiresOn": { "type": ["string", "null"] },
+										"accounts": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string", "minLength": 1 },
+													"name": { "type": "string" }
+												},
+												"required": ["id", "name"],
+												"additionalProperties": false
+											}
+										},
+										"account": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"id": { "type": "string", "minLength": 1 },
+														"name": { "type": "string" }
+													},
+													"required": ["id", "name"],
+													"additionalProperties": false
+												},
+												{ "type": "null" }
+											]
+										},
+										"capabilities": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"enum": [
+															"scripts",
+															"key-value",
+															"storage",
+															"databases",
+															"routes",
+															"token-management"
+														]
+													},
+													"label": { "type": "string" },
+													"state": {
+														"type": "string",
+														"enum": ["granted", "missing", "unknown"]
+													},
+													"permission": { "type": "string" },
+													"retryHint": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"label",
+													"state",
+													"permission",
+													"retryHint"
+												],
+												"additionalProperties": false
+											}
+										},
+										"canDownscope": { "type": "boolean" }
+									},
+									"required": [
+										"status",
+										"kind",
+										"tokenId",
+										"expiresOn",
+										"accounts",
+										"account",
+										"capabilities",
+										"canDownscope"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
 					"426": { "$ref": "#/components/responses/ContractUnsupported" },
 					"429": { "$ref": "#/components/responses/RateLimited" },
 					"500": { "$ref": "#/components/responses/InternalError" }
@@ -3247,6 +4051,329 @@
 												"bulkDeleteConfirmation"
 											]
 										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"type",
+										"status",
+										"idempotencyKey",
+										"targetIds",
+										"preconditions",
+										"planDigest",
+										"fencingEpoch",
+										"blastRadius",
+										"rollbackPoint",
+										"cursor",
+										"steps",
+										"verification",
+										"finalObservation",
+										"budget",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/adopt": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdSitesIdAdopt",
+				"summary": "Adopt a self-managed site",
+				"description": "Starts the move of the self-managed site in the path to a new managed site and returns its operation. The engine copies the site's database, creates the managed site on a Drupflare address, restores the copy into it and checks that it answers. The source site is never changed or deleted, and the managed copy is one-way. A database above the restore limit stops the operation with a plain reason before anything is created. The request has no body and needs a signed-in session with a recent step-up. Send an Idempotency-Key header; a repeat returns the same operation. Answers 409 when the site was already adopted or another change to it is running, 422 when the site is not self-managed or not live, and 403 when the plan has no room for another site.",
+				"tags": ["sites"],
+				"x-action": "site.adopt",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^op_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"type": {
+											"type": "string",
+											"enum": [
+												"site.create",
+												"site.adopt",
+												"site.import",
+												"migration.cutover",
+												"estate.assess",
+												"site.upgrade",
+												"site.rollback",
+												"site.delete",
+												"site.restore",
+												"site.purge",
+												"site.transfer",
+												"config.apply",
+												"git.pull",
+												"git.preview",
+												"modify.apply",
+												"module.install",
+												"module.enable",
+												"domain.attach",
+												"backup.create",
+												"backup.verify",
+												"backup.restore",
+												"backup.export",
+												"env.create",
+												"env.fork",
+												"env.promote",
+												"env.delete",
+												"preview.create",
+												"preview.delete",
+												"repair.run",
+												"node.pair",
+												"node.command",
+												"fleet.upgrade",
+												"repo.install"
+											]
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"planned",
+												"awaiting-approval",
+												"running",
+												"verifying",
+												"succeeded",
+												"failed",
+												"cancelled",
+												"rolled-back"
+											]
+										},
+										"idempotencyKey": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 128
+										},
+										"targetIds": {
+											"type": "array",
+											"items": { "type": "string", "minLength": 1 }
+										},
+										"preconditions": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"planDigest": {
+											"type": "string",
+											"pattern": "^sha256:[0-9a-f]{64}$"
+										},
+										"fencingEpoch": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"blastRadius": {
+											"type": "object",
+											"properties": {
+												"sites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"destructiveSites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"productionDeploys": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											},
+											"required": [
+												"sites",
+												"destructiveSites",
+												"productionDeploys"
+											]
+										},
+										"rollbackPoint": { "type": ["string", "null"] },
+										"cursor": { "type": ["string", "null"] },
+										"steps": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"running",
+															"succeeded",
+															"failed",
+															"skipped"
+														]
+													},
+													"attempt": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"startedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"finishedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"error": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"state",
+													"attempt",
+													"startedAt",
+													"finishedAt",
+													"error"
+												]
+											}
+										},
+										"verification": {
+											"type": "string",
+											"enum": ["pending", "passed", "failed", "not-required"]
+										},
+										"finalObservation": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"at": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														"summary": { "type": "string" }
+													},
+													"required": ["at", "summary"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"budget": {
+											"type": "object",
+											"properties": {
+												"maxDestructiveSites": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"maxConcurrentProductionDeploys": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"elevated": { "type": "boolean" },
+												"bulkDeleteConfirmation": {
+													"type": ["string", "null"]
+												}
+											},
+											"required": [
+												"maxDestructiveSites",
+												"maxConcurrentProductionDeploys",
+												"elevated",
+												"bulkDeleteConfirmation"
+											]
+										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
 										"createdAt": {
 											"type": "string",
 											"format": "date-time",
@@ -3677,6 +4804,15 @@
 												"bulkDeleteConfirmation"
 											]
 										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
 										"createdAt": {
 											"type": "string",
 											"format": "date-time",
@@ -4059,6 +5195,329 @@
 												"bulkDeleteConfirmation"
 											]
 										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"type",
+										"status",
+										"idempotencyKey",
+										"targetIds",
+										"preconditions",
+										"planDigest",
+										"fencingEpoch",
+										"blastRadius",
+										"rollbackPoint",
+										"cursor",
+										"steps",
+										"verification",
+										"finalObservation",
+										"budget",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/cleanup": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdSitesIdCleanup",
+				"summary": "Clean up a site that failed to create",
+				"description": "Removes what a failed create left behind for the site in the path and returns the cleanup operation, whose type is repair.run. The site must never have become active; a live site answers 409. It also answers 409 while another change to the site is running. The operation stops the site serving, deletes its script, routes and resources, frees its name and marks the site deleted. A repeat on a site that is already clean returns the operation that cleaned it. The request has no body. Send an Idempotency-Key header; a repeat returns the same operation.",
+				"tags": ["sites"],
+				"x-action": "site.cleanup",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }, { "apiKey": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^op_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"type": {
+											"type": "string",
+											"enum": [
+												"site.create",
+												"site.adopt",
+												"site.import",
+												"migration.cutover",
+												"estate.assess",
+												"site.upgrade",
+												"site.rollback",
+												"site.delete",
+												"site.restore",
+												"site.purge",
+												"site.transfer",
+												"config.apply",
+												"git.pull",
+												"git.preview",
+												"modify.apply",
+												"module.install",
+												"module.enable",
+												"domain.attach",
+												"backup.create",
+												"backup.verify",
+												"backup.restore",
+												"backup.export",
+												"env.create",
+												"env.fork",
+												"env.promote",
+												"env.delete",
+												"preview.create",
+												"preview.delete",
+												"repair.run",
+												"node.pair",
+												"node.command",
+												"fleet.upgrade",
+												"repo.install"
+											]
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"planned",
+												"awaiting-approval",
+												"running",
+												"verifying",
+												"succeeded",
+												"failed",
+												"cancelled",
+												"rolled-back"
+											]
+										},
+										"idempotencyKey": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 128
+										},
+										"targetIds": {
+											"type": "array",
+											"items": { "type": "string", "minLength": 1 }
+										},
+										"preconditions": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"planDigest": {
+											"type": "string",
+											"pattern": "^sha256:[0-9a-f]{64}$"
+										},
+										"fencingEpoch": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"blastRadius": {
+											"type": "object",
+											"properties": {
+												"sites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"destructiveSites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"productionDeploys": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											},
+											"required": [
+												"sites",
+												"destructiveSites",
+												"productionDeploys"
+											]
+										},
+										"rollbackPoint": { "type": ["string", "null"] },
+										"cursor": { "type": ["string", "null"] },
+										"steps": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"running",
+															"succeeded",
+															"failed",
+															"skipped"
+														]
+													},
+													"attempt": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"startedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"finishedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"error": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"state",
+													"attempt",
+													"startedAt",
+													"finishedAt",
+													"error"
+												]
+											}
+										},
+										"verification": {
+											"type": "string",
+											"enum": ["pending", "passed", "failed", "not-required"]
+										},
+										"finalObservation": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"at": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														"summary": { "type": "string" }
+													},
+													"required": ["at", "summary"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"budget": {
+											"type": "object",
+											"properties": {
+												"maxDestructiveSites": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"maxConcurrentProductionDeploys": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"elevated": { "type": "boolean" },
+												"bulkDeleteConfirmation": {
+													"type": ["string", "null"]
+												}
+											},
+											"required": [
+												"maxDestructiveSites",
+												"maxConcurrentProductionDeploys",
+												"elevated",
+												"bulkDeleteConfirmation"
+											]
+										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
 										"createdAt": {
 											"type": "string",
 											"format": "date-time",
@@ -4375,6 +5834,15 @@
 												"maxConcurrentProductionDeploys",
 												"elevated",
 												"bulkDeleteConfirmation"
+											]
+										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
 											]
 										},
 										"createdAt": {
@@ -5133,6 +6601,15 @@
 												"bulkDeleteConfirmation"
 											]
 										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
 										"createdAt": {
 											"type": "string",
 											"format": "date-time",
@@ -5652,6 +7129,15 @@
 															"bulkDeleteConfirmation"
 														]
 													},
+													"retryOf": {
+														"anyOf": [
+															{
+																"type": "string",
+																"pattern": "^op_[0-9a-z]{8,40}$"
+															},
+															{ "type": "null" }
+														]
+													},
 													"createdAt": {
 														"type": "string",
 														"format": "date-time",
@@ -5661,7 +7147,8 @@
 														"type": "string",
 														"format": "date-time",
 														"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-													}
+													},
+													"reason": { "type": ["string", "null"] }
 												},
 												"required": [
 													"id",
@@ -5681,7 +7168,8 @@
 													"finalObservation",
 													"budget",
 													"createdAt",
-													"updatedAt"
+													"updatedAt",
+													"reason"
 												]
 											}
 										},

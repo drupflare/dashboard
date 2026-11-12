@@ -164,6 +164,35 @@ describe('route scan: organisation and site come from the resource', () => {
 	});
 });
 
+describe('route scan: live route tree', () => {
+	it('gives every live route file a method and path that no other file claims', async () => {
+		const { routes, problems } = await scanRoutes(API_ROOT);
+		expect(problems).toEqual([]);
+		const keys = routes.map((route) => `${route.method} ${route.path}`);
+		expect(new Set(keys).size).toBe(keys.length);
+		expect(keys).toEqual(expect.arrayContaining(['get /api/v1/me', 'get /api/v1/templates']));
+	});
+
+	it('finds the capacity route as an admin route with its own action', async () => {
+		const { routes } = await scanRoutes(API_ROOT);
+		const route = routes.find((found) => found.path === '/api/v1/admin/capacity');
+		expect(route?.method).toBe('get');
+		expect(route?.meta).toMatchObject({ scope: 'admin', action: 'admin.capacity.read' });
+	});
+
+	it('gives every live route a non-empty action in the permission table', async () => {
+		const { routes } = await scanRoutes(API_ROOT);
+		for (const route of routes) {
+			expect(route.meta.action.length, route.rel).toBeGreaterThan(0);
+			const known =
+				route.meta.scope === 'public'
+					? isPublicAction(route.meta.action)
+					: isAction(route.meta.action);
+			expect(known, route.rel).toBe(true);
+		}
+	});
+});
+
 describe('route scan: sample routes', () => {
 	it('maps file names to methods and paths and reads every scope', async () => {
 		const { routes, problems } = await scanRoutes(FIXTURES);
