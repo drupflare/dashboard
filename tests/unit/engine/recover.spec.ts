@@ -131,6 +131,31 @@ describe('the recovery sweep', () => {
 		expect((await sweep(world.deps, SCOPE)).recovered).toEqual([]);
 	});
 
+	it('keeps the row of a rollback that stopped early, so the sweep finishes it once the account answers', async () => {
+		const world = await start();
+		const real = world.deps.cloudflare;
+		world.deps.cloudflare = {
+			...real,
+			deleteResource: async (kind, id) => {
+				if (kind === 'kv') throw new Error('api down');
+				return real.deleteResource(kind, id);
+			}
+		};
+		const run = makeRunner(new Map(), { failAt: { step: 'verify', when: 'before' } });
+		const outcome = await runSiteCreate(run.runner, world.deps, world.input);
+		expect(outcome.status).toBe('failed');
+		expect(await world.store.siteState(world.siteId)).toBe('active');
+		expect(world.cf.snapshot().kv).toHaveLength(2);
+
+		world.deps.cloudflare = real;
+		world.clock.advance(30 * MIN);
+		const swept = await sweep(world.deps, SCOPE);
+		expect(swept.recovered).toEqual([
+			{ siteId: world.siteId, operationId: world.operationId, outcome: 'rolled-back' }
+		]);
+		await expectRecovered(world);
+	});
+
 	it('cancels a create the dashboard recorded and never started, and marks its row', async () => {
 		const world = await start();
 		world.clock.advance(5 * MIN);

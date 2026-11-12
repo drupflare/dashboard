@@ -25,6 +25,8 @@ function starters() {
 		'site-upgrade': new Map(),
 		'site-delete': new Map(),
 		'site-purge': new Map(),
+		'site-cleanup': new Map(),
+		'site-adopt': new Map(),
 		'backup-create': new Map(),
 		'backup-restore': new Map()
 	};

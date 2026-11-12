@@ -42,6 +42,8 @@ export const WORKFLOW_NAMES = [
 	'site-upgrade',
 	'site-delete',
 	'site-purge',
+	'site-cleanup',
+	'site-adopt',
 	'backup-create',
 	'backup-restore'
 ] as const;

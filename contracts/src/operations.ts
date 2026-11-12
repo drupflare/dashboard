@@ -8,7 +8,7 @@ import {
 	sha256Digest
 } from './common';
 
-export const OPERATIONS_VERSION = { major: 1, minor: 0 } as const;
+export const OPERATIONS_VERSION = { major: 1, minor: 1 } as const;
 
 export const OPERATION_TYPES = [
 	'site.create',
@@ -133,6 +133,8 @@ export const operationSchema = z.object({
 	verification: verificationState,
 	finalObservation: finalObservationSchema.nullable(),
 	budget: changeBudgetSchema,
+	// set on an operation started by retrying a failed one; absent otherwise
+	retryOf: operationId.nullable().optional(),
 	createdAt: isoTimestamp,
 	updatedAt: isoTimestamp
 });

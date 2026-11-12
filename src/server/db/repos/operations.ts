@@ -28,6 +28,10 @@ export interface NewOperation {
 	budget: Operation['budget'];
 	// the plan's steps, written with the operation so the engine finds each one by id
 	steps: { id: string; name: string }[];
+	// the operation this one retries
+	retryOf?: string | null;
+	// what the engine was started with, kept so a retry can start it again
+	inputs?: unknown;
 	now: number;
 }
 
@@ -59,6 +63,7 @@ interface OperationRow {
 	verification: Operation['verification'];
 	final_observation: string | null;
 	budget: string;
+	retry_of: string | null;
 	created_at: number;
 	updated_at: number;
 	version: number;
@@ -77,7 +82,7 @@ interface StepRow {
 
 const OPERATION_COLUMNS = `id, organization_id, type, status, idempotency_key, target_ids,
 	preconditions, plan_digest, fencing_epoch, blast_radius, rollback_point, cursor, verification,
-	final_observation, budget, created_at, updated_at, version`;
+	final_observation, budget, retry_of, created_at, updated_at, version`;
 const STEP_COLUMNS = 'operation_id, id, name, state, attempt, started_at, finished_at, error';
 
 const isoOf = (ms: number) => new Date(ms).toISOString();
@@ -120,6 +125,7 @@ function toStored(row: OperationRow, steps: OperationStep[]): StoredOperation {
 							Operation['finalObservation']
 						>),
 			budget: JSON.parse(row.budget) as Operation['budget'],
+			...(row.retry_of === null ? {} : { retryOf: row.retry_of as Operation['id'] }),
 			createdAt: isoOf(row.created_at),
 			updatedAt: isoOf(row.updated_at)
 		}
@@ -223,8 +229,8 @@ export async function createSiteOperation(
 			sql: `INSERT OR IGNORE INTO operations (id, organization_id, account_id, site_id, type,
 				status, idempotency_key, target_ids, preconditions, plan_digest, fencing_epoch,
 				blast_radius, rollback_point, cursor, verification, final_observation, budget,
-				created_at, updated_at, version)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, NULL, ?, ?, ?, 0)`,
+				retry_of, inputs, created_at, updated_at, version)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, 0)`,
 			bindings: [
 				operation.id,
 				org,
@@ -240,6 +246,8 @@ export async function createSiteOperation(
 				operation.rollbackPoint,
 				operation.verification,
 				JSON.stringify(operation.budget),
+				operation.retryOf ?? null,
+				operation.inputs === undefined ? null : JSON.stringify(operation.inputs),
 				operation.now,
 				operation.now
 			]
@@ -362,4 +370,38 @@ export async function appendOperationStep(
 			[operationId, step.id, step.name, step.state, operationId]
 		)
 	);
+}
+
+// what the engine was started with; null for an operation recorded without it
+export async function getOperationInputs(
+	db: CollegeDBClient,
+	organizationId: string,
+	id: string
+): Promise<unknown> {
+	const row = await db.first<{ inputs: string | null }>(
+		organizationId,
+		'SELECT inputs FROM operations WHERE organization_id = ? AND id = ?',
+		[organizationId, id]
+	);
+	return row?.inputs ? (JSON.parse(row.inputs) as unknown) : null;
+}
+
+// the operations that retried this one, newest first
+export async function listRetriesOf(
+	db: CollegeDBClient,
+	organizationId: string,
+	id: string
+): Promise<StoredOperation[]> {
+	const { results } = await db.all<OperationRow>(
+		organizationId,
+		`SELECT ${OPERATION_COLUMNS} FROM operations
+		 WHERE organization_id = ? AND retry_of = ? ORDER BY created_at DESC, id DESC`,
+		[organizationId, id]
+	);
+	const steps = await loadSteps(
+		db,
+		organizationId,
+		results.map((row) => row.id)
+	);
+	return results.map((row) => toStored(row, steps.get(row.id) ?? []));
 }

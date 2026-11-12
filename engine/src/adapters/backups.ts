@@ -12,7 +12,8 @@ export class D1BackupLedger implements BackupLedger {
 	async site(siteId: string): Promise<BackupSite | null> {
 		const row = await this.db
 			.prepare(
-				'SELECT id, organization_id, account_id, plane, state, primary_hostname FROM sites WHERE id = ?'
+				`SELECT id, organization_id, account_id, plane, state, primary_hostname, adopted_to
+				FROM sites WHERE id = ?`
 			)
 			.bind(siteId)
 			.first<{
@@ -22,6 +23,7 @@ export class D1BackupLedger implements BackupLedger {
 				plane: BackupSite['plane'];
 				state: SiteRowState;
 				primary_hostname: string | null;
+				adopted_to: string | null;
 			}>();
 		if (row === null) return null;
 		return {
@@ -30,7 +32,8 @@ export class D1BackupLedger implements BackupLedger {
 			accountId: row.account_id,
 			plane: row.plane,
 			state: row.state,
-			primaryHostname: row.primary_hostname
+			primaryHostname: row.primary_hostname,
+			adoptedTo: row.adopted_to
 		};
 	}
 

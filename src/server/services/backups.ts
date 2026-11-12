@@ -198,6 +198,7 @@ async function newOperation(
 		type: 'backup.create' | 'backup.restore';
 		plan: Plan;
 		idempotencyKey: string;
+		inputs: BackupCreateInput | BackupRestoreInput;
 	}
 ) {
 	const now = nowUtc().toMillis();
@@ -217,6 +218,7 @@ async function newOperation(
 		verification: 'pending',
 		budget: DEFAULT_CHANGE_BUDGET,
 		steps: input.plan.steps,
+		inputs: input.inputs,
 		now
 	});
 }
@@ -250,7 +252,8 @@ export async function startBackup(
 		siteId: site.id,
 		type: 'backup.create',
 		plan: planBackupCreate(params),
-		idempotencyKey: input.idempotencyKey
+		idempotencyKey: input.idempotencyKey,
+		inputs: params
 	});
 	if (!created) return operation;
 	return startAndReturn(
@@ -320,7 +323,8 @@ export async function startRestore(
 		siteId: target.id,
 		type: 'backup.restore',
 		plan: planBackupRestore(params),
-		idempotencyKey: input.idempotencyKey
+		idempotencyKey: input.idempotencyKey,
+		inputs: params
 	});
 	if (!created) return operation;
 	return startAndReturn(

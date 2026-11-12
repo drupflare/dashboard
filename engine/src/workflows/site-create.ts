@@ -54,6 +54,7 @@ import {
 	type Ctx,
 	type Outcome
 } from './common';
+import { cleanPrior, CLEANUP_STEP, type CleanupTarget } from './site-cleanup';
 
 export interface SiteCreateInput {
 	operationId: string;
@@ -85,6 +86,8 @@ export interface SiteCreateInput {
 	// auth names how the probe proves itself; the owner token is read from custody, never passed in
 	probe?: { path: string; expectStatus: number; auth?: 'owner-token' };
 	chunkBytes?: number;
+	// an earlier attempt at this create that failed; it is cleaned up before this one reserves the name
+	prior?: CleanupTarget;
 }
 
 export interface FirstRunSealed {
@@ -119,6 +122,7 @@ export function planSiteCreate(input: SiteCreateInput): Plan {
 		preconditions: [`${input.subdomain} is free`, `release ${input.releaseId} is published`],
 		steps: [
 			{ id: 'lease', name: 'Take the site writer lease' },
+			...(input.prior ? [{ ...CLEANUP_STEP }] : []),
 			{ id: 'reserve-name', name: `Reserve ${input.subdomain}` },
 			...resources.create.map((resource) => ({
 				id: `resource.${resource.binding}`,
@@ -154,7 +158,7 @@ function desiredAuthority(input: SiteCreateInput): AuthorityState {
 
 // #region forward steps
 
-async function reserveName(ctx: Ctx, input: SiteCreateInput): Promise<void> {
+export async function reserveName(ctx: Ctx, input: SiteCreateInput): Promise<void> {
 	await runStep(ctx, 'reserve-name', 'reserve-name', async () => {
 		await fenced(ctx);
 		const answer = await ctx.deps.names.reserve(input.subdomain, input.site.id);
@@ -171,7 +175,7 @@ const claimOf = (ctx: Ctx, input: SiteCreateInput): Claim => ({
 
 // the first resource also reads the account's usage, so a create that cannot fit stops before it
 // changes anything
-async function createResource(
+export async function createResource(
 	ctx: Ctx,
 	input: SiteCreateInput,
 	resource: ResourcePlan['create'][number],
@@ -192,7 +196,7 @@ async function createResource(
 }
 
 // the completion token goes into the script's metadata, so assets come before the script
-async function uploadAssets(ctx: Ctx, input: SiteCreateInput): Promise<string> {
+export async function uploadAssets(ctx: Ctx, input: SiteCreateInput): Promise<string> {
 	const { deps } = ctx;
 	const script = scriptName(input.site.id);
 	const chunkBytes = input.chunkBytes ?? deps.config.chunkBytes;
@@ -299,7 +303,11 @@ async function uploadAssets(ctx: Ctx, input: SiteCreateInput): Promise<string> {
 	);
 }
 
-async function uploadScript(ctx: Ctx, input: SiteCreateInput, assetsToken: string): Promise<void> {
+export async function uploadScript(
+	ctx: Ctx,
+	input: SiteCreateInput,
+	assetsToken: string
+): Promise<void> {
 	const { deps } = ctx;
 	await runStep(ctx, 'upload-script', 'upload-script', async () => {
 		await fenced(ctx);
@@ -349,7 +357,7 @@ async function uploadScript(ctx: Ctx, input: SiteCreateInput, assetsToken: strin
 	});
 }
 
-async function applyAuthority(ctx: Ctx, input: SiteCreateInput): Promise<void> {
+export async function applyAuthority(ctx: Ctx, input: SiteCreateInput): Promise<void> {
 	const { authority } = ctx.deps;
 	await runStep(ctx, 'authority', 'authority', async () => {
 		await fenced(ctx);
@@ -362,7 +370,7 @@ async function applyAuthority(ctx: Ctx, input: SiteCreateInput): Promise<void> {
 	});
 }
 
-async function putRoute(ctx: Ctx, input: SiteCreateInput): Promise<void> {
+export async function putRoute(ctx: Ctx, input: SiteCreateInput): Promise<void> {
 	await runStep(ctx, 'route', 'route', async () => {
 		await fenced(ctx);
 		// the customer's zone is read and checked before anything of ours is written
@@ -390,7 +398,11 @@ async function sealing<T>(what: string, write: () => Promise<T>): Promise<T> {
 
 // the response and both secrets live only inside this step, which returns ids; the password is
 // sealed first, so a death between the seals leaves no token and the retry rolls the create back
-async function firstRun(ctx: Ctx, input: SiteCreateInput, call: SiteCall): Promise<FirstRunSealed> {
+export async function firstRun(
+	ctx: Ctx,
+	input: SiteCreateInput,
+	call: SiteCall
+): Promise<FirstRunSealed> {
 	const { custody, site } = ctx.deps;
 	const { reads } = call;
 	return runStep(ctx, 'first-run', 'first-run', async () => {
@@ -544,7 +556,7 @@ async function verify(
 	});
 }
 
-async function activate(
+export async function activate(
 	ctx: Ctx,
 	input: SiteCreateInput,
 	sealed: FirstRunSealed | null
@@ -610,19 +622,11 @@ function rollbackActions(
 				});
 			}
 		],
-		[
-			'site',
-			async () => {
-				if ((await deps.store.siteState(siteId)) !== null) {
-					await deps.store.setSiteState(siteId, 'deleted', deps.now());
-				}
-			}
-		],
 		['custody', () => deps.custody.discard(siteId)],
 		['script', () => rollbackRow(deps, claimOf(ctx, input), (row) => row.kind === 'script')]
 	];
 	if (input.zoneId !== undefined) {
-		actions.splice(3, 0, [
+		actions.splice(2, 0, [
 			'zone-route',
 			() => rollbackRow(deps, claimOf(ctx, input), (row) => row.kind === 'route')
 		]);
@@ -649,6 +653,15 @@ function rollbackActions(
 		}
 	]);
 	actions.push(['name', async () => void (await deps.names.release(input.subdomain, siteId, 0))]);
+	// last, and only when nothing else leaked, so the sweep still finds a rollback that stopped early
+	actions.push([
+		'site',
+		async () => {
+			if ((await deps.store.siteState(siteId)) !== null) {
+				await deps.store.setSiteState(siteId, 'deleted', deps.now());
+			}
+		}
+	]);
 	return actions;
 }
 
@@ -701,6 +714,7 @@ async function rollback(
 	const leaked: string[] = [];
 	const notes: string[] = [];
 	for (const [name, action] of actions) {
+		if (name === 'site' && leaked.length > 0) continue;
 		try {
 			const note = await plainStep(ctx, `rollback.${name}`, action);
 			if (typeof note === 'string') notes.push(note);
@@ -787,6 +801,7 @@ export async function runSiteCreate(
 	try {
 		await startOperation(ctx);
 		await acquireLease(ctx, 'lease');
+		if (input.prior !== undefined) await cleanPrior(ctx, input.prior);
 		await reserveName(ctx, input);
 		for (const [index, resource] of resources.create.entries()) {
 			await createResource(ctx, input, resource, index === 0 ? resources : null);

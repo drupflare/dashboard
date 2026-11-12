@@ -40,6 +40,8 @@ export interface BackupCreateInput {
 	label: string | null;
 	// the worker's own limit on a restore body; a larger dump is stored and never restorable
 	restoreCeilingBytes?: number;
+	// stops the export as soon as the pages held so far pass this size, before the rest is read
+	stopAboveBytes?: number;
 	maxPages?: number;
 }
 
@@ -193,6 +195,16 @@ async function exportPage(
 				);
 			}
 			const bytes = utf8(fetched.sql);
+			const held = progress.parts.reduce((sum, part) => sum + part.bytes, 0);
+			if (
+				input.stopAboveBytes !== undefined &&
+				held + bytes.byteLength > input.stopAboveBytes
+			) {
+				throw new BackupError(
+					'restore_too_large',
+					`the dump is larger than the ${input.stopAboveBytes} bytes a site accepts in a restore`
+				);
+			}
 			await deps.blobs.put(
 				backupKeys.part(input.orgId, input.siteId, input.backupId, seq),
 				bytes
@@ -214,7 +226,7 @@ async function exportPage(
 	};
 }
 
-async function exportParts(
+export async function exportParts(
 	ctx: Ctx,
 	deps: BackupDeps,
 	input: BackupCreateInput
@@ -232,7 +244,7 @@ async function exportParts(
 
 // #region checking and recording
 
-async function verifyParts(
+export async function verifyParts(
 	ctx: Ctx,
 	deps: BackupDeps,
 	input: BackupCreateInput,
@@ -274,7 +286,7 @@ async function verifyParts(
 
 // the row lands last, so a row always points at a manifest and parts that checked out; verified
 // stays false because no scratch restore has proved the dump replays
-async function recordBackup(
+export async function recordBackup(
 	ctx: Ctx,
 	deps: BackupDeps,
 	input: BackupCreateInput,

@@ -25,6 +25,9 @@ export interface SiteRecord {
 	// what the first run reported for the account it made; null on a site that predates the columns
 	adminName: string | null;
 	adminMail: string | null;
+	// the managed site this one was adopted into, and the self-managed site this one came from
+	adoptedTo: string | null;
+	adoptedFrom: string | null;
 	readyAt: number | null;
 	createdAt: number;
 	updatedAt: number;
@@ -44,13 +47,16 @@ interface SiteRow {
 	release_id: string | null;
 	admin_name: string | null;
 	admin_mail: string | null;
+	adopted_to: string | null;
+	adopted_from: string | null;
 	ready_at: number | null;
 	created_at: number;
 	updated_at: number;
 }
 
 const SITE_COLUMNS = `id, organization_id, name, kind, category, plane, config, account_id, state,
-	primary_hostname, release_id, admin_name, admin_mail, ready_at, created_at, updated_at`;
+	primary_hostname, release_id, admin_name, admin_mail, adopted_to, adopted_from, ready_at,
+	created_at, updated_at`;
 
 function toRecord(row: SiteRow): SiteRecord {
 	return {
@@ -67,6 +73,8 @@ function toRecord(row: SiteRow): SiteRecord {
 		releaseId: row.release_id,
 		adminName: row.admin_name,
 		adminMail: row.admin_mail,
+		adoptedTo: row.adopted_to,
+		adoptedFrom: row.adopted_from,
 		readyAt: row.ready_at,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
@@ -116,6 +124,20 @@ export async function getReadySite(
 	return row ? toRecord(row) : null;
 }
 
+// the row in any state, ready or not; for a site whose create never finished
+export async function getSite(
+	db: CollegeDBClient,
+	organizationId: string,
+	id: string
+): Promise<SiteRecord | null> {
+	const row = await db.first<SiteRow>(
+		organizationId,
+		`SELECT ${SITE_COLUMNS} FROM sites WHERE organization_id = ? AND id = ?`,
+		[organizationId, id]
+	);
+	return row ? toRecord(row) : null;
+}
+
 // returns at most count rows after the id given, and none that is tombstoned; callers ask for one
 // more than the page size
 export async function listReadySites(
@@ -145,7 +167,8 @@ export async function countOrganizationSites(
 		 WHERE s.organization_id = ? AND s.state IN ('active', 'suspended')
 		 AND (s.ready_at IS NOT NULL OR EXISTS (
 			SELECT 1 FROM operations o WHERE o.organization_id = s.organization_id
-			AND o.site_id = s.id AND o.type = 'site.create'
+			AND ((o.site_id = s.id AND o.type = 'site.create')
+				OR (o.type = 'site.adopt' AND json_extract(o.target_ids, '$[0]') = s.id))
 			AND o.status IN ('planned', 'awaiting-approval', 'running', 'verifying')))`,
 		[organizationId]
 	);

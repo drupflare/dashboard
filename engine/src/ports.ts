@@ -205,6 +205,8 @@ export interface BackupSite {
 	plane: SitePlane;
 	state: SiteRowState;
 	primaryHostname: string | null;
+	// the managed site this one was adopted into, when it was
+	adoptedTo: string | null;
 }
 
 export interface BackupLedger {

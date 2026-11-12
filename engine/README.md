@@ -2,7 +2,7 @@
 
 The second Worker in this repo. Durable Objects, Workflows and Containers cannot be exported from the Nuxt server entry, so the code that runs site operations lives here. It reads and writes the same D1 database as the dashboard and imports only `@contracts/*` and relative files, never `src/server` or Nuxt.
 
-It exports the `SiteLease` Durable Object and the `SiteCreate`, `SiteDelete`, `SitePurge`, `BackupCreate` and `BackupRestore` Workflows. Each class is thin: the decisions live in pure functions that take their state as an argument, and the classes only read and write storage around them.
+It exports the `SiteLease` Durable Object and the `SiteCreate`, `SiteDelete`, `SitePurge`, `SiteCleanup`, `BackupCreate` and `BackupRestore` Workflows. Each class is thin: the decisions live in pure functions that take their state as an argument, and the classes only read and write storage around them.
 
 ## Modules
 
@@ -18,6 +18,7 @@ It exports the `SiteLease` Durable Object and the `SiteCreate`, `SiteDelete`, `S
 | `src/ports.ts`                    | The interfaces the workflows call: Cloudflare, authority, names, site, releases     |
 | `src/workflows/site-create.ts`    | Create steps and the rollback that undoes them                                      |
 | `src/workflows/site-delete.ts`    | Delete (tombstone) and purge, which needs a second explicit confirmation            |
+| `src/workflows/site-cleanup.ts`   | Removes what an unfinished create left behind; a retried create runs it first       |
 | `src/backup-parts.ts`             | Backup ids, the part manifest with its sha256 digests, and the restore ceiling      |
 | `src/workflows/backup-create.ts`  | Pages a site export into R2 parts and writes the manifest                           |
 | `src/workflows/backup-restore.ts` | Checks the parts, restores them into a target site and waits for the replay         |

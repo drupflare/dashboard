@@ -21,6 +21,8 @@ export interface Ctx {
 	accountId: string;
 	purpose: string;
 	epoch: number | null;
+	// plan step ids a reused step function writes, renamed to the ones this plan holds
+	stepIds?: Readonly<Record<string, string>>;
 }
 
 export type Outcome =
@@ -63,11 +65,12 @@ export interface RunOptions {
 export function runStep<T>(
 	ctx: Ctx,
 	name: string,
-	planStepId: string,
+	stepId: string,
 	work: (attempt: number) => Promise<T>,
 	options: RunOptions = {}
 ): Promise<T> {
 	const { store, now } = ctx.deps;
+	const planStepId = ctx.stepIds?.[stepId] ?? stepId;
 	return ctx.step.do(name, async () => {
 		let attempt = 1;
 		if (options.begin ?? true) {

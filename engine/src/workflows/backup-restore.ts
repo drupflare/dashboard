@@ -220,7 +220,7 @@ async function loadBackup(
 
 // #region steps
 
-interface Checked {
+export interface Checked {
 	hostname: string;
 	ownerTokenId: string;
 	plane: SitePlane;
@@ -228,7 +228,11 @@ interface Checked {
 	sources: string[];
 }
 
-async function check(ctx: Ctx, deps: BackupDeps, input: BackupRestoreInput): Promise<Checked> {
+export async function check(
+	ctx: Ctx,
+	deps: BackupDeps,
+	input: BackupRestoreInput
+): Promise<Checked> {
 	return runStep(ctx, 'check', 'check', async () => {
 		await fenced(ctx);
 		await assertOperationOrg(deps, ctx.operationId, input.orgId, 'target_other_organisation');
@@ -249,7 +253,7 @@ async function check(ctx: Ctx, deps: BackupDeps, input: BackupRestoreInput): Pro
 	});
 }
 
-async function grant(
+export async function grant(
 	ctx: Ctx,
 	deps: BackupDeps,
 	input: BackupRestoreInput,
@@ -265,7 +269,7 @@ async function grant(
 
 // the import carries the operation id as its label, so a resumed step finds its own import and
 // does not send the dump twice
-async function sendDump(
+export async function sendDump(
 	ctx: Ctx,
 	deps: BackupDeps,
 	input: BackupRestoreInput,
@@ -294,7 +298,7 @@ async function sendDump(
 	});
 }
 
-async function apply(
+export async function apply(
 	ctx: Ctx,
 	deps: BackupDeps,
 	input: BackupRestoreInput,
@@ -335,7 +339,7 @@ async function apply(
 }
 
 // the key stays until the copies finish; a timeout leaves it in place on purpose
-async function adopt(
+export async function adopt(
 	ctx: Ctx,
 	deps: BackupDeps,
 	input: BackupRestoreInput,
@@ -363,7 +367,7 @@ async function adopt(
 }
 
 // the site answers 503 until the replay lands, so the probe runs only after it applied
-async function verify(
+export async function verify(
 	ctx: Ctx,
 	deps: BackupDeps,
 	input: BackupRestoreInput,

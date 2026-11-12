@@ -1,7 +1,7 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"contract": "operations",
-	"version": "1.0",
+	"version": "1.1",
 	"schemas": {
 		"changeBudget": {
 			"type": "object",
@@ -324,6 +324,12 @@
 						"bulkDeleteConfirmation"
 					],
 					"additionalProperties": false
+				},
+				"retryOf": {
+					"anyOf": [
+						{ "type": "string", "pattern": "^op_[0-9a-z]{8,40}$" },
+						{ "type": "null" }
+					]
 				},
 				"createdAt": {
 					"type": "string",

@@ -5,6 +5,8 @@ import { PermanentError, StepFailed, type StepRunner } from '../step';
 import { runBackupCreate, type BackupCreateInput } from './backup-create';
 import { runBackupRestore, type BackupRestoreInput } from './backup-restore';
 import type { Outcome } from './common';
+import { runSiteAdopt, type SiteAdoptInput } from './site-adopt';
+import { runSiteCleanup, type SiteCleanupInput } from './site-cleanup';
 import { runSiteCreate, type SiteCreateInput } from './site-create';
 import {
 	runSiteDelete,
@@ -97,6 +99,28 @@ export class BackupRestore extends WorkflowEntrypoint<EngineEnv, BackupRestoreIn
 			await buildBackupDeps(this.env),
 			event.payload
 		);
+	}
+}
+
+export class SiteAdopt extends WorkflowEntrypoint<EngineEnv, SiteAdoptInput> {
+	async run(
+		event: Readonly<WorkflowEvent<SiteAdoptInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runSiteAdopt(
+			runnerOf(step, BACKUP_STEP_CONFIG),
+			await buildBackupDeps(this.env),
+			event.payload
+		);
+	}
+}
+
+export class SiteCleanup extends WorkflowEntrypoint<EngineEnv, SiteCleanupInput> {
+	async run(
+		event: Readonly<WorkflowEvent<SiteCleanupInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runSiteCleanup(runnerOf(step), await buildDeps(this.env), event.payload);
 	}
 }
 

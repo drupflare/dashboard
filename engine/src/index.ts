@@ -6,6 +6,8 @@ export { SiteLease } from './site-lease';
 export {
 	BackupCreate,
 	BackupRestore,
+	SiteAdopt,
+	SiteCleanup,
 	SiteCreate,
 	SiteDelete,
 	SitePurge,
@@ -22,6 +24,8 @@ export default {
 				'site-upgrade': env.SITE_UPGRADE,
 				'site-delete': env.SITE_DELETE,
 				'site-purge': env.SITE_PURGE,
+				'site-cleanup': env.SITE_CLEANUP,
+				'site-adopt': env.SITE_ADOPT,
 				'backup-create': env.BACKUP_CREATE,
 				'backup-restore': env.BACKUP_RESTORE
 			}

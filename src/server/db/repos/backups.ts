@@ -63,8 +63,8 @@ export async function createOperationRecord(
 			sql: `INSERT OR IGNORE INTO operations (id, organization_id, account_id, site_id, type,
 				status, idempotency_key, target_ids, preconditions, plan_digest, fencing_epoch,
 				blast_radius, rollback_point, cursor, verification, final_observation, budget,
-				created_at, updated_at, version)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, NULL, ?, ?, ?, 0)`,
+				retry_of, inputs, created_at, updated_at, version)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, NULL, ?, NULL, ?, ?, ?, ?, ?, 0)`,
 			bindings: [
 				operation.id,
 				org,
@@ -80,6 +80,8 @@ export async function createOperationRecord(
 				operation.rollbackPoint,
 				operation.verification,
 				JSON.stringify(operation.budget),
+				operation.retryOf ?? null,
+				operation.inputs === undefined ? null : JSON.stringify(operation.inputs),
 				operation.now,
 				operation.now
 			]

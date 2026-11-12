@@ -167,6 +167,8 @@ export const sites = sqliteTable('sites', {
 	releaseId: text('release_id'),
 	adminName: text('admin_name'),
 	adminMail: text('admin_mail'),
+	adoptedFrom: text('adopted_from'),
+	adoptedTo: text('adopted_to'),
 	readyAt: integer('ready_at'),
 	createdAt: integer('created_at').notNull(),
 	updatedAt: integer('updated_at').notNull()
@@ -190,6 +192,8 @@ export const operations = sqliteTable('operations', {
 	verification: text('verification').notNull(),
 	finalObservation: text('final_observation'),
 	budget: text('budget').notNull(),
+	retryOf: text('retry_of'),
+	inputs: text('inputs'),
 	createdAt: integer('created_at').notNull(),
 	updatedAt: integer('updated_at').notNull(),
 	version: integer('version').notNull().default(0)
@@ -452,6 +456,8 @@ export const SCHEMA_STATEMENTS: string[] = [
 	release_id TEXT,
 	admin_name TEXT,
 	admin_mail TEXT,
+	adopted_from TEXT,
+	adopted_to TEXT,
 	ready_at INTEGER,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
@@ -474,6 +480,8 @@ export const SCHEMA_STATEMENTS: string[] = [
 	verification TEXT NOT NULL CHECK (verification IN (${quoted(VERIFICATION_STATES)})),
 	final_observation TEXT,
 	budget TEXT NOT NULL,
+	retry_of TEXT,
+	inputs TEXT,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL,
 	version INTEGER NOT NULL DEFAULT 0
@@ -615,6 +623,10 @@ export const SCHEMA_STATEMENTS: string[] = [
 	WHERE account_id IS NOT NULL`,
 	`CREATE INDEX IF NOT EXISTS operations_open ON operations (status, updated_at)
 	WHERE status IN (${quoted(OPEN_OPERATION_STATUSES)})`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS operations_retry_open ON operations (retry_of)
+	WHERE retry_of IS NOT NULL AND status IN (${quoted(OPEN_OPERATION_STATUSES)})`,
+	`CREATE INDEX IF NOT EXISTS operations_retry ON operations (organization_id, retry_of)
+	WHERE retry_of IS NOT NULL`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS operation_steps_order
 	ON operation_steps (operation_id, position)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS site_resources_live ON site_resources (site_id, binding)

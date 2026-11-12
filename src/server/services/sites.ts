@@ -2,7 +2,12 @@ import { newId } from '@contracts/common';
 import { DEFAULT_CHANGE_BUDGET, computePlanDigest } from '@contracts/operations';
 import { categoryOfKind, type SiteKind } from '@contracts/sites';
 import type { CollegeDBClient } from '@earth-app/collegedb';
-import { planSiteCreate } from '../../../engine/src/workflows/site-create';
+import {
+	planSiteCleanup,
+	type CleanupTarget,
+	type SiteCleanupInput
+} from '../../../engine/src/workflows/site-cleanup';
+import { planSiteCreate, type SiteCreateInput } from '../../../engine/src/workflows/site-create';
 import { planSiteDelete, type SiteDeleteInput } from '../../../engine/src/workflows/site-delete';
 import { planSiteUpgrade, type SiteUpgradeInput } from '../../../engine/src/workflows/site-upgrade';
 import { ApiError } from '../../shared/errors';
@@ -17,12 +22,21 @@ import {
 	findOpenSiteOperation,
 	getOperation,
 	getOperationByKey,
+	getOperationInputs,
+	listOperationsForSite,
 	openBlastRadius,
 	updateOperationStatus,
 	type StoredOperation
 } from '../db/repos/operations';
 import { listUserOrganizations } from '../db/repos/organization';
-import { countOrganizationSites, getReadySite, setSiteState, toSite } from '../db/repos/sites';
+import {
+	countOrganizationSites,
+	getReadySite,
+	getSite,
+	setSiteState,
+	toSite,
+	type SiteRecord
+} from '../db/repos/sites';
 import { FREE_PLAN_ID, check, type CheckDenial, type Entitlement } from '../domain/entitlements';
 import type { EngineStartRequest } from '../integrations/engine';
 import { EngineStartError } from '../integrations/engine';
@@ -49,6 +63,8 @@ export interface SiteServices {
 		}): Promise<EntitlementDecision>;
 	};
 	planOf: (orgId: string) => Promise<Entitlement>;
+	// whether the organisation has a Stripe customer, which is what the billing portal needs
+	billingAccountOf: (orgId: string) => Promise<boolean>;
 	// resolves once the signed start request is accepted; it does not wait for the workflow
 	startOperation: (request: EngineStartRequest) => Promise<void>;
 	config: SiteInputConfig;
@@ -64,6 +80,7 @@ function productionServices(): SiteServices {
 		getDb: notBuilt('The site store'),
 		entitlements: { check: notBuilt('The entitlement check') },
 		planOf: notBuilt('The plan read'),
+		billingAccountOf: notBuilt('The billing account read'),
 		startOperation: notBuilt('Starting an operation'),
 		config: { hostSuffix: MANAGED_HOST_SUFFIX, accountId: null, releases: {} }
 	};
@@ -148,6 +165,14 @@ export interface CreateSiteInput {
 	idempotencyKey: string;
 }
 
+export function entitlementRefusal(reason: CheckDenial): ApiError {
+	return new ApiError('forbidden', 'Your plan does not include this kind of site', {
+		requires: 'entitlement',
+		feature: 'site.create',
+		reason
+	});
+}
+
 // the name authority is the engine's reserve-name step; this checks the format and reserved words only
 function checkLabel(value: string, field: 'name' | 'hostnameLabel'): void {
 	if (!isValidName(value)) {
@@ -180,13 +205,7 @@ export async function createSite(
 		userId: input.userId,
 		kind: input.kind
 	});
-	if (!decision.allow) {
-		throw new ApiError('forbidden', 'Your plan does not include this kind of site', {
-			requires: 'entitlement',
-			feature: 'site.create',
-			reason: decision.reason
-		});
-	}
+	if (!decision.allow) throw entitlementRefusal(decision.reason);
 
 	const siteId = newId('site');
 	const operationId = newId('op');
@@ -212,7 +231,22 @@ export async function createSite(
 		labelSuffix: config.labelSuffix,
 		...(owner === null ? {} : { ownerEmail: owner.email })
 	}).catch(inputRefusal);
+	return recordAndStartCreate(services, engineInput, {
+		orgId: input.orgId,
+		idempotencyKey: input.idempotencyKey
+	});
+}
 
+// writes the operation and the hidden site row, then starts the engine; a retry carries the id of
+// the failed create it replaces
+export async function recordAndStartCreate(
+	services: SiteServices,
+	engineInput: SiteCreateInput,
+	options: { orgId: string; idempotencyKey: string; retryOf?: string }
+): Promise<StoredOperation> {
+	const { orgId } = options;
+	const siteId = engineInput.site.id;
+	const operationId = engineInput.operationId;
 	// the engine's own plan, so both writers hold one digest and one step list
 	const plan = planSiteCreate(engineInput);
 	const db = await services.getDb();
@@ -220,10 +254,10 @@ export async function createSite(
 		db,
 		{
 			id: siteId,
-			organizationId: input.orgId,
-			name: input.name,
-			kind: input.kind,
-			category,
+			organizationId: orgId,
+			name: engineInput.site.name,
+			kind: engineInput.site.kind,
+			category: engineInput.site.category,
 			plane: 'managed',
 			config: engineInput.site.config,
 			primaryHostname: engineInput.hostname,
@@ -231,12 +265,12 @@ export async function createSite(
 		},
 		{
 			id: operationId,
-			organizationId: input.orgId,
+			organizationId: orgId,
 			accountId: engineInput.site.accountId,
 			siteId,
 			type: 'site.create',
 			status: 'planned',
-			idempotencyKey: input.idempotencyKey,
+			idempotencyKey: options.idempotencyKey,
 			targetIds: plan.targetIds,
 			preconditions: plan.preconditions,
 			planDigest: await computePlanDigest(plan),
@@ -245,6 +279,8 @@ export async function createSite(
 			verification: 'pending',
 			budget: DEFAULT_CHANGE_BUDGET,
 			steps: plan.steps,
+			retryOf: options.retryOf ?? null,
+			inputs: engineInput,
 			now: nowUtc().toMillis()
 		}
 	);
@@ -259,8 +295,8 @@ export async function createSite(
 	} catch (error) {
 		// the engine never took it, so no one else writes this operation or site
 		const now = nowUtc().toMillis();
-		await updateOperationStatus(db, input.orgId, operationId, operation.version, 'failed', now);
-		await setSiteState(db, input.orgId, siteId, 'deleted', now);
+		await updateOperationStatus(db, orgId, operationId, operation.version, 'failed', now);
+		await setSiteState(db, orgId, siteId, 'deleted', now);
 		if (error instanceof ApiError) throw error;
 		throw new ApiError('unprocessable', 'The site could not be started', {
 			operationId,
@@ -268,7 +304,7 @@ export async function createSite(
 		});
 	}
 
-	const latest = await getOperation(db, input.orgId, operationId);
+	const latest = await getOperation(db, orgId, operationId);
 	if (!latest) throw new Error(`operation ${operationId} is missing after its start`);
 	return latest;
 }
@@ -492,6 +528,7 @@ export async function upgradeSite(
 		verification: 'pending',
 		budget: DEFAULT_CHANGE_BUDGET,
 		steps: plan.steps,
+		inputs: params,
 		now: nowUtc().toMillis()
 	});
 	if (!created) return operation;
@@ -521,6 +558,168 @@ export async function upgradeSite(
 	const latest = await getOperation(db, input.orgId, operationId);
 	if (!latest) throw new Error(`operation ${operationId} is missing after its start`);
 	return latest;
+}
+
+// #endregion
+
+// #region cleanup
+
+export interface CleanupSiteInput {
+	orgId: string;
+	siteId: string;
+	idempotencyKey: string;
+	retryOf?: string;
+}
+
+// the engine owns every status after it accepts the start; a refused start is the dashboard's to close
+export async function startRecorded(
+	services: SiteServices,
+	db: CollegeDBClient,
+	orgId: string,
+	operation: StoredOperation,
+	request: EngineStartRequest,
+	refusal: string
+): Promise<StoredOperation> {
+	try {
+		await services.startOperation(request);
+	} catch (error) {
+		await updateOperationStatus(
+			db,
+			orgId,
+			request.id,
+			operation.version,
+			'failed',
+			nowUtc().toMillis()
+		);
+		if (error instanceof ApiError) throw error;
+		throw new ApiError('unprocessable', refusal, {
+			operationId: request.id,
+			...(error instanceof EngineStartError ? { reason: error.code } : {})
+		});
+	}
+	const latest = await getOperation(db, orgId, request.id);
+	if (!latest) throw new Error(`operation ${request.id} is missing after its start`);
+	return latest;
+}
+
+// the managed label is the host's first label less the staging suffix
+function subdomainOf(hostname: string, labelSuffix: string | undefined): string {
+	const label = hostname.split('.')[0] ?? hostname;
+	return labelSuffix && label.endsWith(labelSuffix) ? label.slice(0, -labelSuffix.length) : label;
+}
+
+// what the failed create recorded about its site, with the site row and the config as the fallback
+async function cleanupTargetOf(
+	services: SiteServices,
+	db: CollegeDBClient,
+	site: SiteRecord,
+	creates: StoredOperation | undefined
+): Promise<CleanupTarget> {
+	const recorded = creates
+		? ((await getOperationInputs(db, site.organizationId, creates.operation.id)) as Partial<
+				Pick<SiteCreateInput, 'site' | 'hostname' | 'subdomain'>
+			> | null)
+		: null;
+	const hostname = recorded?.hostname ?? site.primaryHostname;
+	const accountId = recorded?.site?.accountId ?? services.config.accountId;
+	if (hostname === null || hostname === undefined || !accountId) {
+		throw new ApiError('not_built', 'This site was not recorded well enough to clean up');
+	}
+	return {
+		siteId: site.id,
+		accountId,
+		plane: site.plane,
+		hostname,
+		subdomain: recorded?.subdomain ?? subdomainOf(hostname, services.config.labelSuffix)
+	};
+}
+
+// a site whose create never finished: whatever the create left is removed and the name is freed.
+// A site that is deleted already has nothing left, so a repeat returns the operation that did it
+export async function cleanupSite(
+	services: SiteServices,
+	input: CleanupSiteInput
+): Promise<StoredOperation> {
+	const db = await services.getDb();
+	const known = await getOperationByKey(db, input.orgId, input.idempotencyKey);
+	if (known) {
+		if (
+			known.operation.type !== 'repair.run' ||
+			known.operation.targetIds[0] !== input.siteId
+		) {
+			throw new ApiError('conflict', 'This Idempotency-Key belongs to a different request', {
+				reason: 'idempotency_key_reused'
+			});
+		}
+		return known;
+	}
+	const site = await getSite(db, input.orgId, input.siteId);
+	if (site === null) throw new ApiError('not_found', 'Not found');
+	if (site.readyAt !== null && site.state !== 'deleted') {
+		throw new ApiError('conflict', 'This site is live, so it is not cleaned up', {
+			reason: 'site_active'
+		});
+	}
+	const busy = await findOpenSiteOperation(db, input.orgId, site.id);
+	if (busy) {
+		throw new ApiError(
+			'conflict',
+			'Another change to this site is still running. Wait for it to finish.',
+			{ reason: 'site_busy', operationId: busy.id, operation: busy.type }
+		);
+	}
+	const history = await listOperationsForSite(db, input.orgId, site.id, { count: 50 });
+	if (site.state === 'deleted') {
+		const settled =
+			history.find(
+				(row) => row.operation.type === 'repair.run' && row.operation.status === 'succeeded'
+			) ?? history[0];
+		if (!settled) throw new ApiError('not_found', 'Not found');
+		return settled;
+	}
+
+	const target = await cleanupTargetOf(
+		services,
+		db,
+		site,
+		history.find((row) => row.operation.type === 'site.create')
+	);
+	const operationId = newId('op');
+	const params: SiteCleanupInput = { operationId, ...target };
+	const plan = planSiteCleanup(params);
+	const { operation, created } = await createOperationRecord(db, {
+		id: operationId,
+		organizationId: input.orgId,
+		accountId: target.accountId,
+		siteId: site.id,
+		type: 'repair.run',
+		status: 'planned',
+		idempotencyKey: input.idempotencyKey,
+		targetIds: plan.targetIds,
+		preconditions: plan.preconditions,
+		planDigest: await computePlanDigest(plan),
+		blastRadius: plan.blastRadius,
+		rollbackPoint: plan.rollbackPoint,
+		verification: 'not-required',
+		budget: DEFAULT_CHANGE_BUDGET,
+		steps: plan.steps,
+		retryOf: input.retryOf ?? null,
+		inputs: params,
+		now: nowUtc().toMillis()
+	});
+	if (!created) return operation;
+	return startRecorded(
+		services,
+		db,
+		input.orgId,
+		operation,
+		{
+			workflow: 'site-cleanup',
+			id: operationId,
+			params: params as unknown as Record<string, unknown>
+		},
+		'The cleanup could not be started'
+	);
 }
 
 // #endregion

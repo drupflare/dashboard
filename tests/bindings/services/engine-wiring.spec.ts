@@ -9,12 +9,15 @@ import { D1ResourceLedger } from '../../../engine/src/ownership';
 import type { EngineDeps } from '../../../engine/src/ports';
 import { handleStart, type WorkflowStarter } from '../../../engine/src/start';
 import type { Outcome } from '../../../engine/src/workflows/common';
+import { runSiteCleanup, type SiteCleanupInput } from '../../../engine/src/workflows/site-cleanup';
 import {
 	planSiteCreate,
 	runSiteCreate,
 	type SiteCreateInput
 } from '../../../engine/src/workflows/site-create';
 import { runSiteDelete, type SiteDeleteInput } from '../../../engine/src/workflows/site-delete';
+import retry from '../../../src/server/api/v1/orgs/[orgId]/operations/[id]/retry.post';
+import cleanup from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/cleanup.post';
 import reveal from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/first-run-secret.post';
 import sitesCreate from '../../../src/server/api/v1/orgs/[orgId]/sites/index.post';
 import siteRead from '../../../src/server/api/v1/sites/[id]/index.get';
@@ -76,13 +79,24 @@ const seen: { headers: Headers; body: string }[] = [];
 // one Cloudflare account for every create, as in production: provider ids never repeat in it
 let account: EngineDeps['cloudflare'] | undefined;
 
+// failVerify fails the next creates at their verify step, leakKv makes the account refuse to
+// delete a KV namespace, and hold accepts a create without running it
+const faults = { failVerify: false, leakKv: false, hold: false };
+
 async function engineDeps(): Promise<EngineDeps> {
 	const world = await makeWorld();
 	world.clock.set(Date.now());
 	account ??= world.deps.cloudflare;
+	const real = account;
 	return {
 		...world.deps,
-		cloudflare: account,
+		cloudflare: {
+			...real,
+			deleteResource: async (kind, id) => {
+				if (faults.leakKv && kind === 'kv') throw new Error('api down');
+				return real.deleteResource(kind, id);
+			}
+		},
 		names: sharedNames.names,
 		store: new D1OperationStore(env.DB),
 		ledger: new D1ResourceLedger(env.DB),
@@ -99,10 +113,30 @@ const createStarter = {
 	async create({ id, params }: { id: string; params: unknown }) {
 		if (instances.has(id)) throw new Error('instance exists');
 		instances.add(id);
-		const { runner } = makeRunner(new Map());
+		if (faults.hold) return;
+		const { runner } = makeRunner(
+			new Map(),
+			faults.failVerify ? { failAt: { step: 'verify', when: 'before' } } : {}
+		);
 		outcomes.set(
 			id,
 			await runSiteCreate(runner, await engineDeps(), params as SiteCreateInput)
+		);
+	},
+	async get(id: string) {
+		if (!instances.has(id)) throw new Error('not found');
+		return {};
+	}
+} as unknown as WorkflowStarter;
+
+const cleanupStarter = {
+	async create({ id, params }: { id: string; params: unknown }) {
+		if (instances.has(id)) throw new Error('instance exists');
+		instances.add(id);
+		const { runner } = makeRunner(new Map());
+		outcomes.set(
+			id,
+			await runSiteCleanup(runner, await engineDeps(), params as SiteCleanupInput)
 		);
 	},
 	async get(id: string) {
@@ -138,6 +172,8 @@ const engine: EngineBinding = {
 				'site-create': createStarter,
 				'site-delete': deleteStarter,
 				'site-purge': createStarter,
+				'site-cleanup': cleanupStarter,
+				'site-adopt': createStarter,
 				'backup-create': createStarter,
 				'backup-restore': createStarter
 			}
@@ -436,6 +472,237 @@ describe('create through the route to a live site', () => {
 		);
 		expect(site).toEqual({ state: 'deleted', ready_at: null });
 		expect(await getReadySite(db, ORG_TWO, operation.targetIds[0]!)).toBeNull();
+	});
+});
+
+function asOrgMember(orgId: string) {
+	setup({
+		deps: {
+			load: async () => ({
+				resource: { orgId },
+				facts: facts({ membership: { orgId, role: 'owner' }, ...fresh })
+			})
+		}
+	});
+}
+
+function postRetry(orgId: string, id: string, key: string) {
+	asOrgMember(orgId);
+	return send(retry, '/api/v1/orgs/:orgId/operations/:id/retry', {
+		method: 'POST',
+		path: `/api/v1/orgs/${orgId}/operations/${id}/retry`,
+		headers: { ...asOtherUser, 'idempotency-key': key }
+	});
+}
+
+function postCleanup(orgId: string, siteId: string, key: string) {
+	asMember(orgId);
+	return send(cleanup, '/api/v1/orgs/:orgId/sites/:id/cleanup', {
+		method: 'POST',
+		path: `/api/v1/orgs/${orgId}/sites/${siteId}/cleanup`,
+		headers: { ...asOtherUser, 'idempotency-key': key }
+	});
+}
+
+type Settled = { id: string; type: string; status: string; retryOf?: string; targetIds: string[] };
+
+describe('cleanup and retry through the routes', () => {
+	it('cleans up a failed create that left its row and a resource behind, then repeats as a no-op', async () => {
+		faults.failVerify = true;
+		faults.leakKv = true;
+		let failed: Created;
+		try {
+			const reply = await postCreate(
+				ORG_TWO,
+				{ kind: 'drupal', name: 'leaky-otter' },
+				'leak-0001'
+			);
+			expect(reply.status).toBe(202);
+			failed = reply.json as Created;
+		} finally {
+			faults.failVerify = false;
+			faults.leakKv = false;
+		}
+		const siteId = failed.targetIds[0]!;
+		expect(outcomes.get(failed.id)).toMatchObject({ status: 'failed' });
+		expect(await rowOf('SELECT state, ready_at FROM sites WHERE id = ?', siteId)).toEqual({
+			state: 'active',
+			ready_at: null
+		});
+		expect(await getReadySite(db, ORG_TWO, siteId)).toBeNull();
+		expect(await new D1ResourceLedger(env.DB).live(siteId)).not.toEqual([]);
+
+		const starts = seen.length;
+		const cleaned = await postCleanup(ORG_TWO, siteId, 'leak-clean-1');
+		expect(cleaned.status).toBe(202);
+		const operation = cleaned.json as Settled;
+		expect(operation).toMatchObject({
+			type: 'repair.run',
+			status: 'succeeded',
+			targetIds: [siteId]
+		});
+		expect(seen).toHaveLength(starts + 1);
+		expect(await rowOf('SELECT state FROM sites WHERE id = ?', siteId)).toEqual({
+			state: 'deleted'
+		});
+		expect(await new D1ResourceLedger(env.DB).live(siteId)).toEqual([]);
+		expect(sharedNames.isFree('leaky-otter')).toBe(true);
+
+		const sameKey = await postCleanup(ORG_TWO, siteId, 'leak-clean-1');
+		expect((sameKey.json as Settled).id).toBe(operation.id);
+		const newKey = await postCleanup(ORG_TWO, siteId, 'leak-clean-2');
+		expect(newKey.status).toBe(202);
+		expect((newKey.json as Settled).id).toBe(operation.id);
+		expect(seen).toHaveLength(starts + 1);
+
+		// a create that activated and then rolled back leaves ready_at set on a deleted row
+		await env.DB.prepare('UPDATE sites SET ready_at = ? WHERE id = ?').bind(1, siteId).run();
+		const afterActivate = await postCleanup(ORG_TWO, siteId, 'leak-clean-3');
+		expect(afterActivate.status).toBe(202);
+		expect((afterActivate.json as Settled).id).toBe(operation.id);
+		expect(seen).toHaveLength(starts + 1);
+	});
+
+	it('refuses to clean up a site that is active', async () => {
+		const live = await rowOf<{ id: string }>(
+			'SELECT id FROM sites WHERE organization_id = ? AND primary_hostname = ?',
+			ORG_TWO,
+			'wired-otter.drupflare.app'
+		);
+		const siteId = live!.id;
+		const starts = seen.length;
+		const reply = await postCleanup(ORG_TWO, siteId, 'live-clean-1');
+		expect(reply.status).toBe(409);
+		expect(reply.json).toMatchObject({ details: { reason: 'site_active' } });
+		expect(seen).toHaveLength(starts);
+		expect(await rowOf('SELECT state FROM sites WHERE id = ?', siteId)).toEqual({
+			state: 'active'
+		});
+	});
+
+	it('refuses both routes to a viewer and to a request without an Idempotency-Key', async () => {
+		const failed = await rowOf<{ id: string; site_id: string }>(
+			"SELECT id, site_id FROM operations WHERE organization_id = ? AND type = 'site.create' AND status = 'failed'",
+			ORG_TWO
+		);
+		const starts = seen.length;
+		const viewer = (orgId: string) =>
+			setup({
+				deps: {
+					load: async (input) => ({
+						resource: {
+							orgId,
+							...(input.scope === 'site' ? { siteId: input.params.id } : {})
+						},
+						facts: facts({ membership: { orgId, role: 'viewer' }, ...fresh })
+					})
+				}
+			});
+		viewer(ORG_TWO);
+		const retried = await send(retry, '/api/v1/orgs/:orgId/operations/:id/retry', {
+			method: 'POST',
+			path: `/api/v1/orgs/${ORG_TWO}/operations/${failed!.id}/retry`,
+			headers: { ...asOtherUser, 'idempotency-key': 'viewer-retry' }
+		});
+		expect(retried.status).toBe(403);
+		viewer(ORG_TWO);
+		const cleaned = await send(cleanup, '/api/v1/orgs/:orgId/sites/:id/cleanup', {
+			method: 'POST',
+			path: `/api/v1/orgs/${ORG_TWO}/sites/${failed!.site_id}/cleanup`,
+			headers: { ...asOtherUser, 'idempotency-key': 'viewer-cleanup' }
+		});
+		expect(cleaned.status).toBe(403);
+
+		asOrgMember(ORG_TWO);
+		const noKey = await send(retry, '/api/v1/orgs/:orgId/operations/:id/retry', {
+			method: 'POST',
+			path: `/api/v1/orgs/${ORG_TWO}/operations/${failed!.id}/retry`,
+			headers: asOtherUser
+		});
+		expect(noKey.status).toBe(400);
+		expect(seen).toHaveLength(starts);
+	});
+
+	it('returns the retry that is still running instead of starting a third operation', async () => {
+		const label = 'running-label';
+		await sharedNames.names.reserve(label, 'site_otherholder02');
+		const lost = await postCreate(ORG_TWO, { kind: 'drupal', name: label }, 'running-0001');
+		const first = lost.json as Created;
+		await sharedNames.names.release(label, 'site_otherholder02', 0);
+
+		faults.hold = true;
+		let held: Settled;
+		try {
+			const reply = await postRetry(ORG_TWO, first.id, 'running-key-1');
+			expect(reply.status).toBe(202);
+			held = reply.json as Settled;
+			expect(held).toMatchObject({ retryOf: first.id, status: 'planned' });
+			const starts = seen.length;
+			const second = await postRetry(ORG_TWO, first.id, 'running-key-2');
+			expect((second.json as Settled).id).toBe(held.id);
+			expect(seen).toHaveLength(starts);
+		} finally {
+			faults.hold = false;
+		}
+		const count = await rowOf<{ n: number }>(
+			'SELECT COUNT(*) AS n FROM operations WHERE organization_id = ? AND retry_of = ?',
+			ORG_TWO,
+			first.id
+		);
+		expect(count?.n).toBe(1);
+		// the held start never ran, so end it here to free the slot it holds against the limit
+		await env.DB.prepare("UPDATE operations SET status = 'cancelled' WHERE id = ?")
+			.bind(held.id)
+			.run();
+	});
+
+	it('retries a create that lost its name, under the same name, as a new operation', async () => {
+		const label = 'retry-label';
+		await sharedNames.names.reserve(label, 'site_otherholder01');
+		const lost = await postCreate(ORG_TWO, { kind: 'drupal', name: label }, 'retry-0001');
+		const first = lost.json as Created;
+		expect(outcomes.get(first.id)).toMatchObject({ status: 'rolled-back' });
+
+		await sharedNames.names.release(label, 'site_otherholder01', 0);
+
+		const retried = await postRetry(ORG_TWO, first.id, 'retry-key-1');
+		expect(retried.status).toBe(202);
+		const next = retried.json as Settled;
+		expect(next).toMatchObject({ type: 'site.create', retryOf: first.id, status: 'succeeded' });
+		expect(next.id).not.toBe(first.id);
+		expect(next.targetIds[0]).not.toBe(first.targetIds[0]);
+		const ready = await getReadySite(db, ORG_TWO, next.targetIds[0]!);
+		expect(ready?.primaryHostname).toBe(`${label}.drupflare.app`);
+
+		const starts = seen.length;
+		const again = await postRetry(ORG_TWO, first.id, 'retry-key-2');
+		expect((again.json as Settled).id).toBe(next.id);
+		expect(seen).toHaveLength(starts);
+	});
+
+	it('refuses to retry an operation that succeeded or a type that is not safe to repeat', async () => {
+		const ok = await rowOf<{ id: string; status: string }>(
+			`SELECT o.id, o.status FROM operations o JOIN sites s ON s.id = o.site_id
+			 WHERE o.organization_id = ? AND o.type = 'site.create' AND s.primary_hostname = ?`,
+			ORG_TWO,
+			'wired-otter.drupflare.app'
+		);
+		expect(ok?.status).toBe('succeeded');
+		const notFailed = await postRetry(ORG_TWO, ok!.id, 'steady-retry');
+		expect(notFailed.status).toBe(409);
+		expect(notFailed.json).toMatchObject({ details: { reason: 'not_failed' } });
+
+		const deleted = await rowOf<{ id: string }>(
+			"SELECT id FROM operations WHERE organization_id = ? AND type = 'site.delete'",
+			ORG_TWO
+		);
+		await env.DB.prepare("UPDATE operations SET status = 'failed' WHERE id = ?")
+			.bind(deleted!.id)
+			.run();
+		const unsafe = await postRetry(ORG_TWO, deleted!.id, 'steady-retry-delete');
+		expect(unsafe.status).toBe(422);
+		expect(unsafe.json).toMatchObject({ details: { reason: 'not_retryable' } });
+		expect(typeof (unsafe.json as { message: string }).message).toBe('string');
 	});
 });
 

@@ -21,6 +21,8 @@
 		{ "name": "site-upgrade", "binding": "SITE_UPGRADE", "class_name": "SiteUpgrade" },
 		{ "name": "site-delete", "binding": "SITE_DELETE", "class_name": "SiteDelete" },
 		{ "name": "site-purge", "binding": "SITE_PURGE", "class_name": "SitePurge" },
+		{ "name": "site-cleanup", "binding": "SITE_CLEANUP", "class_name": "SiteCleanup" },
+		{ "name": "site-adopt", "binding": "SITE_ADOPT", "class_name": "SiteAdopt" },
 		{ "name": "backup-create", "binding": "BACKUP_CREATE", "class_name": "BackupCreate" },
 		{ "name": "backup-restore", "binding": "BACKUP_RESTORE", "class_name": "BackupRestore" }
 	],
@@ -76,6 +78,16 @@
 					"class_name": "SiteDelete"
 				},
 				{ "name": "site-purge-stage", "binding": "SITE_PURGE", "class_name": "SitePurge" },
+				{
+					"name": "site-cleanup-stage",
+					"binding": "SITE_CLEANUP",
+					"class_name": "SiteCleanup"
+				},
+				{
+					"name": "site-adopt-stage",
+					"binding": "SITE_ADOPT",
+					"class_name": "SiteAdopt"
+				},
 				{
 					"name": "backup-create-stage",
 					"binding": "BACKUP_CREATE",

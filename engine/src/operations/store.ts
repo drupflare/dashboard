@@ -66,6 +66,17 @@ export interface OperationStore {
 	setSiteRelease(siteId: string, releaseId: string, now: number): Promise<void>;
 	setSiteState(siteId: string, state: SiteRowState, now: number): Promise<void>;
 	siteState(siteId: string): Promise<SiteRowState | null>;
+	// true once a create has made the site active, whatever state it is in now
+	siteLive(siteId: string): Promise<boolean>;
+	// marks the source as adopted into the target and gives the target its account; false when the
+	// source already went to another site
+	linkAdoption(
+		sourceId: string,
+		target: { id: string; accountId: string },
+		now: number
+	): Promise<boolean>;
+	// takes the mark off only while it still names this target
+	unlinkAdoption(sourceId: string, targetId: string, now: number): Promise<void>;
 	strandedCreates(failedBefore: number, limit: number): Promise<StrandedCreateRow[]>;
 }
 
@@ -475,6 +486,46 @@ export class D1OperationStore implements OperationStore {
 			.bind(siteId)
 			.first<{ state: SiteRowState }>();
 		return row === null ? null : row.state;
+	}
+
+	// a deleted row keeps ready_at when a create activated and then rolled back
+	async siteLive(siteId: string): Promise<boolean> {
+		const row = await this.db
+			.prepare('SELECT ready_at, state FROM sites WHERE id = ?')
+			.bind(siteId)
+			.first<{ ready_at: number | null; state: SiteRowState }>();
+		return row !== null && row.ready_at !== null && row.state !== 'deleted';
+	}
+
+	async linkAdoption(
+		sourceId: string,
+		target: { id: string; accountId: string },
+		now: number
+	): Promise<boolean> {
+		const marked = await this.db
+			.prepare(
+				`UPDATE sites SET adopted_to = ?, updated_at = ?
+				WHERE id = ? AND (adopted_to IS NULL OR adopted_to = ?)`
+			)
+			.bind(target.id, now, sourceId, target.id)
+			.run();
+		if (marked.meta.changes !== 1) return false;
+		await this.db
+			.prepare(
+				'UPDATE sites SET adopted_from = ?, account_id = ?, updated_at = ? WHERE id = ?'
+			)
+			.bind(sourceId, target.accountId, now, target.id)
+			.run();
+		return true;
+	}
+
+	async unlinkAdoption(sourceId: string, targetId: string, now: number): Promise<void> {
+		await this.db
+			.prepare(
+				'UPDATE sites SET adopted_to = NULL, updated_at = ? WHERE id = ? AND adopted_to = ?'
+			)
+			.bind(now, sourceId, targetId)
+			.run();
 	}
 
 	// oldest first, so a backlog clears in the order it formed

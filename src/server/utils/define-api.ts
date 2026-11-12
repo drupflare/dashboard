@@ -490,7 +490,7 @@ async function readJsonBody(event: H3Event, maxBytes: number): Promise<string> {
 	return readCappedBody(event, maxBytes);
 }
 
-function denial(decision: Extract<Decision, { allow: false }>): ApiError {
+export function denial(decision: Extract<Decision, { allow: false }>): ApiError {
 	// only denials reached after membership is proven say what to do next
 	switch (decision.reason) {
 		case 'step_up_required':

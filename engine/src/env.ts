@@ -16,6 +16,8 @@ import { D1ResourceLedger } from './ownership';
 import type { BackupDeps, EngineDeps } from './ports';
 import type { BackupCreateInput } from './workflows/backup-create';
 import type { BackupRestoreInput } from './workflows/backup-restore';
+import type { SiteAdoptInput } from './workflows/site-adopt';
+import type { SiteCleanupInput } from './workflows/site-cleanup';
 import type { SiteCreateInput } from './workflows/site-create';
 import type { SiteDeleteInput, SitePurgeInput } from './workflows/site-delete';
 import type { SiteUpgradeInput } from './workflows/site-upgrade';
@@ -32,6 +34,8 @@ export interface EngineEnv {
 	SITE_UPGRADE: Workflow<SiteUpgradeInput>;
 	SITE_DELETE: Workflow<SiteDeleteInput>;
 	SITE_PURGE: Workflow<SitePurgeInput>;
+	SITE_CLEANUP: Workflow<SiteCleanupInput>;
+	SITE_ADOPT: Workflow<SiteAdoptInput>;
 	BACKUP_CREATE: Workflow<BackupCreateInput>;
 	BACKUP_RESTORE: Workflow<BackupRestoreInput>;
 	RELEASES_URL: string;
