@@ -17,6 +17,7 @@
 		"gen:permissions": "bun scripts/gen-permissions.ts",
 		"gen:catalogue": "bun scripts/gen-catalogue.ts",
 		"gen:contracts": "bun scripts/gen-contracts.ts",
+		"gen:effort": "bun scripts/gen-effort.ts",
 		"gen:openapi": "bun --tsconfig-override tests/tsconfig.json scripts/gen-openapi.ts",
 		"sync:contracts": "bun scripts/sync-contracts.ts",
 		"prettier": "prettier --write .",
