@@ -5,15 +5,14 @@ import { isValidName, suffixOwner, suggest } from '~/shared/names';
 import { useSessionStore } from '~/stores/session';
 import type { SiteSummary } from '~/stores/sites';
 
-export type OnboardingStep = 1 | 2 | 3;
+export type OnboardingStep = 1 | 2;
 
 export const STEP_TITLES: Record<OnboardingStep, string> = {
-	1: 'Hosting',
-	2: 'Template',
-	3: 'Name and Create'
+	1: 'Template',
+	2: 'Name and Create'
 };
 
-export const DEFAULT_TEMPLATE = 'drupal';
+const DEFAULT_TEMPLATE = 'drupal';
 export const HOST_SUFFIX = 'drupflare.app';
 
 const STORAGE_KEY = 'drupflare.onboarding';
@@ -66,7 +65,7 @@ function newDraft(): OnboardingDraft {
 }
 
 function isStep(value: unknown): value is OnboardingStep {
-	return value === 1 || value === 2 || value === 3;
+	return value === 1 || value === 2;
 }
 
 function loadDraft(): OnboardingDraft {

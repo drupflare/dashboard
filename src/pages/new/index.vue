@@ -102,26 +102,6 @@ onMounted(() => {
 				</h2>
 
 				<template v-if="step === 1">
-					<OnboardingWherePicker />
-					<div class="flex flex-wrap justify-end gap-3">
-						<UButton
-							color="neutral"
-							variant="outline"
-							@click="go(2)"
-						>
-							Skip
-						</UButton>
-						<UButton
-							color="primary"
-							variant="solid"
-							@click="go(2)"
-						>
-							Next
-						</UButton>
-					</div>
-				</template>
-
-				<template v-else-if="step === 2">
 					<div
 						v-if="templates === null && templatesError === null"
 						role="status"
@@ -165,31 +145,22 @@ onMounted(() => {
 						:paid-allowed="paidAllowed"
 					/>
 
-					<div class="flex flex-wrap justify-between gap-3">
+					<div class="flex flex-wrap justify-end gap-3">
 						<UButton
 							color="neutral"
 							variant="outline"
-							@click="go(1)"
+							@click="go(2)"
 						>
-							Back
+							Skip
 						</UButton>
-						<div class="flex flex-wrap gap-3">
-							<UButton
-								color="neutral"
-								variant="outline"
-								@click="go(3)"
-							>
-								Skip
-							</UButton>
-							<UButton
-								color="primary"
-								variant="solid"
-								:disabled="!canNext"
-								@click="go(3)"
-							>
-								Next
-							</UButton>
-						</div>
+						<UButton
+							color="primary"
+							variant="solid"
+							:disabled="!canNext"
+							@click="go(2)"
+						>
+							Next
+						</UButton>
 					</div>
 				</template>
 
@@ -216,7 +187,7 @@ onMounted(() => {
 						<UButton
 							color="neutral"
 							variant="outline"
-							@click="go(2)"
+							@click="go(1)"
 						>
 							Back
 						</UButton>

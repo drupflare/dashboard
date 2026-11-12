@@ -16,7 +16,7 @@ const selected = defineModel<string>({ required: true });
 
 const GROUPS = [
 	{ category: 'cms', title: 'CMS' },
-	{ category: 'workers', title: 'Workers' }
+	{ category: 'workers', title: 'Custom Code' }
 ] as const;
 
 const blocked = (template: TemplateChoice): boolean =>

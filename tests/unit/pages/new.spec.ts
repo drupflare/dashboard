@@ -96,32 +96,30 @@ function clickButton(wrapper: { findAll(selector: string): Clickable[] }, label:
 }
 
 describe('create a site, step one', () => {
-	it('selects Managed and disables Self-Managed and Self-Hosted as Coming Soon', async () => {
+	it('has no hosting step: the first step chooses the template and the stepper counts two', async () => {
 		const wrapper = await mountPage();
 
-		expect(wrapper.find<HTMLInputElement>('#plane-managed').element.checked).toBe(true);
-		expect(wrapper.find<HTMLInputElement>('#plane-self-managed').element.disabled).toBe(true);
-		expect(wrapper.find<HTMLInputElement>('#plane-self-hosted').element.disabled).toBe(true);
-		expect(wrapper.text()).toContain('Coming Soon');
+		expect(wrapper.text()).not.toContain('Hosting');
+		expect(wrapper.text()).not.toContain('Self-Managed');
+		expect(wrapper.find('[role="status"]').text()).toContain('Step 1 of 2: Template');
+		expect(wrapper.find('ol').findAll('li')).toHaveLength(2);
+		await vi.waitFor(() => expect(wrapper.find('#template-drupal').exists()).toBe(true));
+		expect(wrapper.find<HTMLInputElement>('#template-drupal').element.checked).toBe(true);
 	});
 
-	it('moves through the steps with Skip and Next and shows the step in a live region', async () => {
+	it('moves from the template step to the name step with Skip, and shows the step in a live region', async () => {
 		const wrapper = await mountPage();
-
-		expect(wrapper.find('[role="status"]').text()).toContain('Step 1 of 3: Hosting');
-		await clickButton(wrapper, 'Skip');
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Step 2 of 3: Template'));
 
 		await vi.waitFor(() => expect(wrapper.find('#template-drupal').exists()).toBe(true));
 		await clickButton(wrapper, 'Skip');
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Step 3 of 3: Name and Create'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Step 2 of 2: Name and Create'));
 		expect(wrapper.find<HTMLInputElement>('#site-name').element.value).toMatch(
 			/^[a-z]+-[a-z]+-[a-z]+$/
 		);
 	});
 });
 
-describe('create a site, step two', () => {
+describe('create a site, template step', () => {
 	it('shows a grid-shaped skeleton until the templates arrive', async () => {
 		let release: () => void = () => undefined;
 		const gate = new Promise<void>((resolve) => {
@@ -132,7 +130,6 @@ describe('create a site, step two', () => {
 			return { body: templates };
 		};
 		const wrapper = await mountPage();
-		await clickButton(wrapper, 'Skip');
 
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Loading templates'));
 		expect(wrapper.findAll('.animate-pulse').length).toBeGreaterThan(3);
@@ -145,7 +142,6 @@ describe('create a site, step two', () => {
 
 	it('disables WordPress and marks Bring Your Own as paid', async () => {
 		const wrapper = await mountPage();
-		await clickButton(wrapper, 'Skip');
 		await vi.waitFor(() => expect(wrapper.find('#template-wordpress').exists()).toBe(true));
 
 		expect(wrapper.find<HTMLInputElement>('#template-wordpress').element.disabled).toBe(true);
@@ -156,12 +152,21 @@ describe('create a site, step two', () => {
 		expect(wrapper.text()).toContain('Paid');
 	});
 
+	it('shows the Bring Your Own group under a plain title', async () => {
+		const wrapper = await mountPage();
+		await vi.waitFor(() =>
+			expect(wrapper.find('#template-bring-your-own').exists()).toBe(true)
+		);
+
+		expect(wrapper.text()).toContain('Custom Code');
+		expect(wrapper.text()).not.toContain('Workers');
+	});
+
 	it('disables Bring Your Own with the reason when the plan lacks custom code', async () => {
 		planReply = () => ({
 			body: { planId: 'managed-free', features: { customCode: false } }
 		});
 		const wrapper = await mountPage();
-		await clickButton(wrapper, 'Skip');
 
 		await vi.waitFor(() =>
 			expect(
@@ -175,7 +180,6 @@ describe('create a site, step two', () => {
 	it('leaves Bring Your Own choosable when the plan cannot be read, so the server decides', async () => {
 		planReply = () => failure('internal', 'Failed', 'req_plan_read');
 		const wrapper = await mountPage();
-		await clickButton(wrapper, 'Skip');
 		await vi.waitFor(() =>
 			expect(wrapper.find('#template-bring-your-own').exists()).toBe(true)
 		);
@@ -189,15 +193,22 @@ describe('create a site, step two', () => {
 	});
 });
 
-describe('create a site, step three', () => {
+describe('create a site, name step', () => {
 	async function reachNameStep() {
 		const wrapper = await mountPage();
-		await clickButton(wrapper, 'Skip');
 		await vi.waitFor(() => expect(wrapper.find('#template-drupal').exists()).toBe(true));
 		await clickButton(wrapper, 'Skip');
 		await vi.waitFor(() => expect(wrapper.find('#site-name').exists()).toBe(true));
 		return wrapper;
 	}
+
+	it('goes back to the template step from the name step', async () => {
+		const wrapper = await reachNameStep();
+
+		await clickButton(wrapper, 'Back');
+		await vi.waitFor(() => expect(wrapper.find('#template-drupal').exists()).toBe(true));
+		expect(wrapper.text()).toContain('Step 1 of 2: Template');
+	});
 
 	it('shows the rule error beside the name and the address preview', async () => {
 		const wrapper = await reachNameStep();

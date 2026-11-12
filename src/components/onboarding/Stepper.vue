@@ -3,7 +3,7 @@ import { STEP_TITLES, type OnboardingStep } from '~/composables/useOnboarding';
 
 defineProps<{ step: OnboardingStep }>();
 
-const steps: readonly OnboardingStep[] = [1, 2, 3];
+const steps: readonly OnboardingStep[] = [1, 2];
 </script>
 
 <template>
@@ -34,7 +34,7 @@ const steps: readonly OnboardingStep[] = [1, 2, 3];
 			role="status"
 			class="sr-only"
 		>
-			Step {{ step }} of 3: {{ STEP_TITLES[step] }}
+			Step {{ step }} of 2: {{ STEP_TITLES[step] }}
 		</p>
 	</div>
 </template>

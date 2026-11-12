@@ -51,7 +51,7 @@ describe('onboarding draft', () => {
 
 	it('never stores an admin password in the draft', () => {
 		const onboarding = useOnboarding();
-		onboarding.go(3);
+		onboarding.go(2);
 
 		const stored = sessionStorage.getItem('drupflare.onboarding') ?? '';
 		expect(stored).not.toMatch(/password/i);
