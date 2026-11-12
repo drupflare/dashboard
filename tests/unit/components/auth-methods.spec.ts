@@ -1,8 +1,14 @@
-import { mockComponent, mountSuspended } from '@nuxt/test-utils/runtime';
+import { mockComponent, mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { h } from 'vue';
 import Methods from '~/components/auth/Methods.vue';
-import { clearBrowserState, registerApi } from '../stores/store-support';
+import { calls, clearBrowserState, registerApi } from '../stores/store-support';
+
+const startAuthentication = vi.hoisted(() => vi.fn());
+vi.mock('@simplewebauthn/browser', () => ({ startAuthentication }));
+
+const navigate = vi.hoisted(() => vi.fn());
+mockNuxtImport('navigateTo', () => navigate);
 
 mockComponent('NuxtTurnstile', {
 	props: { modelValue: String },
@@ -78,5 +84,132 @@ describe('sign-in methods', () => {
 		await new Promise((resolve) => setTimeout(resolve, 20));
 		expect(buttons(wrapper.text())).toEqual([]);
 		expect(wrapper.find('input[name="email"]').exists()).toBe(true);
+	});
+
+	describe('passkey sign-in', () => {
+		const PASSKEY_BUTTON = 'Sign In With a Passkey';
+		const options = { challenge: 'abc', rpId: 'localhost' };
+		const assertion = { id: 'cred_1', rawId: 'cred_1', type: 'public-key', response: {} };
+		const envelope = (status: number, code: string, message: string) => ({
+			status,
+			body: { code, message, details: {}, requestId: 'req_1' }
+		});
+
+		function setSupport(supported: boolean) {
+			if (supported) {
+				Object.defineProperty(window, 'PublicKeyCredential', {
+					value: function PublicKeyCredential() {},
+					configurable: true,
+					writable: true
+				});
+			} else {
+				Reflect.deleteProperty(window, 'PublicKeyCredential');
+			}
+		}
+
+		beforeEach(() => {
+			navigate.mockReset();
+			startAuthentication.mockReset();
+			setSupport(true);
+		});
+
+		afterEach(() => {
+			setSupport(false);
+		});
+
+		it('hides the passkey button when the browser has no passkey support', async () => {
+			setSupport(false);
+			cleanup = registerApi({ 'GET /api/v1/auth/oauth': { body: { providers: [] } } });
+			const wrapper = await mountSuspended(Methods);
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			expect(wrapper.text()).not.toContain(PASSKEY_BUTTON);
+			expect(wrapper.find('input[name="email"]').exists()).toBe(true);
+		});
+
+		it('shows the passkey button beside the email code when the browser supports passkeys', async () => {
+			cleanup = registerApi({ 'GET /api/v1/auth/oauth': { body: { providers: [] } } });
+			const wrapper = await mountSuspended(Methods);
+			await vi.waitFor(() => expect(wrapper.text()).toContain(PASSKEY_BUTTON));
+			expect(wrapper.find('input[name="email"]').exists()).toBe(true);
+		});
+
+		it('signs in, then goes to the sites list', async () => {
+			startAuthentication.mockResolvedValue(assertion);
+			cleanup = registerApi({
+				'GET /api/v1/auth/oauth': { body: { providers: [] } },
+				'POST /api/v1/auth/passkey/options': { body: options },
+				'POST /api/v1/auth/passkey/verify': {
+					body: {
+						user: { id: 'usr_1', email: 'a@example.test', displayName: null },
+						isNew: false
+					}
+				},
+				'GET /api/v1/me': {
+					body: {
+						id: 'usr_1',
+						email: 'a@example.test',
+						displayName: null,
+						via: 'session',
+						stepUpUntil: null
+					}
+				}
+			});
+			const wrapper = await mountSuspended(Methods);
+			await vi.waitFor(() => expect(wrapper.text()).toContain(PASSKEY_BUTTON));
+			const button = wrapper.findAll('button').find((item) => item.text() === PASSKEY_BUTTON);
+			await button!.trigger('click');
+
+			await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/sites'));
+			expect(startAuthentication).toHaveBeenCalledWith({ optionsJSON: options });
+			expect(calls.find((call) => call.path.endsWith('/verify'))?.body).toEqual(assertion);
+		});
+
+		it('returns to the form with a calm line when the prompt is cancelled', async () => {
+			startAuthentication.mockRejectedValue(
+				Object.assign(new Error('cancelled'), { name: 'NotAllowedError' })
+			);
+			cleanup = registerApi({
+				'GET /api/v1/auth/oauth': { body: { providers: [] } },
+				'POST /api/v1/auth/passkey/options': { body: options }
+			});
+			const wrapper = await mountSuspended(Methods);
+			await vi.waitFor(() => expect(wrapper.text()).toContain(PASSKEY_BUTTON));
+			const button = wrapper.findAll('button').find((item) => item.text() === PASSKEY_BUTTON);
+			await button!.trigger('click');
+
+			await vi.waitFor(() =>
+				expect(wrapper.text()).toContain(
+					'No passkey was used. You can try again or sign in another way.'
+				)
+			);
+			expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+			expect(wrapper.find('input[name="email"]').exists()).toBe(true);
+			expect(calls.some((call) => call.path.endsWith('/verify'))).toBe(false);
+			expect(navigate).not.toHaveBeenCalled();
+		});
+
+		it('shows the server message when the passkey cannot be verified', async () => {
+			startAuthentication.mockResolvedValue(assertion);
+			cleanup = registerApi({
+				'GET /api/v1/auth/oauth': { body: { providers: [] } },
+				'POST /api/v1/auth/passkey/options': { body: options },
+				'POST /api/v1/auth/passkey/verify': envelope(
+					401,
+					'unauthenticated',
+					'The passkey could not be verified'
+				)
+			});
+			const wrapper = await mountSuspended(Methods);
+			await vi.waitFor(() => expect(wrapper.text()).toContain(PASSKEY_BUTTON));
+			const button = wrapper.findAll('button').find((item) => item.text() === PASSKEY_BUTTON);
+			await button!.trigger('click');
+
+			await vi.waitFor(() =>
+				expect(wrapper.find('[role="alert"]').text()).toContain(
+					'The passkey could not be verified'
+				)
+			);
+			expect(navigate).not.toHaveBeenCalled();
+		});
 	});
 });

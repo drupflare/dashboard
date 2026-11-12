@@ -19,6 +19,7 @@ onMounted(async () => {
 <template>
 	<div class="flex flex-col gap-6">
 		<AuthMethodCode />
+		<AuthMethodPasskey />
 		<template v-if="providers.length > 0">
 			<div
 				class="flex items-center gap-3 text-sm text-muted"

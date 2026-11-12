@@ -1,6 +1,6 @@
 import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import AccountPage from '~/pages/account.vue';
+import AccountPage from '~/pages/account/index.vue';
 import { useOrgStore } from '~/stores/org';
 import { useSessionStore } from '~/stores/session';
 import { clearBrowserState, registerApi } from '../stores/store-support';
@@ -95,6 +95,13 @@ describe('account page', () => {
 			.findAll('input[name="theme"]')
 			.map((input) => input.attributes('value'));
 		expect(themes).toEqual(['system', 'light', 'dark']);
+	});
+
+	it('links the passkey and device pages', async () => {
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Security'));
+		expect(wrapper.find('a[href="/account/security"]').text()).toContain('Passkeys');
+		expect(wrapper.find('a[href="/account/sessions"]').text()).toContain('Devices');
 	});
 
 	it('changes the theme preference when a choice is picked', async () => {

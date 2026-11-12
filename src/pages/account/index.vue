@@ -21,6 +21,21 @@ const themes = [
 	{ value: 'dark', label: 'Dark', hint: 'Light text on a black page.', icon: 'i-lucide-moon' }
 ] as const;
 
+const securityLinks = [
+	{
+		to: '/account/security',
+		label: 'Passkeys',
+		hint: 'Sign in with this device instead of a code.',
+		icon: 'i-lucide-key-round'
+	},
+	{
+		to: '/account/sessions',
+		label: 'Devices',
+		hint: 'See where you are signed in and sign out of the rest.',
+		icon: 'i-lucide-monitor-smartphone'
+	}
+] as const;
+
 async function signOut() {
 	signingOut.value = true;
 	await session.signOut();
@@ -85,6 +100,28 @@ async function signOut() {
 			</section>
 
 			<AccountConnections :just-connected="connected" />
+
+			<section class="flex flex-col gap-4">
+				<h2 class="text-lg font-semibold text-highlighted">Security</h2>
+				<div class="grid gap-3 sm:grid-cols-2">
+					<NuxtLink
+						v-for="link in securityLinks"
+						:key="link.to"
+						:to="link.to"
+						class="flex items-start gap-3 rounded-lg border border-default p-4 hover:bg-muted"
+					>
+						<UIcon
+							:name="link.icon"
+							class="mt-0.5 size-4"
+							aria-hidden="true"
+						/>
+						<span class="flex flex-col gap-1">
+							<span class="font-medium text-highlighted">{{ link.label }}</span>
+							<span class="text-sm text-muted">{{ link.hint }}</span>
+						</span>
+					</NuxtLink>
+				</div>
+			</section>
 
 			<section class="flex flex-col gap-4">
 				<h2 class="text-lg font-semibold text-highlighted">Sign-In</h2>

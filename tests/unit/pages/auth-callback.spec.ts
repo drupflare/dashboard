@@ -1,9 +1,18 @@
-import { mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime';
+import { mockComponent, mockNuxtImport, mountSuspended } from '@nuxt/test-utils/runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { h } from 'vue';
 import CallbackPage from '~/pages/auth/callback.vue';
 import { useOrgStore } from '~/stores/org';
 import { useSessionStore } from '~/stores/session';
-import { calls, clearBrowserState, registerApi } from '../stores/store-support';
+import { calls, clearBrowserState, failure, registerApi } from '../stores/store-support';
+
+mockComponent('NuxtTurnstile', {
+	props: { modelValue: String },
+	setup(_props: unknown, { expose }: { expose: (value: object) => void }) {
+		expose({ reset: () => undefined });
+		return () => h('div');
+	}
+});
 
 const navigate = vi.hoisted(() => vi.fn());
 mockNuxtImport('navigateTo', () => navigate);
@@ -15,6 +24,8 @@ const me = {
 	via: 'session',
 	stepUpUntil: null
 };
+
+const soon = () => new Date(Date.now() + 5 * 60 * 1000).toISOString();
 
 let cleanup: () => void = () => undefined;
 const mounted: { unmount: () => void }[] = [];
@@ -140,5 +151,144 @@ describe('auth callback page', () => {
 		const wrapper = await mountAt('?code=abc&state=nobody.token');
 		await vi.waitFor(() => expect(wrapper.find('[role="alert"]').exists()).toBe(true));
 		expect(calls).toHaveLength(0);
+	});
+
+	it('shows the confirm step to a signed-in person and links only on confirm', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/auth/oauth/github/callback': {
+				body: { status: 'link_required', provider: 'github', email: me.email }
+			},
+			'GET /api/v1/me': { body: { ...me, stepUpUntil: soon() } },
+			'POST /api/v1/me/identities/link': {
+				status: 201,
+				body: {
+					identity: {
+						id: 'id_1',
+						provider: 'github',
+						email: me.email,
+						verified: true,
+						createdAt: '2026-11-07T00:00:00.000Z'
+					}
+				}
+			}
+		});
+		const wrapper = await mountAt('?code=abc&state=github.token');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm the Link'));
+		expect(wrapper.text()).toContain(me.email);
+		expect(calls.some((call) => call.method === 'POST')).toBe(false);
+
+		await wrapper
+			.findAll('button')
+			.find((b) => b.text() === 'Confirm Link')!
+			.trigger('click');
+		await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/account?connected=github'));
+		expect(calls.find((call) => call.method === 'POST')?.path).toBe(
+			'/api/v1/me/identities/link'
+		);
+	});
+
+	it('sends a signed-out person to sign in first, returning here with only the provider', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/auth/oauth/github/callback': {
+				body: { status: 'link_required', provider: 'github', email: me.email }
+			},
+			'GET /api/v1/me': {
+				status: 401,
+				body: { code: 'unauthenticated', message: 'Sign in', details: {}, requestId: 'r' }
+			}
+		});
+		const wrapper = await mountAt('?code=abc&state=github.token');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Sign In to Confirm'));
+		expect(wrapper.text()).toContain('Nothing merges until you confirm');
+		expect(
+			wrapper.find('a[href="/login?redirect=%2Fauth%2Fcallback%3Flink%3Dgithub"]').exists()
+		).toBe(true);
+		expect(calls.some((call) => call.method === 'POST')).toBe(false);
+	});
+
+	it('resumes after sign-in from the link query and offers the confirm step', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/me': { body: { ...me, stepUpUntil: soon() } },
+			'POST /api/v1/me/identities/link': { status: 201, body: { identity: {} } }
+		});
+		const wrapper = await mountAt('?link=github');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm the Link'));
+		expect(wrapper.text()).toContain('GitHub');
+		expect(calls.some((call) => call.path === '/api/v1/auth/oauth/github/callback')).toBe(
+			false
+		);
+	});
+
+	it('asks for a fresh sign-in before linking when the session is stale', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/auth/oauth/github/callback': {
+				body: { status: 'link_required', provider: 'github', email: me.email }
+			},
+			'GET /api/v1/me': { body: me },
+			'POST /api/v1/auth/code/request': { status: 204, body: null },
+			'POST /api/v1/me/identities/link': { status: 201, body: { identity: {} } }
+		});
+		const wrapper = await mountAt('?code=abc&state=github.token');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm the Link'));
+
+		await wrapper
+			.findAll('button')
+			.find((b) => b.text() === 'Confirm Link')!
+			.trigger('click');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm Your Identity'));
+		expect(calls.some((call) => call.path === '/api/v1/me/identities/link')).toBe(false);
+	});
+
+	it('shows the server refusal when the link does not match the account', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/auth/oauth/github/callback': {
+				body: { status: 'link_required', provider: 'github', email: me.email }
+			},
+			'GET /api/v1/me': { body: { ...me, stepUpUntil: soon() } },
+			'POST /api/v1/me/identities/link': failure(
+				'forbidden',
+				'This provider sign-in belongs to a different account',
+				'req_lk'
+			)
+		});
+		const wrapper = await mountAt('?code=abc&state=github.token');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm the Link'));
+
+		await wrapper
+			.findAll('button')
+			.find((b) => b.text() === 'Confirm Link')!
+			.trigger('click');
+		await vi.waitFor(() =>
+			expect(wrapper.find('[role="alert"]').text()).toContain(
+				'belongs to a different account'
+			)
+		);
+		expect(wrapper.text()).toContain('Connection Did Not Finish');
+		expect(wrapper.find('a[href="/account"]').exists()).toBe(true);
+		expect(navigate).not.toHaveBeenCalled();
+	});
+
+	it('says no sign-in is waiting when the link cookie has expired', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/me': { body: { ...me, stepUpUntil: soon() } },
+			'POST /api/v1/me/identities/link': failure(
+				'not_found',
+				'No sign-in is waiting to be linked',
+				'req_np'
+			)
+		});
+		const wrapper = await mountAt('?link=github');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm the Link'));
+
+		await wrapper
+			.findAll('button')
+			.find((b) => b.text() === 'Confirm Link')!
+			.trigger('click');
+		await vi.waitFor(() =>
+			expect(wrapper.find('[role="alert"]').text()).toContain(
+				'No sign-in is waiting to be linked'
+			)
+		);
+		expect(navigate).not.toHaveBeenCalled();
 	});
 });
