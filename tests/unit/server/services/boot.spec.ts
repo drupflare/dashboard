@@ -17,6 +17,7 @@ import { capacityServices } from '../../../../src/server/services/capacity';
 import { consoleMailSender } from '../../../../src/server/services/email-codes';
 import { factsLoader } from '../../../../src/server/services/facts';
 import { fleetServices } from '../../../../src/server/services/fleet';
+import { importServices } from '../../../../src/server/services/site-import';
 import { siteServices } from '../../../../src/server/services/sites';
 import { authServices, stepUpAtOf } from '../../../../src/server/utils/auth';
 import { ApiError } from '../../../../src/shared/errors';
@@ -145,6 +146,20 @@ describe('bootOnce', () => {
 		resetBoot();
 		expect(fleetServices().linkOrigin).toBeNull();
 		await expect(fleetServices().getDb()).rejects.toMatchObject({ code: 'not_built' });
+	});
+
+	it('installs the import services with no files route, and takes them away on reset', async () => {
+		const built = bootOnce(envWith({}));
+		expect(importServices().audit).toBe(built.imports.audit);
+		expect(importServices().probe).toBe(built.imports.probe);
+		expect(importServices().filesLandable).toBe(false);
+		resetBoot();
+		await expect(importServices().ring()).rejects.toMatchObject({ code: 'not_built' });
+		await expect(importServices().probe({ host: 'a.example', port: 22 })).rejects.toMatchObject(
+			{
+				code: 'not_built'
+			}
+		);
 	});
 
 	it('installs the backup services from the bindings and takes them away on reset', async () => {

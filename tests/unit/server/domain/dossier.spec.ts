@@ -106,13 +106,61 @@ describe('dossierFor', () => {
 		);
 	});
 
-	it('refuses a site above the import limit', () => {
+	it('refuses a database above the restore ceiling and names the paged restore', () => {
+		const ceiling = 16 * 1024 * 1024;
 		const dossier = dossierFor(
-			{ ...healthy(), database: { driver: 'mysql', bytes: CEILING } },
-			CEILING
+			{ ...healthy(), database: { driver: 'mysql', bytes: ceiling + 1 } },
+			ceiling
 		);
 
-		expect(dossier.refusals).toContain('The site is larger than the import limit');
+		expect(dossier.importable).toBe(false);
+		expect(dossier.refusals).toEqual([
+			'The database is larger than the 16 MiB a new site accepts in one restore. A paged restore is needed for a larger database and is not available yet'
+		]);
+	});
+
+	it('accepts a database exactly at the restore ceiling', () => {
+		const ceiling = 16 * 1024 * 1024;
+		const dossier = dossierFor(
+			{ ...healthy(), database: { driver: 'mysql', bytes: ceiling } },
+			ceiling
+		);
+
+		expect(dossier.importable).toBe(true);
+	});
+
+	it('does not count the files against the restore ceiling', () => {
+		const ceiling = 16 * 1024 * 1024;
+		const dossier = dossierFor(
+			{
+				...healthy(),
+				database: { driver: 'mysql', bytes: 1_000_000 },
+				files: { kb: 5 * 1024 * 1024, count: 9000, private: null }
+			},
+			ceiling
+		);
+
+		expect(dossier.importable).toBe(true);
+	});
+
+	it('refuses uploaded files while a new site cannot take them', () => {
+		const dossier = dossierFor(healthy(), CEILING, { filesLandable: false });
+
+		expect(dossier.importable).toBe(false);
+		expect(dossier.refusals).toContain('Uploaded files cannot be carried into a new site yet');
+		expect(dossier.findings).toContainEqual(
+			expect.objectContaining({ status: 'unsupported', title: 'Uploaded Files' })
+		);
+	});
+
+	it('imports a site with no uploaded files whatever the files flag says', () => {
+		const dossier = dossierFor(
+			{ ...healthy(), files: { kb: 0, count: 0, private: null }, fileRows: 0 },
+			CEILING,
+			{ filesLandable: false }
+		);
+
+		expect(dossier.importable).toBe(true);
 	});
 
 	it('refuses when the database size is unknown', () => {

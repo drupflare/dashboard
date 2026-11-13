@@ -2873,6 +2873,867 @@
 				}
 			}
 		},
+		"/api/v1/orgs/{orgId}/imports": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdImports",
+				"summary": "Import a site from a server",
+				"description": "Starts the import of the server checked by the survey operation in the body into a new managed site and returns its operation. The engine copies the database over one read-only connection, converts it, creates the site on a Drupflare address, loads the copy, checks that the site answers, then deletes the key and the copies. The server is never changed. A database above the restore limit, or a survey that found a blocker, is refused with a plain reason before anything is created. Send an Idempotency-Key header; a repeat returns the same operation. It needs a signed-in session with a recent step-up.",
+				"tags": ["imports"],
+				"x-action": "site.import",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"credentialId": {
+										"type": "string",
+										"pattern": "^imc_[a-z2-7]{26}$"
+									},
+									"surveyId": {
+										"type": "string",
+										"pattern": "^op_[0-9a-z]{8,40}$"
+									},
+									"name": { "type": "string", "minLength": 1, "maxLength": 63 },
+									"hostnameLabel": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 63
+									}
+								},
+								"required": ["credentialId", "surveyId", "name"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^op_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"type": {
+											"type": "string",
+											"enum": [
+												"site.create",
+												"site.adopt",
+												"site.import",
+												"import.survey",
+												"migration.cutover",
+												"estate.assess",
+												"site.upgrade",
+												"site.rollback",
+												"site.delete",
+												"site.restore",
+												"site.purge",
+												"site.transfer",
+												"config.apply",
+												"git.pull",
+												"git.preview",
+												"modify.apply",
+												"module.install",
+												"module.enable",
+												"domain.attach",
+												"backup.create",
+												"backup.verify",
+												"backup.restore",
+												"backup.export",
+												"env.create",
+												"env.fork",
+												"env.promote",
+												"env.delete",
+												"preview.create",
+												"preview.delete",
+												"repair.run",
+												"node.pair",
+												"node.command",
+												"fleet.upgrade",
+												"repo.install"
+											]
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"planned",
+												"awaiting-approval",
+												"running",
+												"verifying",
+												"succeeded",
+												"failed",
+												"cancelled",
+												"rolled-back"
+											]
+										},
+										"idempotencyKey": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 128
+										},
+										"targetIds": {
+											"type": "array",
+											"items": { "type": "string", "minLength": 1 }
+										},
+										"preconditions": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"planDigest": {
+											"type": "string",
+											"pattern": "^sha256:[0-9a-f]{64}$"
+										},
+										"fencingEpoch": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"blastRadius": {
+											"type": "object",
+											"properties": {
+												"sites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"destructiveSites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"productionDeploys": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											},
+											"required": [
+												"sites",
+												"destructiveSites",
+												"productionDeploys"
+											]
+										},
+										"rollbackPoint": { "type": ["string", "null"] },
+										"cursor": { "type": ["string", "null"] },
+										"steps": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"running",
+															"succeeded",
+															"failed",
+															"skipped"
+														]
+													},
+													"attempt": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"startedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"finishedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"error": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"state",
+													"attempt",
+													"startedAt",
+													"finishedAt",
+													"error"
+												]
+											}
+										},
+										"verification": {
+											"type": "string",
+											"enum": ["pending", "passed", "failed", "not-required"]
+										},
+										"finalObservation": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"at": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														"summary": { "type": "string" }
+													},
+													"required": ["at", "summary"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"budget": {
+											"type": "object",
+											"properties": {
+												"maxDestructiveSites": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"maxConcurrentProductionDeploys": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"elevated": { "type": "boolean" },
+												"bulkDeleteConfirmation": {
+													"type": ["string", "null"]
+												}
+											},
+											"required": [
+												"maxDestructiveSites",
+												"maxConcurrentProductionDeploys",
+												"elevated",
+												"bulkDeleteConfirmation"
+											]
+										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"type",
+										"status",
+										"idempotencyKey",
+										"targetIds",
+										"preconditions",
+										"planDigest",
+										"fencingEpoch",
+										"blastRadius",
+										"rollbackPoint",
+										"cursor",
+										"steps",
+										"verification",
+										"finalObservation",
+										"budget",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/imports/credentials": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdImportsCredentials",
+				"summary": "Make a key for an import",
+				"description": "Makes a one-time key for the server in the body and returns the public line to add to its authorized keys. The key lasts 24 hours and is deleted when the import ends. The private half is stored sealed and is never returned. It needs a signed-in session with a recent step-up.",
+				"tags": ["imports"],
+				"x-action": "site.import.credential",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"host": { "type": "string", "minLength": 1, "maxLength": 253 },
+									"port": {
+										"default": 22,
+										"type": "integer",
+										"minimum": 1,
+										"maximum": 65535
+									},
+									"username": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 32,
+										"pattern": "^[a-z_][a-z0-9_-]*$"
+									}
+								},
+								"required": ["host", "username"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": { "type": "string" },
+										"publicKey": { "type": "string" },
+										"host": { "type": "string" },
+										"port": {
+											"type": "integer",
+											"minimum": -9007199254740991,
+											"maximum": 9007199254740991
+										},
+										"username": { "type": "string" },
+										"expiresAt": { "type": "string" }
+									},
+									"required": [
+										"id",
+										"publicKey",
+										"host",
+										"port",
+										"username",
+										"expiresAt"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/imports/hostkey": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdImportsHostkey",
+				"summary": "Read or confirm the host key of a server",
+				"description": "Connects to the server of the key in the body, reads the host key it presents and stops before any login, so no command runs. Without confirm it returns the key type and fingerprint to show the owner. With confirm.fingerprint it reads the key again and stores it only when it matches, then every later connection must present that key. It needs a signed-in session with a recent step-up.",
+				"tags": ["imports"],
+				"x-action": "site.import.credential",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"credentialId": {
+										"type": "string",
+										"pattern": "^imc_[a-z2-7]{26}$"
+									},
+									"confirm": {
+										"type": "object",
+										"properties": {
+											"fingerprint": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 200
+											}
+										},
+										"required": ["fingerprint"],
+										"additionalProperties": false
+									}
+								},
+								"required": ["credentialId"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"credentialId": { "type": "string" },
+										"hostKeyType": { "type": "string" },
+										"fingerprint": { "type": "string" },
+										"confirmed": { "type": "boolean" }
+									},
+									"required": [
+										"credentialId",
+										"hostKeyType",
+										"fingerprint",
+										"confirmed"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/imports/survey": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdImportsSurvey",
+				"summary": "Check a server before an import",
+				"description": "Starts a read-only check of the Drupal site at the path on the server of the key in the body and returns its operation. The host key must be confirmed first. Nothing on the server is changed. When the operation succeeds, its cursor is a JSON record whose dossier field holds the verdict, the refusals, the size estimate and the findings. Send an Idempotency-Key header; a repeat returns the same operation. It needs a signed-in session with a recent step-up.",
+				"tags": ["imports"],
+				"x-action": "site.import.survey",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"credentialId": {
+										"type": "string",
+										"pattern": "^imc_[a-z2-7]{26}$"
+									},
+									"root": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 200,
+										"pattern": "^\\/[A-Za-z0-9._/-]*$"
+									}
+								},
+								"required": ["credentialId", "root"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^op_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"type": {
+											"type": "string",
+											"enum": [
+												"site.create",
+												"site.adopt",
+												"site.import",
+												"import.survey",
+												"migration.cutover",
+												"estate.assess",
+												"site.upgrade",
+												"site.rollback",
+												"site.delete",
+												"site.restore",
+												"site.purge",
+												"site.transfer",
+												"config.apply",
+												"git.pull",
+												"git.preview",
+												"modify.apply",
+												"module.install",
+												"module.enable",
+												"domain.attach",
+												"backup.create",
+												"backup.verify",
+												"backup.restore",
+												"backup.export",
+												"env.create",
+												"env.fork",
+												"env.promote",
+												"env.delete",
+												"preview.create",
+												"preview.delete",
+												"repair.run",
+												"node.pair",
+												"node.command",
+												"fleet.upgrade",
+												"repo.install"
+											]
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"planned",
+												"awaiting-approval",
+												"running",
+												"verifying",
+												"succeeded",
+												"failed",
+												"cancelled",
+												"rolled-back"
+											]
+										},
+										"idempotencyKey": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 128
+										},
+										"targetIds": {
+											"type": "array",
+											"items": { "type": "string", "minLength": 1 }
+										},
+										"preconditions": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"planDigest": {
+											"type": "string",
+											"pattern": "^sha256:[0-9a-f]{64}$"
+										},
+										"fencingEpoch": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"blastRadius": {
+											"type": "object",
+											"properties": {
+												"sites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"destructiveSites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"productionDeploys": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											},
+											"required": [
+												"sites",
+												"destructiveSites",
+												"productionDeploys"
+											]
+										},
+										"rollbackPoint": { "type": ["string", "null"] },
+										"cursor": { "type": ["string", "null"] },
+										"steps": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"running",
+															"succeeded",
+															"failed",
+															"skipped"
+														]
+													},
+													"attempt": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"startedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"finishedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"error": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"state",
+													"attempt",
+													"startedAt",
+													"finishedAt",
+													"error"
+												]
+											}
+										},
+										"verification": {
+											"type": "string",
+											"enum": ["pending", "passed", "failed", "not-required"]
+										},
+										"finalObservation": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"at": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														"summary": { "type": "string" }
+													},
+													"required": ["at", "summary"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"budget": {
+											"type": "object",
+											"properties": {
+												"maxDestructiveSites": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"maxConcurrentProductionDeploys": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"elevated": { "type": "boolean" },
+												"bulkDeleteConfirmation": {
+													"type": ["string", "null"]
+												}
+											},
+											"required": [
+												"maxDestructiveSites",
+												"maxConcurrentProductionDeploys",
+												"elevated",
+												"bulkDeleteConfirmation"
+											]
+										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"type",
+										"status",
+										"idempotencyKey",
+										"targetIds",
+										"preconditions",
+										"planDigest",
+										"fencingEpoch",
+										"blastRadius",
+										"rollbackPoint",
+										"cursor",
+										"steps",
+										"verification",
+										"finalObservation",
+										"budget",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/orgs/{orgId}/nodes": {
 			"get": {
 				"operationId": "getApiV1OrgsOrgIdNodes",
@@ -3281,6 +4142,7 @@
 												"site.create",
 												"site.adopt",
 												"site.import",
+												"import.survey",
 												"migration.cutover",
 												"estate.assess",
 												"site.upgrade",
@@ -3594,6 +4456,7 @@
 												"site.create",
 												"site.adopt",
 												"site.import",
+												"import.survey",
 												"migration.cutover",
 												"estate.assess",
 												"site.upgrade",
@@ -4317,6 +5180,7 @@
 												"site.create",
 												"site.adopt",
 												"site.import",
+												"import.survey",
 												"migration.cutover",
 												"estate.assess",
 												"site.upgrade",
@@ -4631,6 +5495,7 @@
 												"site.create",
 												"site.adopt",
 												"site.import",
+												"import.survey",
 												"migration.cutover",
 												"estate.assess",
 												"site.upgrade",
@@ -5070,6 +5935,7 @@
 												"site.create",
 												"site.adopt",
 												"site.import",
+												"import.survey",
 												"migration.cutover",
 												"estate.assess",
 												"site.upgrade",
@@ -5461,6 +6327,7 @@
 												"site.create",
 												"site.adopt",
 												"site.import",
+												"import.survey",
 												"migration.cutover",
 												"estate.assess",
 												"site.upgrade",
@@ -5775,6 +6642,7 @@
 												"site.create",
 												"site.adopt",
 												"site.import",
+												"import.survey",
 												"migration.cutover",
 												"estate.assess",
 												"site.upgrade",
@@ -6409,6 +7277,7 @@
 												"site.create",
 												"site.adopt",
 												"site.import",
+												"import.survey",
 												"migration.cutover",
 												"estate.assess",
 												"site.upgrade",
@@ -7215,6 +8084,7 @@
 												"site.create",
 												"site.adopt",
 												"site.import",
+												"import.survey",
 												"migration.cutover",
 												"estate.assess",
 												"site.upgrade",
@@ -7980,6 +8850,7 @@
 												"site.create",
 												"site.adopt",
 												"site.import",
+												"import.survey",
 												"migration.cutover",
 												"estate.assess",
 												"site.upgrade",
@@ -8498,6 +9369,7 @@
 															"site.create",
 															"site.adopt",
 															"site.import",
+															"import.survey",
 															"migration.cutover",
 															"estate.assess",
 															"site.upgrade",

@@ -99,6 +99,23 @@ export const OPERATION_COPY = {
 		link: adoptedSiteOf,
 		failureLink: sourceSiteOf
 	},
+	'site.import': {
+		title: 'Importing Your Site',
+		running:
+			'Your site keeps running where it is while the copy is made. Leaving this page does not stop the import.',
+		success: 'Your site now also runs as a managed site. The original is unchanged.',
+		failure: 'Could Not Import the Site',
+		link: adoptedSiteOf,
+		failureLink: () => ({ to: '/migrate', label: 'Back to Import' })
+	},
+	'import.survey': {
+		title: 'Checking Your Server',
+		running: 'Nothing on your server is changed. Leaving this page does not stop the check.',
+		success: 'The check is done.',
+		failure: 'Could Not Check the Server',
+		link: () => null,
+		failureLink: () => ({ to: '/migrate', label: 'Back to Import' })
+	},
 	'migration.cutover': {
 		title: 'Moving Your Site',
 		running:
@@ -150,6 +167,8 @@ const TYPE_LABELS: Record<string, string> = {
 	'site.upgrade': 'Update',
 	'site.delete': 'Delete',
 	'site.adopt': 'Adopt',
+	'site.import': 'Import',
+	'import.survey': 'Check',
 	'site.purge': 'Permanent Delete',
 	'migration.cutover': 'Move',
 	'backup.create': 'Backup',
@@ -195,6 +214,30 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		files: 'waiting for the files to copy, then removing the temporary access',
 		verify: 'checking that the new site answers',
 		activate: 'marking the new site ready'
+	},
+	'site.import': {
+		lease: 'locking the new site for this change',
+		preflight: 'checking that your server can be imported',
+		dump: 'copying your database from the server',
+		'files-archive': 'copying your files from the server',
+		convert: 'converting the database for the new site',
+		'reserve-name': 'reserving the new site address',
+		'resource.': 'creating the new site storage',
+		assets: 'uploading static files to the new site',
+		'upload-script': 'uploading the new site code',
+		authority: "recording the new site's access rules",
+		route: 'connecting the new site address',
+		'first-run': 'starting the new site',
+		link: 'recording where the new site came from',
+		restore: 'sending the database to the new site',
+		apply: 'waiting for the new site to load the database',
+		files: 'carrying the files into the new site',
+		verify: 'checking that the new site answers',
+		activate: 'marking the new site ready',
+		forget: 'deleting the key and the copies'
+	},
+	'import.survey': {
+		survey: 'reading your server'
 	},
 	'site.upgrade': {
 		lease: 'locking the site for this change',
@@ -313,6 +356,32 @@ export function needsLargerRestore(operation: {
 	);
 }
 
+const IMPORT_REFUSALS: Record<string, string> = {
+	source_auth_failed:
+		'The server did not accept the key. Add the public line to the authorized keys of that user, then start again.',
+	source_unreachable:
+		'The server did not answer. Check that it is online and that the port is open, then start again.',
+	source_host_private:
+		'The server address is not on the public internet, so Drupflare cannot reach it and nothing was run.',
+	host_key_mismatch:
+		'The server presented a different host key than the one you confirmed, so nothing was run. Start again and confirm the new key if you trust it.',
+	credential_expired: 'The key for this import expired. Start again to make a new one.',
+	credential_missing: 'The key for this import is gone. Start again to make a new one.',
+	host_key_unconfirmed: 'The host key of the server was not confirmed. Start again.',
+	dossier_refused:
+		'The check found a reason this site cannot be imported yet. Nothing was created and your server was not changed.',
+	unsupported_kind: 'This kind of site cannot be imported yet.',
+	dump_empty: 'The server returned an empty database, so nothing was imported.',
+	dump_failed:
+		'The database copy on your server did not finish. Check that Drush works there, then start again.',
+	restore_too_large: `The database is larger than the ${RESTORE_LIMIT_MIB} MiB a managed site accepts in one restore. Nothing was created and your server was not changed. Larger restores need a paged restore, which is not available yet.`,
+	files_too_large: 'The files are larger than an import accepts. Nothing was created.',
+	files_landing_unavailable:
+		'Uploaded files cannot be carried into a new site yet. Nothing was created.',
+	import_failed: 'The new site could not load the database. Nothing was left behind.',
+	import_timeout: 'The new site took too long to load the database. Nothing was left behind.'
+};
+
 const FAILED_STATUSES: ReadonlySet<string> = new Set(['failed', 'cancelled', 'rolled-back']);
 
 // the one plain reason shown on the progress page, the site's activity list and the admin list
@@ -327,6 +396,10 @@ export function failureReason(operation: {
 	if (needsLargerRestore(operation)) return LARGER_RESTORE_REASON;
 	if (operation.type === 'site.adopt') {
 		const refusal = ADOPT_REFUSALS[errorCode(operation.failedError) ?? ''];
+		if (refusal !== undefined) return refusal;
+	}
+	if (operation.type === 'site.import' || operation.type === 'import.survey') {
+		const refusal = IMPORT_REFUSALS[errorCode(operation.failedError) ?? ''];
 		if (refusal !== undefined) return refusal;
 	}
 	const phrase =
@@ -403,4 +476,27 @@ const CUTOVER_ROUTE_REFUSALS: Record<string, string> = {
 export function cutoverRefusalReason(error: { details: unknown; message: string }): string {
 	const reason = (error.details as { reason?: unknown } | null)?.reason;
 	return (typeof reason === 'string' && CUTOVER_ROUTE_REFUSALS[reason]) || error.message;
+}
+
+const IMPORT_ROUTE_REFUSALS: Record<string, string> = {
+	host_private: 'That address is not on the public internet, so Drupflare cannot reach it.',
+	host_unresolved: 'That server name could not be found. Check the spelling.',
+	credential_expired: IMPORT_REFUSALS.credential_expired!,
+	host_key_unconfirmed: 'Confirm the host key of the server first.',
+	host_key_changed:
+		'The server now shows a different host key than the one you were shown. Read it again before you confirm.',
+	host_key_confirmed:
+		'A different host key was confirmed for this key already. Start again with a new key.',
+	survey_not_done: 'The check of the server has not finished yet.',
+	dossier_refused: IMPORT_REFUSALS.dossier_refused!,
+	unsupported_kind: IMPORT_REFUSALS.unsupported_kind!,
+	idempotency_key_reused: REFUSALS.idempotency_key_reused!,
+	plan_full:
+		'Your plan has no room for another site. Remove a site or change your plan, then import again.'
+};
+
+// the plain reason for a refused import step; the server message is the fallback
+export function importRefusalReason(error: { details: unknown; message: string }): string {
+	const reason = (error.details as { reason?: unknown } | null)?.reason;
+	return (typeof reason === 'string' && IMPORT_ROUTE_REFUSALS[reason]) || error.message;
 }

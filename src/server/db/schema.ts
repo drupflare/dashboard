@@ -170,6 +170,7 @@ export const sites = sqliteTable('sites', {
 	adminMail: text('admin_mail'),
 	adoptedFrom: text('adopted_from'),
 	adoptedTo: text('adopted_to'),
+	importedFrom: text('imported_from'),
 	readyAt: integer('ready_at'),
 	createdAt: integer('created_at').notNull(),
 	updatedAt: integer('updated_at').notNull()
@@ -485,6 +486,7 @@ export const SCHEMA_STATEMENTS: string[] = [
 	admin_mail TEXT,
 	adopted_from TEXT,
 	adopted_to TEXT,
+	imported_from TEXT,
 	ready_at INTEGER,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
@@ -720,6 +722,23 @@ export const SCHEMA_STATEMENTS: string[] = [
 	received_at INTEGER NOT NULL,
 	PRIMARY KEY (provider, delivery_id)
 )`,
+	`CREATE TABLE IF NOT EXISTS import_credentials (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	user_id TEXT NOT NULL,
+	key_envelope TEXT NOT NULL,
+	public_key TEXT NOT NULL,
+	host TEXT NOT NULL,
+	port INTEGER NOT NULL CHECK (port BETWEEN 1 AND 65535),
+	username TEXT NOT NULL,
+	host_key_fingerprint TEXT,
+	host_key_type TEXT,
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL,
+	used_at INTEGER
+)`,
+	`CREATE INDEX IF NOT EXISTS import_credentials_org ON import_credentials (organization_id, id)`,
+	`CREATE INDEX IF NOT EXISTS import_credentials_expiry ON import_credentials (expires_at)`,
 	`CREATE INDEX IF NOT EXISTS repo_connections_org ON repo_connections (organization_id, id)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS repo_connections_github_install ON repo_connections (external_id)
 	WHERE provider = 'github' AND state = 'active'`,

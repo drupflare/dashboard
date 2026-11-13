@@ -66,7 +66,13 @@ export default defineNuxtConfig({
 		preset: 'cloudflare_module',
 		experimental: { tasks: true },
 		moduleSideEffects: ['reflect-metadata'],
-		scheduledTasks: { '*/15 * * * *': ['pending-secrets-purge', 'single-use-purge'] },
+		scheduledTasks: {
+			'*/15 * * * *': [
+				'pending-secrets-purge',
+				'single-use-purge',
+				'import-credentials-purge'
+			]
+		},
 		publicAssets: [
 			{
 				dir: fileURLToPath(new URL('./node_modules/swagger-ui-dist', import.meta.url)),

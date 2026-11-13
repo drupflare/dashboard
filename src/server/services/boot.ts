@@ -14,6 +14,8 @@ import { renderMail } from '../emails';
 import { cloudflareEmailSender, type EmailBinding } from '../integrations/email';
 import { engineConfigOf, engineEventSender, engineStarter } from '../integrations/engine';
 import { OAUTH_PROVIDERS, oauthClients, type OAuthConfig } from '../integrations/oauth';
+import { probeHostKey } from '../integrations/ssh-key';
+import { dohResolve } from '../integrations/url-guard';
 import type { WebAuthnConfig } from '../integrations/webauthn';
 import { accessConfigOf, accessTokenOf, verifyAccessToken } from '../utils/access';
 import {
@@ -66,6 +68,7 @@ import {
 	setSiteHealthServices,
 	type SiteHealthServices
 } from './site-health';
+import { resetImportServices, setImportServices, type ImportServices } from './site-import';
 import { siteInputConfigOf } from './site-input';
 import {
 	collegeBudgets,
@@ -297,6 +300,7 @@ export interface BuiltServices {
 	backups: BackupServices;
 	cutover: Partial<CutoverServices>;
 	fleet: FleetServices;
+	imports: Partial<ImportServices>;
 	siteHealth: Partial<SiteHealthServices>;
 	capacity: Partial<CapacityServices>;
 	pendingSecrets: () => Promise<PendingSecretDeps>;
@@ -393,6 +397,18 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			now: Date.now,
 			...fleetConfigOf(env)
 		},
+		imports: {
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			ring: async () => (await pendingSecrets()).ring,
+			resolve: (hostname) => dohResolve(hostname),
+			// the connection library loads on the first probe, so no other request pays for it
+			probe: async (target) =>
+				probeHostKey(
+					(await import('../../../engine/src/adapters/edgeport-ssh')).edgeportConnector,
+					target
+				),
+			now: Date.now
+		},
 		siteHealth: {
 			getDb,
 			custody: async () => {
@@ -429,6 +445,7 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	setBackupServices(built.backups);
 	setCutoverServices(built.cutover);
 	setFleetServices(built.fleet);
+	setImportServices(built.imports);
 	setSiteHealthServices(built.siteHealth);
 	setCapacityServices(built.capacity);
 	setPendingSecretDeps(built.pendingSecrets);
@@ -451,6 +468,7 @@ export function resetBoot(): void {
 	resetBackupServices();
 	resetCutoverServices();
 	resetFleetServices();
+	resetImportServices();
 	resetSiteHealthServices();
 	resetCapacityServices();
 	resetPendingSecretDeps();

@@ -17,6 +17,7 @@ import {
 	siteResources,
 	sites
 } from '../../../../src/server/db/schema';
+import { IMPORT_CREDENTIAL_SQL } from '../../../../src/shared/custody/import-credentials';
 
 describe('requireSchemaVersion', () => {
 	it('accepts only the version this code reads', () => {
@@ -200,5 +201,69 @@ describe('operation and site resource tables', () => {
 
 	it('lists the same resource kinds as the provisioning plan', () => {
 		expect([...SITE_RESOURCE_KINDS]).toEqual([...RESOURCE_KINDS]);
+	});
+});
+
+describe('import_credentials and imported_from', () => {
+	it('gives the table the columns the shared statements name, and sites an imported_from column', () => {
+		const db = new DatabaseSync(':memory:');
+		applyAll(db);
+		expect(columnsOf(db, 'import_credentials').map((c) => c.name)).toEqual(
+			[
+				'id',
+				'organization_id',
+				'user_id',
+				'key_envelope',
+				'public_key',
+				'host',
+				'port',
+				'username',
+				'host_key_fingerprint',
+				'host_key_type',
+				'created_at',
+				'expires_at',
+				'used_at'
+			].sort()
+		);
+		expect(columnsOf(db, 'sites').map((c) => c.name)).toContain('imported_from');
+		expect(getTableConfig(sites).columns.map((c) => c.name)).toContain('imported_from');
+	});
+
+	it('runs the statements the dashboard and the engine share against it', () => {
+		const db = new DatabaseSync(':memory:');
+		applyAll(db);
+		db.prepare(IMPORT_CREDENTIAL_SQL.insert).run(
+			'imc_1',
+			'org_a',
+			'usr_1',
+			'{}',
+			'ssh-ed25519 AAAA x',
+			'host.example',
+			22,
+			'deploy',
+			1,
+			100
+		);
+		expect(db.prepare(IMPORT_CREDENTIAL_SQL.select).get('org_a', 'imc_1')).toMatchObject({
+			host: 'host.example',
+			host_key_fingerprint: null
+		});
+		expect(db.prepare(IMPORT_CREDENTIAL_SQL.select).get('org_b', 'imc_1')).toBeUndefined();
+		const first = db
+			.prepare(IMPORT_CREDENTIAL_SQL.confirmHostKey)
+			.run('SHA256:a', 'ssh-ed25519', 'org_a', 'imc_1');
+		const second = db
+			.prepare(IMPORT_CREDENTIAL_SQL.confirmHostKey)
+			.run('SHA256:b', 'ssh-ed25519', 'org_a', 'imc_1');
+		expect([Number(first.changes), Number(second.changes)]).toEqual([1, 0]);
+		expect(
+			db.prepare('SELECT host_key_fingerprint AS f FROM import_credentials').get()
+		).toEqual({
+			f: 'SHA256:a'
+		});
+		expect(db.prepare(IMPORT_CREDENTIAL_SQL.expired).all(100)).toHaveLength(1);
+		expect(db.prepare(IMPORT_CREDENTIAL_SQL.expired).all(99)).toHaveLength(0);
+		expect(Number(db.prepare(IMPORT_CREDENTIAL_SQL.purge).run('imc_1', 99).changes)).toBe(0);
+		expect(Number(db.prepare(IMPORT_CREDENTIAL_SQL.purge).run('imc_1', 100).changes)).toBe(1);
 	});
 });

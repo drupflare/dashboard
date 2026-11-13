@@ -35,8 +35,18 @@ const majorOf = (version: string | null): number | null => {
 const DRUPAL_MAJOR = 11;
 const DATABASES = ['mysql', 'mariadb'];
 
-// every import-blocking check that cannot be read is a refusal, never a pass
-export function dossierFor(survey: SurveyInput, ceilingBytes: number): Dossier {
+export interface DossierOptions {
+	// false while a new site has no route that takes a files archive
+	filesLandable?: boolean;
+}
+
+// every import-blocking check that cannot be read is a refusal, never a pass; the ceiling is the
+// most a new site accepts in one restore, so it limits the database and not the files
+export function dossierFor(
+	survey: SurveyInput,
+	ceilingBytes: number,
+	options: DossierOptions = {}
+): Dossier {
 	const findings: Finding[] = [];
 	const refusals: string[] = [];
 	let verdict: Dossier['verdict'] = 'ready';
@@ -159,8 +169,22 @@ export function dossierFor(survey: SurveyInput, ceilingBytes: number): Dossier {
 			: survey.database.bytes + fileBytes;
 	if (bytes === null) {
 		refusals.push('The size of the site could not be estimated');
-	} else if (bytes > ceilingBytes) {
-		refusals.push('The site is larger than the import limit');
+	} else if (survey.database.bytes !== null && survey.database.bytes > ceilingBytes) {
+		const mib = Math.floor(ceilingBytes / (1024 * 1024));
+		refusals.push(
+			`The database is larger than the ${mib} MiB a new site accepts in one restore. A paged restore is needed for a larger database and is not available yet`
+		);
+	}
+	if (options.filesLandable === false && count !== null && count > 0) {
+		refusals.push('Uploaded files cannot be carried into a new site yet');
+		const found = findings.findIndex((finding) => finding.title === 'Uploaded Files');
+		if (found >= 0) {
+			findings[found] = {
+				status: 'unsupported',
+				title: 'Uploaded Files',
+				detail: `${count} files, ${kb} KB, and a new site has no way to take them yet`
+			};
+		}
 	}
 
 	if (verdict === 'ready' && refusals.length > 0) verdict = 'refused';

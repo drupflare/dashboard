@@ -101,6 +101,9 @@ Organisation roles are `owner`, `admin`, `developer`, `billing`, `viewer`. Site 
 | `site.upgrade`                   | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.cleanup`                   | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.adopt`                     | site       | x         | x         |               |             |            | x               |                 |             | session only, step-up             |
+| `site.import.credential`         | org        | x         | x         |               |             |            |                 |                 |             | session only, step-up             |
+| `site.import.survey`             | org        | x         | x         |               |             |            |                 |                 |             | session only, step-up             |
+| `site.import`                    | org        | x         | x         |               |             |            |                 |                 |             | session only, step-up             |
 | `site.cutover`                   | site       | x         | x         |               |             |            | x               |                 |             | session only, step-up             |
 | `site.cutover.decide`            | site       | x         | x         |               |             |            | x               |                 |             | session only, step-up             |
 | `site.cutover.read`              | site       | x         | x         |               |             |            | x               |                 |             |                                   |
@@ -170,6 +173,9 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `plane.connect`
 - `node.pair`
 - `site.adopt`
+- `site.import.credential`
+- `site.import.survey`
+- `site.import`
 - `site.cutover`
 - `site.cutover.decide`
 - `site.owner-token.reveal`
@@ -188,6 +194,9 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `site.delete`
 - `site.transfer`
 - `site.adopt`
+- `site.import.credential`
+- `site.import.survey`
+- `site.import`
 - `site.cutover`
 - `site.cutover.decide`
 - `site.domain.rename`

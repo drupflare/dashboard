@@ -14,6 +14,7 @@ import {
 	failureReason,
 	GENERIC_STEP_LABEL,
 	GENERIC_TYPE_LABEL,
+	importRefusalReason,
 	LARGER_RESTORE_TITLE,
 	needsLargerRestore,
 	OPERATION_COPY,
@@ -31,6 +32,8 @@ const COVERED = [
 	'site.delete',
 	'site.upgrade',
 	'site.adopt',
+	'site.import',
+	'import.survey',
 	'migration.cutover',
 	'backup.create',
 	'backup.restore'
@@ -42,7 +45,7 @@ function enginePlanSteps(): { type: string; id: string }[] {
 	const pairs: { type: string; id: string }[] = [];
 	for (const file of readdirSync(WORKFLOWS).filter((name) => name.endsWith('.ts'))) {
 		const text = readFileSync(WORKFLOWS + file, 'utf8');
-		const marks = [...text.matchAll(/type: '((?:site|backup|migration)\.[a-z-]+)'/g)];
+		const marks = [...text.matchAll(/type: '((?:site|backup|migration|import)\.[a-z-]+)'/g)];
 		marks.forEach((mark, i) => {
 			const type = mark[1] ?? '';
 			const segment = text.slice(mark.index, marks[i + 1]?.index ?? text.length);
@@ -60,7 +63,7 @@ function enginePlanSteps(): { type: string; id: string }[] {
 const IDENTIFIER = /[a-z0-9]\.[a-z]|[a-z]-[a-z]|_/;
 
 describe('operation copy', () => {
-	it('covers the seven operations the progress screen names, and no other', () => {
+	it('covers the nine operations the progress screen names, and no other', () => {
 		expect(Object.keys(OPERATION_COPY).sort()).toEqual([...COVERED].sort());
 		for (const type of COVERED) expect(OPERATION_TYPES).toContain(type);
 	});
@@ -481,5 +484,91 @@ describe('cutover copy', () => {
 		expect(cutoverRefusalReason({ details: null, message: 'server words' })).toBe(
 			'server words'
 		);
+	});
+});
+
+describe('import copy', () => {
+	it('labels the import and the check', () => {
+		expect(operationTypeLabel('site.import')).toBe('Import');
+		expect(operationTypeLabel('import.survey')).toBe('Check');
+		expect(copyFor('site.import').title).toBe('Importing Your Site');
+		expect(copyFor('import.survey').title).toBe('Checking Your Server');
+		expect(copyFor('site.import').link({ targetIds: [SITE] })).toEqual({
+			to: `/sites/${SITE}`,
+			label: 'Open the New Site'
+		});
+	});
+
+	it('never offers a retry, since a retry would need a new key', () => {
+		for (const type of ['site.import', 'import.survey']) {
+			for (const status of ['failed', 'rolled-back'])
+				expect(canRetry(type, status)).toBe(false);
+		}
+	});
+
+	it.each([
+		['source_auth_failed', 'did not accept the key'],
+		['source_unreachable', 'did not answer'],
+		['host_key_mismatch', 'different host key'],
+		['credential_expired', 'expired'],
+		['host_key_unconfirmed', 'not confirmed'],
+		['dossier_refused', 'cannot be imported'],
+		['dump_empty', 'empty database'],
+		['dump_failed', 'did not finish'],
+		['restore_too_large', 'paged restore'],
+		['files_landing_unavailable', 'files cannot be carried'],
+		['import_failed', 'could not load'],
+		['import_timeout', 'too long']
+	])('turns the %s failure into a plain reason with no code in it', (code, text) => {
+		const reason = failureReason({
+			type: 'site.import',
+			status: 'rolled-back',
+			failedStep: 'dump',
+			failedError: `${code}: server words`
+		});
+		expect(reason).toContain(text);
+		expect(reason).not.toMatch(/_/);
+		expect(reason).toMatch(/^[\x20-\x7e]+$/);
+	});
+
+	it('names the step when the failure has no code of its own', () => {
+		expect(
+			failureReason({
+				type: 'site.import',
+				status: 'failed',
+				failedStep: 'restore',
+				failedError: null
+			})
+		).toBe('Stopped while sending the database to the new site.');
+	});
+
+	it('names the 16 MiB limit when the database is too large', () => {
+		expect(
+			failureReason({
+				type: 'site.import',
+				status: 'rolled-back',
+				failedStep: 'dump',
+				failedError: 'restore_too_large: the database is larger'
+			})
+		).toContain('16 MiB');
+	});
+
+	it.each([
+		['host_private', 'public internet'],
+		['host_unresolved', 'could not be found'],
+		['host_key_changed', 'different host key'],
+		['survey_not_done', 'not finished'],
+		['plan_full', 'no room'],
+		['idempotency_key_reused', 'clashes']
+	])('turns the %s route refusal into a plain reason', (reason, text) => {
+		expect(importRefusalReason({ details: { reason }, message: 'server words' })).toContain(
+			text
+		);
+	});
+
+	it('falls back to the server message for a reason it does not name', () => {
+		expect(
+			importRefusalReason({ details: { reason: 'new_thing' }, message: 'server words' })
+		).toBe('server words');
 	});
 });
