@@ -1,0 +1,20 @@
+{
+	"name": "spike-memory-boundary",
+	"main": "src/worker.mjs",
+	"compatibility_date": "2026-11-01",
+	"workers_dev": true,
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "SPIKE_MEMORY_BALLAST",
+				"class_name": "SpikeMemoryBallast"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "spike-memory-v1",
+			"new_sqlite_classes": ["SpikeMemoryBallast"]
+		}
+	]
+}
