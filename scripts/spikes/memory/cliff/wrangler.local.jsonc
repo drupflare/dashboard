@@ -1,0 +1,19 @@
+{
+	"name": "spike-memory-v4-local",
+	"main": "src/worker.mjs",
+	"compatibility_date": "2026-10-26",
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "SPIKE_MEMORY_V2",
+				"class_name": "SpikeMemoryV2"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "spike-memory-v4-local-1",
+			"new_sqlite_classes": ["SpikeMemoryV2"]
+		}
+	]
+}

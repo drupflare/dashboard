@@ -1,0 +1,70 @@
+services:
+  db:
+    image: mariadb@sha256:2fd6d83be13d6f95119fe7823c4a445a771d973ce15a4f4621e3c14898f9f1ab
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpass
+      MARIADB_DATABASE: drupal
+      MARIADB_USER: drupal
+      MARIADB_PASSWORD: drupalpass
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --sql-mode=STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 3s
+      timeout: 5s
+      retries: 40
+    ports:
+      - '127.0.0.1:33306:3306'
+
+  drupal:
+    image: drupal@sha256:d059fada2d2f9ebfcde8f8d3208007946d1ee843ee2dd9ed00b15ead0c282def
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DRUPAL_DB_HOST: db
+      DRUPAL_DB_NAME: drupal
+      DRUPAL_DB_USER: drupal
+      DRUPAL_DB_PASSWORD: drupalpass
+      DRUPAL_SITE_MAIL: e2e@example.com
+      SSH_USER: tester
+      SSH_PUBLIC_KEY: ${DRANGLER_E2E_SSH_PUBKEY:-}
+    entrypoint: ['/bin/bash', '/opt/drangler/entrypoint.sh']
+    volumes:
+      - ./drupal:/opt/drangler:ro
+    healthcheck:
+      test: ['CMD', 'test', '-f', '/opt/drangler-ready']
+      interval: 5s
+      timeout: 5s
+      retries: 180
+    ports:
+      - '127.0.0.1:8180:80'
+      - '127.0.0.1:2222:22'
+
+  vps-broken:
+    profiles: ['broken']
+    image: drupal@sha256:d059fada2d2f9ebfcde8f8d3208007946d1ee843ee2dd9ed00b15ead0c282def
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DRUPAL_DB_HOST: db
+      DRUPAL_DB_NAME: drupal
+      DRUPAL_DB_USER: drupal
+      DRUPAL_DB_PASSWORD: drupalpass
+      SSH_USER: tester
+      SSH_PUBLIC_KEY: ${DRANGLER_E2E_SSH_PUBKEY:-}
+      DRANGLER_FAULT: ${DRANGLER_FAULT:-none}
+    entrypoint: ['/bin/bash', '/opt/drangler/broken-entrypoint.sh']
+    volumes:
+      - ./drupal:/opt/drangler:ro
+    healthcheck:
+      test: ['CMD', 'test', '-f', '/opt/drangler-broken-ready']
+      interval: 5s
+      timeout: 5s
+      retries: 180
+    ports:
+      - '127.0.0.1:8181:80'
+      - '127.0.0.1:2223:22'

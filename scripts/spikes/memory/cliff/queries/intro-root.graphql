@@ -1,0 +1,7 @@
+{
+	__type(name: "AccountDurableObjectsPeriodicGroupsFilter_InputObject") {
+		inputFields {
+			name
+		}
+	}
+}
