@@ -6,8 +6,10 @@ import {
 	signChallengeResponse,
 	signEnvelope,
 	verifyEnvelope,
+	type CommandEnvelope,
 	type NodeEnvelope,
 	type ServerEnvelope,
+	type SitesEnvelope,
 	type UnsignedEnvelope
 } from '../../contracts/src/fleet-link';
 
@@ -24,6 +26,8 @@ export type Fault = {
 
 export interface FakeNodeOptions {
 	now?: () => number;
+	// the newest contract minor the box announces; 0 is a box that predates the site map frame
+	minor?: number;
 	hostFacts?: Partial<ReturnType<typeof defaultFacts>>;
 }
 
@@ -48,14 +52,16 @@ export class FakeNode {
 	private constructor(
 		readonly key: SigningKey,
 		readonly hostFacts: ReturnType<typeof defaultFacts>,
-		private readonly now: () => number
+		private readonly now: () => number,
+		readonly minor: number
 	) {}
 
 	static async create(options: FakeNodeOptions = {}): Promise<FakeNode> {
 		return new FakeNode(
 			await generateSigningKey(),
 			{ ...defaultFacts(), ...options.hostFacts },
-			options.now ?? Date.now
+			options.now ?? Date.now,
+			options.minor ?? 0
 		);
 	}
 
@@ -93,7 +99,7 @@ export class FakeNode {
 				ts: this.now() + (fault.skewMs ?? 0),
 				range: {
 					min: { major: minMajor, minor: 0 },
-					max: { major: max, minor: 0 }
+					max: { major: max, minor: fault.unsupportedRange ? 0 : this.minor }
 				}
 			},
 			this.key.privateKey
@@ -154,7 +160,7 @@ export class FakeNode {
 	}
 
 	commandResult(
-		command: ServerEnvelope,
+		command: CommandEnvelope,
 		outcome: Body<'command.result'>['outcome'] = 'succeeded',
 		fault?: Fault
 	): Promise<string> {
@@ -174,13 +180,22 @@ export class FakeNode {
 
 	// verifies a frame from the server as the bastion client will: pinned dashboard key, the node's
 	// own id and the timestamp window
-	async readCommand(frame: string): Promise<ServerEnvelope> {
+	async readCommand(frame: string, seen?: ReadonlySet<string>): Promise<CommandEnvelope> {
+		return (await this.readFrame(frame, seen)) as CommandEnvelope;
+	}
+
+	async readSites(frame: string, seen?: ReadonlySet<string>): Promise<SitesEnvelope> {
+		return (await this.readFrame(frame, seen)) as SitesEnvelope;
+	}
+
+	private async readFrame(frame: string, seen?: ReadonlySet<string>): Promise<ServerEnvelope> {
 		if (this.dashboardPublicKey === null) throw new Error('the fake node has not been claimed');
 		const verdict = await verifyEnvelope(JSON.parse(frame), {
 			publicKey: this.dashboardPublicKey,
 			direction: 'server',
 			now: this.now(),
-			nodeId: this.id()
+			nodeId: this.id(),
+			...(seen === undefined ? {} : { seen })
 		});
 		if (!verdict.ok) throw new Error(`command refused: ${verdict.code}`);
 		return verdict.value as ServerEnvelope;

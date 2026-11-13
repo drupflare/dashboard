@@ -1,5 +1,6 @@
 import type { D1Database } from '@cloudflare/workers-types';
-import type { HostFacts, NodeState, NodeUpdate } from '../../src/server/domain/fleet';
+import { MAX_SITE_MAP } from '@contracts/fleet-link';
+import type { HostFacts, NodeState, NodeUpdate, SiteMapRow } from '../../src/server/domain/fleet';
 
 export const NODE_COLUMNS = `id, organization_id, public_key, host_facts, state, paired_at,
 	last_seen_at, last_audit_head, last_envelope_seq, revoked_at`;
@@ -58,7 +59,12 @@ export interface NodeStore {
 	get(id: string): Promise<NodeRecord | null>;
 	// records a message the link accepted; a revoked node's row is left alone
 	touch(id: string, update: NodeUpdate): Promise<void>;
+	// one organization's self-hosted sites that hold a hostname
+	sites(orgId: string): Promise<SiteMapRow[]>;
 }
+
+// a site that is gone no longer reports usage; a suspended one still serves, so it stays
+const LIVE_SITE_STATES = `'active', 'suspended'`;
 
 export class D1NodeStore implements NodeStore {
 	constructor(private readonly db: D1Database) {}
@@ -69,6 +75,23 @@ export class D1NodeStore implements NodeStore {
 			.bind(id)
 			.first<NodeRow>();
 		return row ? toNodeRecord(row) : null;
+	}
+
+	async sites(orgId: string): Promise<SiteMapRow[]> {
+		const { results } = await this.db
+			.prepare(
+				`SELECT organization_id, id, primary_hostname FROM sites
+				 WHERE organization_id = ? AND plane = 'self-hosted' AND primary_hostname IS NOT NULL
+					AND state IN (${LIVE_SITE_STATES})
+				 ORDER BY id LIMIT ?`
+			)
+			.bind(orgId, MAX_SITE_MAP + 1)
+			.all<{ organization_id: string; id: string; primary_hostname: string }>();
+		return results.map((row) => ({
+			orgId: row.organization_id,
+			siteId: row.id,
+			host: row.primary_hostname
+		}));
 	}
 
 	async touch(id: string, update: NodeUpdate): Promise<void> {

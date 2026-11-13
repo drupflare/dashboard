@@ -1,21 +1,25 @@
-import { negotiate, type VersionRange } from '@contracts/common';
+import { negotiate, sha256Digest, type VersionRange } from '@contracts/common';
 import {
 	COMMAND_CLASSES,
 	FLEET_LINK_VERSION,
 	FLEET_TS_WINDOW_MS,
+	MAX_SITE_MAP,
 	PAIRING_TTL_MS,
+	SITES_FRAME_MINOR,
 	createChallenge,
 	hashClaimToken,
 	hostFactsSchema,
 	newClaimToken,
 	signEnvelope,
+	siteMapEntrySchema,
 	verifyChallengeResponse,
 	verifyEnvelope,
 	type Challenge,
 	type ChallengeRefusal,
+	type CommandEnvelope,
 	type EnvelopeRefusal,
 	type NodeEnvelope,
-	type ServerEnvelope
+	type SitesEnvelope
 } from '@contracts/fleet-link';
 import type { z } from 'zod';
 
@@ -211,7 +215,7 @@ export interface CommandRequest {
 	ttlMs?: number;
 }
 
-export type UnsignedCommand = Omit<ServerEnvelope, 'sig'>;
+export type UnsignedCommand = Omit<CommandEnvelope, 'sig'>;
 
 // a command to a revoked node is refused before it is built, so nothing signed ever exists for it
 export function commandAllowed(node: NodeView | null): CommandRefusal | null {
@@ -233,8 +237,8 @@ export function buildCommand(
 		seq: input.seq,
 		ack: input.ack,
 		body: {
-			nodeId: node.id as ServerEnvelope['body']['nodeId'],
-			opId: request.opId as ServerEnvelope['body']['opId'],
+			nodeId: node.id as CommandEnvelope['body']['nodeId'],
+			opId: request.opId as CommandEnvelope['body']['opId'],
 			stepId: request.stepId,
 			idempotencyKey: request.idempotencyKey,
 			expiresAt: input.now + (request.ttlMs ?? DEFAULT_COMMAND_TTL_MS),
@@ -249,15 +253,15 @@ export function buildCommand(
 export async function signCommand(
 	command: UnsignedCommand,
 	privateKey: CryptoKey
-): Promise<ServerEnvelope> {
-	return (await signEnvelope(command, privateKey)) as ServerEnvelope;
+): Promise<CommandEnvelope> {
+	return (await signEnvelope(command, privateKey)) as CommandEnvelope;
 }
 
 export type CommandOutcome = 'succeeded' | 'failed' | 'rejected' | 'expired' | 'queued';
 
 export interface CommandRecord {
 	key: string;
-	envelope: ServerEnvelope;
+	envelope: CommandEnvelope;
 	sentAt: number | null;
 	result: {
 		outcome: CommandOutcome;
@@ -299,7 +303,7 @@ export type QueueResult =
 // the same operation, step and key is one command, so a retry queues nothing new
 export function enqueue(
 	records: readonly CommandRecord[],
-	envelope: ServerEnvelope,
+	envelope: CommandEnvelope,
 	now: number
 ): QueueResult {
 	const key = commandKey(envelope.body.opId, envelope.body.stepId, envelope.body.idempotencyKey);
@@ -373,6 +377,77 @@ export function applyResult(
 				: record
 		)
 	};
+}
+
+// #endregion
+
+// #region site map
+
+export interface SiteMapRow {
+	orgId: string;
+	siteId: string;
+	host: string;
+}
+
+export interface SiteMap {
+	sites: SitesEnvelope['body']['sites'];
+	truncated: boolean;
+}
+
+// only the node's own organization, sorted by id, one entry per id and host; a row the contract
+// would refuse is left out so it never makes the whole frame unreadable at the node
+export function siteMapOf(orgId: string, rows: readonly SiteMapRow[]): SiteMap {
+	const ids = new Set<string>();
+	const hosts = new Set<string>();
+	const sites: SiteMap['sites'] = [];
+	const own = rows.filter((row) => row.orgId === orgId);
+	for (const row of own.sort((a, b) =>
+		a.siteId < b.siteId ? -1 : a.siteId > b.siteId ? 1 : 0
+	)) {
+		const entry = siteMapEntrySchema.safeParse({
+			siteId: row.siteId,
+			host: row.host.toLowerCase()
+		});
+		if (!entry.success || ids.has(entry.data.siteId) || hosts.has(entry.data.host)) continue;
+		ids.add(entry.data.siteId);
+		hosts.add(entry.data.host);
+		sites.push(entry.data);
+	}
+	return { sites: sites.slice(0, MAX_SITE_MAP), truncated: sites.length > MAX_SITE_MAP };
+}
+
+// a node that agreed to a version below the one that added the frame is never sent it
+export function sitesFrameAllowed(version: { major: number; minor: number }): boolean {
+	return version.major === FLEET_LINK_VERSION.major && version.minor >= SITES_FRAME_MINOR;
+}
+
+export function sitesDigest(sites: SiteMap['sites']): Promise<string> {
+	return sha256Digest(JSON.stringify(sites));
+}
+
+export type UnsignedSites = Omit<SitesEnvelope, 'sig'>;
+
+export function buildSites(
+	node: NodeView,
+	sites: SiteMap['sites'],
+	input: { now: number; seq: number; ack: number; id?: string }
+): UnsignedSites {
+	return {
+		v: FLEET_LINK_VERSION.major,
+		id: input.id ?? `msg_${crypto.randomUUID().replaceAll('-', '')}`,
+		type: 'sites',
+		ts: input.now,
+		seq: input.seq,
+		ack: input.ack,
+		body: { nodeId: node.id as SitesEnvelope['body']['nodeId'], sites: [...sites] }
+	};
+}
+
+export async function signSites(
+	frame: UnsignedSites,
+	privateKey: CryptoKey
+): Promise<SitesEnvelope> {
+	return (await signEnvelope(frame, privateKey)) as SitesEnvelope;
 }
 
 // #endregion

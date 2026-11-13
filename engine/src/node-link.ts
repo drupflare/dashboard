@@ -5,6 +5,7 @@ import {
 	applyResult,
 	beginHandshake,
 	buildCommand,
+	buildSites,
 	commandAllowed,
 	commandKey,
 	completeHandshake,
@@ -14,6 +15,10 @@ import {
 	nodeUpdateOf,
 	settleExpired,
 	signCommand,
+	signSites,
+	siteMapOf,
+	sitesDigest,
+	sitesFrameAllowed,
 	trimRecords,
 	type CommandRecord,
 	type CommandRefusal,
@@ -25,6 +30,7 @@ export const LINK_PATH = /^\/link\/(nod_[0-9a-z]{8,40})$/;
 export const HANDSHAKE_MS = 30_000;
 export const MAX_FRAME_CHARS = 256 * 1024;
 export const MAX_REFUSALS = 5;
+export const SITES_SYNC_MS = 60_000;
 
 // private-use close codes; a node reads the code and the reason text
 export const CLOSE = {
@@ -39,7 +45,14 @@ export const CLOSE = {
 
 export type SocketState =
 	| { phase: 'challenge'; nodeId: string; challenge: Challenge; refused: number }
-	| { phase: 'ready'; nodeId: string; refused: number };
+	| {
+			phase: 'ready';
+			nodeId: string;
+			refused: number;
+			version: { major: number; minor: number };
+			// digest of the site map this connection last received
+			sitesDigest?: string;
+	  };
 
 export interface LinkSocket {
 	send(text: string): void;
@@ -169,10 +182,62 @@ export class NodeLink {
 			await this.refuse(socket, state, verdict.code, { code, reason: verdict.code });
 			return;
 		}
-		socket.writeState({ phase: 'ready', nodeId: state.nodeId, refused: 0 });
+		socket.writeState({
+			phase: 'ready',
+			nodeId: state.nodeId,
+			refused: 0,
+			version: verdict.version
+		});
 		const lastSeq = this.lastSeq(node?.lastEnvelopeSeq ?? NO_SEQ);
 		socket.send(frame({ type: 'ready', version: verdict.version, lastSeq }));
 		await this.deliver(socket, now);
+		await this.pushSitesSafely(socket);
+	}
+
+	// the next sync retries a failure, so one never undoes a handshake that already succeeded
+	private async pushSitesSafely(socket: LinkSocket): Promise<void> {
+		try {
+			await this.pushSites(socket);
+		} catch (error) {
+			console.error('site map send failed', error);
+		}
+	}
+
+	// sends this node's organization its site ids when the map differs from what the connection
+	// holds; a node that was revoked since the last look gets nothing and is closed
+	private async pushSites(socket: LinkSocket): Promise<void> {
+		const state = socket.readState();
+		if (state?.phase !== 'ready' || !sitesFrameAllowed(state.version)) return;
+		const now = this.deps.now();
+		const node = await this.deps.nodes.get(state.nodeId);
+		if (commandAllowed(node) !== null || node === null) {
+			socket.close(CLOSE.revoked, 'node_revoked');
+			return;
+		}
+		const map = siteMapOf(node.orgId, await this.deps.nodes.sites(node.orgId));
+		if (map.truncated) console.warn('site map cut at the contract limit', node.id);
+		const digest = await sitesDigest(map.sites);
+		if (digest === state.sitesDigest) return;
+		const seq = (this.deps.storage.get<number>(OUT_SEQ) ?? 0) + 1;
+		const signed = await signSites(
+			buildSites(
+				{ id: node.id, orgId: node.orgId, publicKey: node.publicKey, state: node.state },
+				map.sites,
+				{ now, seq, ack: Math.max(0, this.lastSeq(node.lastEnvelopeSeq)) }
+			),
+			await this.deps.signingKey()
+		);
+		this.deps.storage.put(OUT_SEQ, seq);
+		socket.send(frame(signed));
+		const latest = socket.readState();
+		if (latest?.phase === 'ready') socket.writeState({ ...latest, sitesDigest: digest });
+	}
+
+	// re-reads the map for every connected node and sends it where it changed
+	syncSites(): Promise<void> {
+		return this.serial(async () => {
+			for (const socket of this.deps.sockets()) await this.pushSitesSafely(socket);
+		});
 	}
 
 	private lastSeq(rowSeq: number): number {
@@ -300,6 +365,19 @@ export class NodeLink {
 			else next = next === null ? deadline : Math.min(next, deadline);
 		}
 		return next;
+	}
+
+	// one wake-up: closes late handshakes, refreshes site maps, and says when to wake again
+	async tick(): Promise<number | null> {
+		const handshake = this.expireHandshakes();
+		await this.syncSites();
+		const wantsMap = this.deps.sockets().some((socket) => {
+			const state = socket.readState();
+			return state?.phase === 'ready' && sitesFrameAllowed(state.version);
+		});
+		if (!wantsMap) return handshake;
+		const resync = this.deps.now() + SITES_SYNC_MS;
+		return handshake === null ? resync : Math.min(handshake, resync);
 	}
 }
 

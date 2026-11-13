@@ -67,7 +67,7 @@ export class NodeSession extends DurableObject<EngineEnv> {
 	}
 
 	override async alarm(): Promise<void> {
-		const next = this.link().expireHandshakes();
+		const next = await this.link().tick();
 		if (next !== null) await this.ctx.storage.setAlarm(next);
 	}
 

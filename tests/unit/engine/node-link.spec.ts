@@ -4,18 +4,20 @@ import {
 	signingKeyFromSeed,
 	type SigningKey
 } from '../../../contracts/src/common';
+import { FLEET_LINK_VERSION, FLEET_TS_WINDOW_MS } from '../../../contracts/src/fleet-link';
 import {
 	CLOSE,
 	HANDSHAKE_MS,
 	MAX_REFUSALS,
 	NodeLink,
+	SITES_SYNC_MS,
 	handleLink,
 	linkNodeId,
 	type LinkSocket,
 	type SocketState
 } from '../../../engine/src/node-link';
 import type { NodeRecord, NodeStore } from '../../../engine/src/node-store';
-import type { NodeUpdate } from '../../../src/server/domain/fleet';
+import type { NodeUpdate, SiteMapRow } from '../../../src/server/domain/fleet';
 import { type CommandRequest } from '../../../src/server/domain/fleet';
 import { FakeNode } from '../../rigs/fake-node';
 
@@ -52,6 +54,10 @@ class FakeSocket implements LinkSocket {
 class FakeStore implements NodeStore {
 	touches: { id: string; update: NodeUpdate }[] = [];
 	failTouch = false;
+	// every organization's rows, whatever organization is asked for, so the link's own filter is tested
+	siteRows: SiteMapRow[] = [];
+	siteReads: string[] = [];
+	failSites = false;
 
 	constructor(public node: NodeRecord | null) {}
 
@@ -62,6 +68,12 @@ class FakeStore implements NodeStore {
 	async touch(id: string, update: NodeUpdate) {
 		if (this.failTouch) throw new Error('d1 is down');
 		this.touches.push({ id, update });
+	}
+
+	async sites(orgId: string) {
+		this.siteReads.push(orgId);
+		if (this.failSites) throw new Error('d1 is down');
+		return this.siteRows;
 	}
 }
 
@@ -81,16 +93,21 @@ function record(node: FakeNode, over: Partial<NodeRecord> = {}): NodeRecord {
 	};
 }
 
-async function world(over: { dashboard?: SigningKey } = {}) {
+async function world(over: { dashboard?: SigningKey; minor?: number; orgId?: string } = {}) {
 	const clock = { now: START };
-	const node = await FakeNode.create({ now: () => clock.now });
+	const node = await FakeNode.create({
+		now: () => clock.now,
+		...(over.minor === undefined ? {} : { minor: over.minor })
+	});
 	const dashboard = over.dashboard ?? (await generateSigningKey());
 	node.adopt({
 		nodeId: NODE_ID,
 		linkUrl: `wss://link.example/link/${NODE_ID}`,
 		dashboardPublicKey: dashboard.publicKey
 	});
-	const store = new FakeStore(record(node));
+	const store = new FakeStore(
+		record(node, over.orgId === undefined ? {} : { orgId: over.orgId })
+	);
 	const memory = new Map<string, unknown>();
 	const sockets: FakeSocket[] = [];
 	const link = new NodeLink({
@@ -461,6 +478,214 @@ describe('commands', () => {
 	});
 });
 
+describe('the site map frame', () => {
+	const MINOR = FLEET_LINK_VERSION.minor;
+	const row = (orgId: string, n: number): SiteMapRow => ({
+		orgId,
+		siteId: `site_map${String(n).padStart(8, '0')}`,
+		host: `host-${n}.example.org`
+	});
+	const ORG_A = 'org_linktest0001';
+	const ORG_B = 'org_linktest0002';
+	const mapFrames = (socket: FakeSocket) =>
+		socket.frames().filter((item) => item.type === 'sites');
+	const command: CommandRequest = {
+		opId: 'op_linktestop01',
+		stepId: 'apply',
+		idempotencyKey: 'key-1',
+		class: 'safe',
+		action: 'health.observe',
+		params: {}
+	};
+
+	it('sends a signed map right after ready, and the box verifies it as it does a command', async () => {
+		const w = await world({ minor: MINOR });
+		w.store.siteRows = [row(ORG_A, 2), row(ORG_A, 1)];
+		const socket = await w.connect();
+		expect(socket.frames().map((item) => item.type)).toEqual(['challenge', 'ready', 'sites']);
+		const frame = await w.node.readSites(socket.sent.at(-1)!);
+		expect(frame.body).toEqual({
+			nodeId: NODE_ID,
+			sites: [
+				{ siteId: 'site_map00000001', host: 'host-1.example.org' },
+				{ siteId: 'site_map00000002', host: 'host-2.example.org' }
+			]
+		});
+		expect(frame.seq).toBe(1);
+		expect(w.store.siteReads).toEqual([ORG_A]);
+	});
+
+	it('sends an empty map when the organization has no self-hosted site yet', async () => {
+		const w = await world({ minor: MINOR });
+		const socket = await w.connect();
+		expect((await w.node.readSites(socket.sent.at(-1)!)).body.sites).toEqual([]);
+	});
+
+	it('sends nothing before the box has answered the challenge, or when its answer is refused', async () => {
+		const w = await world({ minor: MINOR });
+		w.store.siteRows = [row(ORG_A, 1)];
+		const waiting = new FakeSocket();
+		w.sockets.push(waiting);
+		w.link.open(waiting, NODE_ID);
+		await w.link.syncSites();
+		expect(waiting.frames().map((item) => item.type)).toEqual(['challenge']);
+		await w.link.message(
+			waiting,
+			await w.node.answerChallenge(waiting.sent[0]!, { badSignature: true })
+		);
+		expect(mapFrames(waiting)).toEqual([]);
+		expect(w.store.siteReads).toEqual([]);
+	});
+
+	it('sends nothing to a box that announced a version below the one that added the frame', async () => {
+		const w = await world({ minor: 0 });
+		w.store.siteRows = [row(ORG_A, 1)];
+		const socket = await w.connect();
+		await w.link.syncSites();
+		expect(socket.frames().map((item) => item.type)).toEqual(['challenge', 'ready']);
+		expect(w.store.siteReads).toEqual([]);
+	});
+
+	it('tells a node only the sites of its own organization, with two organizations', async () => {
+		const rows = [row(ORG_A, 1), row(ORG_B, 2), row(ORG_A, 3), row(ORG_B, 4)];
+		const a = await world({ minor: MINOR, orgId: ORG_A });
+		const b = await world({ minor: MINOR, orgId: ORG_B });
+		a.store.siteRows = rows;
+		b.store.siteRows = rows;
+		const socketA = await a.connect();
+		const socketB = await b.connect();
+		const idsOf = async (w: typeof a, socket: FakeSocket) =>
+			(await w.node.readSites(socket.sent.at(-1)!)).body.sites.map((entry) => entry.siteId);
+		expect(await idsOf(a, socketA)).toEqual(['site_map00000001', 'site_map00000003']);
+		expect(await idsOf(b, socketB)).toEqual(['site_map00000002', 'site_map00000004']);
+		expect(a.store.siteReads).toEqual([ORG_A]);
+		expect(b.store.siteReads).toEqual([ORG_B]);
+		expect(socketA.sent.join('')).not.toContain('site_map00000002');
+		expect(socketB.sent.join('')).not.toContain('site_map00000001');
+	});
+
+	it('sends again when the set changes and stays quiet when it does not', async () => {
+		const w = await world({ minor: MINOR });
+		w.store.siteRows = [row(ORG_A, 1)];
+		const socket = await w.connect();
+		await w.link.syncSites();
+		expect(mapFrames(socket)).toHaveLength(1);
+		w.store.siteRows = [row(ORG_A, 1), row(ORG_A, 2)];
+		await w.link.syncSites();
+		expect(mapFrames(socket)).toHaveLength(2);
+		const second = await w.node.readSites(socket.sent.at(-1)!);
+		expect(second.body.sites.map((entry) => entry.siteId)).toEqual([
+			'site_map00000001',
+			'site_map00000002'
+		]);
+		w.store.siteRows = [row(ORG_A, 2)];
+		await w.link.syncSites();
+		const third = await w.node.readSites(socket.sent.at(-1)!);
+		expect(third.body.sites.map((entry) => entry.siteId)).toEqual(['site_map00000002']);
+		expect(mapFrames(socket)).toHaveLength(3);
+	});
+
+	it('sends the map again to a new connection even when nothing changed', async () => {
+		const w = await world({ minor: MINOR });
+		w.store.siteRows = [row(ORG_A, 1)];
+		await w.connect();
+		const again = await w.connect();
+		expect(mapFrames(again)).toHaveLength(1);
+	});
+
+	it('shares one rising sequence with commands and carries the node ack', async () => {
+		const w = await world({ minor: MINOR });
+		w.store.siteRows = [row(ORG_A, 1)];
+		const socket = await w.connect();
+		await w.link.message(socket, await w.node.status());
+		await w.link.message(socket, await w.node.findings());
+		await w.link.sendCommand(NODE_ID, command);
+		w.store.siteRows = [row(ORG_A, 1), row(ORG_A, 2)];
+		await w.link.syncSites();
+		const frames = socket.sent.slice(2);
+		const seqs = frames.map((text) => JSON.parse(text).seq);
+		expect(seqs).toEqual([1, 2, 3]);
+		expect(w.memory.get('outSeq')).toBe(3);
+		expect((await w.node.readSites(socket.sent[2]!)).ack).toBe(0);
+		expect((await w.node.readSites(socket.sent.at(-1)!)).ack).toBe(1);
+	});
+
+	it('refuses a replayed frame, a skewed clock, another key and another node at the box', async () => {
+		const w = await world({ minor: MINOR });
+		w.store.siteRows = [row(ORG_A, 1)];
+		const socket = await w.connect();
+		const text = socket.sent.at(-1)!;
+		const id = JSON.parse(text).id as string;
+		await expect(w.node.readSites(text, new Set([id]))).rejects.toThrow('replayed');
+		const stranger = await FakeNode.create({ now: () => w.clock.now, minor: MINOR });
+		stranger.adopt({
+			nodeId: 'nod_linktest00002',
+			linkUrl: 'wss://link.example/x',
+			dashboardPublicKey: w.dashboard.publicKey
+		});
+		await expect(stranger.readSites(text)).rejects.toThrow('wrong_node');
+		const rogue = await FakeNode.create({ now: () => w.clock.now, minor: MINOR });
+		rogue.adopt({
+			nodeId: NODE_ID,
+			linkUrl: 'wss://link.example/x',
+			dashboardPublicKey: (await generateSigningKey()).publicKey
+		});
+		await expect(rogue.readSites(text)).rejects.toThrow('bad_signature');
+		w.clock.now += FLEET_TS_WINDOW_MS + 1;
+		await expect(w.node.readSites(text)).rejects.toThrow('expired');
+		w.clock.now = START - FLEET_TS_WINDOW_MS - 1;
+		await expect(w.node.readSites(text)).rejects.toThrow('future');
+	});
+
+	it('sends nothing to a node revoked since the last look, and closes its link', async () => {
+		const w = await world({ minor: MINOR });
+		w.store.siteRows = [row(ORG_A, 1)];
+		const socket = await w.connect();
+		const before = socket.sent.length;
+		w.store.node = record(w.node, { state: 'revoked' });
+		w.store.siteRows = [row(ORG_A, 1), row(ORG_A, 2)];
+		await w.link.syncSites();
+		expect(socket.closed).toEqual({ code: CLOSE.revoked, reason: 'node_revoked' });
+		expect(socket.sent).toHaveLength(before);
+	});
+
+	it('keeps a finished handshake when the database read fails, and sends on the next sync', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const w = await world({ minor: MINOR });
+		w.store.siteRows = [row(ORG_A, 1)];
+		w.store.failSites = true;
+		const socket = await w.connect();
+		expect(socket.frames().map((item) => item.type)).toEqual(['challenge', 'ready']);
+		expect(socket.closed).toBeNull();
+		expect(error).toHaveBeenCalled();
+		w.store.failSites = false;
+		await w.link.syncSites();
+		expect(mapFrames(socket)).toHaveLength(1);
+	});
+
+	it('wakes again after a minute while a box that takes the map is connected', async () => {
+		const w = await world({ minor: MINOR });
+		await w.connect();
+		expect(await w.link.tick()).toBe(START + SITES_SYNC_MS);
+		const idle = await world({ minor: 0 });
+		await idle.connect();
+		expect(await idle.link.tick()).toBeNull();
+	});
+
+	it('wakes for the handshake deadline when that comes first', async () => {
+		const w = await world({ minor: MINOR });
+		await w.connect();
+		const waiting = new FakeSocket();
+		w.sockets.push(waiting);
+		w.link.open(waiting, NODE_ID);
+		w.clock.now = START + 1;
+		expect(await w.link.tick()).toBe(START + HANDSHAKE_MS);
+		w.clock.now = START + HANDSHAKE_MS + 1;
+		expect(await w.link.tick()).toBe(START + HANDSHAKE_MS + 1 + SITES_SYNC_MS);
+		expect(waiting.closed?.code).toBe(CLOSE.handshakeTimeout);
+	});
+});
+
 describe('handleLink', () => {
 	const url = `https://engine/link/${NODE_ID}`;
 	const upgrade = { headers: { upgrade: 'websocket' } };
@@ -477,7 +702,8 @@ describe('handleLink', () => {
 						looked.push(id);
 						return node;
 					},
-					touch: async () => undefined
+					touch: async () => undefined,
+					sites: async () => []
 				} satisfies NodeStore,
 				sessions: {
 					get: (id: string) => ({
@@ -574,7 +800,7 @@ describe('NodeSession', () => {
 		}
 	}
 
-	async function shell() {
+	async function shell(minor = 0) {
 		// a computed specifier keeps the workers-typed engine source out of the unit typecheck
 		const sessionModule = '../../../engine/src/node-session';
 		const { NodeSession } = (await import(/* @vite-ignore */ sessionModule)) as {
@@ -594,9 +820,9 @@ describe('NodeSession', () => {
 				}): unknown;
 			};
 		};
-		const dashboard = await generateSigningKey();
 		const seed = new Uint8Array(32).fill(4);
-		const node = await FakeNode.create({ now: () => Date.now() });
+		const dashboard = await signingKeyFromSeed(seed);
+		const node = await FakeNode.create({ now: () => Date.now(), minor });
 		node.adopt({
 			nodeId: NODE_ID,
 			linkUrl: 'wss://link.example/x',
@@ -634,7 +860,21 @@ describe('NodeSession', () => {
 		};
 		const env = {
 			DB: {
-				prepare: () => ({ bind: () => ({ first: async () => row, run: async () => ({}) }) })
+				prepare: () => ({
+					bind: () => ({
+						first: async () => row,
+						run: async () => ({}),
+						all: async () => ({
+							results: [
+								{
+									organization_id: row.organization_id,
+									id: 'site_shellmap0001',
+									primary_hostname: 'shell.example.org'
+								}
+							]
+						})
+					})
+				})
 			},
 			FLEET_SEED: Buffer.from(seed).toString('base64url')
 		};
@@ -716,6 +956,33 @@ describe('NodeSession', () => {
 		expect(alarms).toEqual([]);
 		session.webSocketClose(socket as never);
 		expect(socket.closed.at(-1)).toEqual([1000, 'closed']);
+	});
+
+	it('sends the site map after ready and wakes again a minute later', async () => {
+		const { session, node, open, alarms } = await shell(FLEET_LINK_VERSION.minor);
+		const socket = new SpySocket();
+		open.push(socket);
+		(session as unknown as { link(): { open(s: unknown, id: string): void } }).link().open(
+			{
+				send: (t: string) => socket.send(t),
+				close: (c: number, r: string) => socket.close(c, r),
+				readState: () => socket.attachment,
+				writeState: (s: unknown) => socket.serializeAttachment(s)
+			},
+			NODE_ID
+		);
+		await session.webSocketMessage(
+			socket as never,
+			await node.answerChallenge(socket.sent[0]!)
+		);
+		const frame = await node.readSites(socket.sent.at(-1)!);
+		expect(frame.body.sites).toEqual([
+			{ siteId: 'site_shellmap0001', host: 'shell.example.org' }
+		]);
+		const sentBefore = socket.sent.length;
+		await session.alarm();
+		expect(socket.sent).toHaveLength(sentBefore);
+		expect(alarms.at(-1)).toBeGreaterThan(Date.now() + SITES_SYNC_MS - 5_000);
 	});
 
 	it('queues a command through the session and reports its status', async () => {

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { fromBase64Url, signingKeyFromSeed } from '../../../contracts/src/common';
 import {
 	ENVELOPE_REFUSALS,
+	MAX_SITE_MAP,
 	PAIRING_TTL_MS,
+	SITES_FRAME_MINOR,
 	hashClaimToken,
 	newClaimToken,
 	serverEnvelopeSchema,
@@ -16,6 +18,7 @@ import {
 	applyResult,
 	beginHandshake,
 	buildCommand,
+	buildSites,
 	claimDecision,
 	commandAllowed,
 	commandKey,
@@ -29,6 +32,10 @@ import {
 	sameDigest,
 	settleExpired,
 	signCommand,
+	signSites,
+	siteMapOf,
+	sitesDigest,
+	sitesFrameAllowed,
 	trimRecords,
 	type AcceptRefusal,
 	type CommandRecord,
@@ -575,5 +582,109 @@ describe('commands', () => {
 			expect(trimRecords(records, 10)).toHaveLength(4);
 			expect(commandKey('op_a', 's', 'k')).toBe('op_a|s|k');
 		});
+	});
+});
+
+describe('site map', () => {
+	const row = (orgId: string, n: number, host = `host-${n}.example.org`) => ({
+		orgId,
+		siteId: `site_map${String(n).padStart(8, '0')}`,
+		host
+	});
+
+	it('keeps only the node organization, sorted by id, with lowercase hosts', () => {
+		const rows = [
+			row('org_b', 1),
+			row(ORG, 3, 'Three.Example.org'),
+			row('org_b', 4),
+			row(ORG, 2)
+		];
+		const map = siteMapOf(ORG, rows);
+		expect(map.truncated).toBe(false);
+		expect(map.sites).toEqual([
+			{ siteId: 'site_map00000002', host: 'host-2.example.org' },
+			{ siteId: 'site_map00000003', host: 'three.example.org' }
+		]);
+		expect(JSON.stringify(map)).not.toContain('org_b');
+		expect(siteMapOf('org_b', rows).sites.map((entry) => entry.siteId)).toEqual([
+			'site_map00000001',
+			'site_map00000004'
+		]);
+		expect(siteMapOf('org_nobody', rows).sites).toEqual([]);
+	});
+
+	it('leaves out a row the contract would refuse and a second row for one host or id', () => {
+		const map = siteMapOf(ORG, [
+			row(ORG, 1),
+			{ ...row(ORG, 2), siteId: 'not-an-id' },
+			row(ORG, 3, ''),
+			row(ORG, 4, 'host-1.example.org'),
+			row(ORG, 1, 'again.example.org'),
+			row(ORG, 5)
+		]);
+		expect(map.sites.map((entry) => entry.siteId)).toEqual([
+			'site_map00000001',
+			'site_map00000005'
+		]);
+	});
+
+	it('cuts a map at the contract limit and says so', () => {
+		const rows = Array.from({ length: MAX_SITE_MAP + 5 }, (_, i) => row(ORG, i));
+		const map = siteMapOf(ORG, rows);
+		expect(map.sites).toHaveLength(MAX_SITE_MAP);
+		expect(map.truncated).toBe(true);
+		expect(siteMapOf(ORG, rows.slice(0, MAX_SITE_MAP)).truncated).toBe(false);
+	});
+
+	it('sends the frame only to a node that agreed to the version that added it', () => {
+		expect(sitesFrameAllowed({ major: 1, minor: 0 })).toBe(false);
+		expect(sitesFrameAllowed({ major: 1, minor: SITES_FRAME_MINOR })).toBe(true);
+		expect(sitesFrameAllowed({ major: 1, minor: SITES_FRAME_MINOR + 3 })).toBe(true);
+		expect(sitesFrameAllowed({ major: 2, minor: SITES_FRAME_MINOR })).toBe(false);
+	});
+
+	it('digests one map to one value and a changed map to another', async () => {
+		const a = siteMapOf(ORG, [row(ORG, 1), row(ORG, 2)]).sites;
+		const same = siteMapOf(ORG, [row(ORG, 2), row(ORG, 1)]).sites;
+		const moved = siteMapOf(ORG, [row(ORG, 1), row(ORG, 2, 'moved.example.org')]).sites;
+		expect(await sitesDigest(a)).toBe(await sitesDigest(same));
+		expect(await sitesDigest(a)).not.toBe(await sitesDigest(moved));
+		expect(await sitesDigest([])).toMatch(/^sha256:/);
+	});
+
+	it('signs a site map the way the contract vector does', async () => {
+		const vectors = loadVectors('fleet-link');
+		const vector = vectors.positive.find((entry) => entry.name === 'server-sites')!;
+		const key = await signingKeyFromSeed(fromBase64Url(vectors.keys.dashboard!.seed));
+		const view: NodeView = {
+			id: vector.input.body.nodeId,
+			orgId: ORG,
+			publicKey: vectors.keys.node!.publicKey,
+			state: 'active'
+		};
+		const built = buildSites(view, vector.input.body.sites, {
+			now: vector.input.ts,
+			seq: vector.input.seq,
+			ack: vector.input.ack,
+			id: vector.input.id
+		});
+		const signed = await signSites(built, key.privateKey);
+		expect(signed.sig).toBe(vector.input.sig);
+		expect(signed).toEqual(vector.input);
+		expect(serverEnvelopeSchema.safeParse(signed).success).toBe(true);
+	});
+
+	it('gives each frame a fresh id and names the node in the body', () => {
+		const view: NodeView = {
+			id: 'nod_fleettest0001',
+			orgId: ORG,
+			publicKey: 'k',
+			state: 'active'
+		};
+		const one = buildSites(view, [], { now: NOW, seq: 3, ack: 2 });
+		const two = buildSites(view, [], { now: NOW, seq: 4, ack: 2 });
+		expect(one.id).not.toBe(two.id);
+		expect(one.body).toEqual({ nodeId: 'nod_fleettest0001', sites: [] });
+		expect(one).toMatchObject({ type: 'sites', seq: 3, ack: 2, ts: NOW });
 	});
 });
