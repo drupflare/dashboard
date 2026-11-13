@@ -11,6 +11,7 @@ import {
 	EXIT_HEADER,
 	JOB_MESSAGES,
 	JOBS,
+	LOG_TAIL_BYTES,
 	READY_ATTEMPTS,
 	READY_DELAY_MS,
 	startOptions,
@@ -263,7 +264,8 @@ describe('runJob', () => {
 			wallMs: record.doneAt - record.startedAt,
 			bytesIn: 5,
 			bytesOut: 15,
-			destroyed: true
+			destroyed: true,
+			logTail: null
 		});
 		expect(record.readyAt).toBeGreaterThan(record.startedAt);
 		expect(record.doneAt).toBeGreaterThan(record.readyAt!);
@@ -299,6 +301,58 @@ describe('runJob', () => {
 		});
 		expect(h.blobs.objects.size).toBe(0);
 		expect(h.container.destroyReasons).toHaveLength(1);
+	});
+
+	it('puts the output a failed job sent into the record', async () => {
+		h.container.answer = () => reply(1, '[composer-tree] could not resolve a package\n');
+		const record = await runJob(h.deps, job('composer-tree'), input('x'));
+		expect(record.state).toBe('job_failed');
+		expect(record.logTail).toBe('[composer-tree] could not resolve a package');
+	});
+
+	it('keeps the output of a timed out job', async () => {
+		h.container.answer = () => reply('timeout', '[composer-tree] still downloading');
+		const record = await runJob(h.deps, job('composer-tree'), input('x'));
+		expect(record).toMatchObject({
+			state: 'timed_out',
+			logTail: '[composer-tree] still downloading'
+		});
+	});
+
+	it('reads at most 4096 bytes of a failed job output', async () => {
+		h.container.answer = () => reply(1, 'z'.repeat(10_000));
+		const record = await runJob(h.deps, job('composer-tree'), input('x'));
+		expect(record.logTail).toBe('z'.repeat(LOG_TAIL_BYTES));
+	});
+
+	it('records no output for a failed job that sent none', async () => {
+		h.container.answer = () => reply(1, '   \n');
+		expect((await runJob(h.deps, job(), input('x'))).logTail).toBeNull();
+	});
+
+	it('records no output when the body cannot be read', async () => {
+		h.container.answer = () =>
+			new Response(
+				new ReadableStream({
+					start(controller) {
+						controller.error(new Error('reset'));
+					}
+				}),
+				{ headers: { [EXIT_HEADER]: '1' } }
+			);
+		const record = await runJob(h.deps, job(), input('x'));
+		expect(record).toMatchObject({ state: 'job_failed', exitCode: 1, logTail: null });
+	});
+
+	it('keeps the refusal text of a transport error status', async () => {
+		h.container.answer = () => reply('', 'The runner failed.', 500);
+		const record = await runJob(h.deps, job(), input('x'));
+		expect(record).toMatchObject({ state: 'job_failed', logTail: 'The runner failed.' });
+	});
+
+	it('records no output for a successful job', async () => {
+		h.container.answer = () => reply(0, 'artifact');
+		expect((await runJob(h.deps, job(), input('x'))).logTail).toBeNull();
 	});
 
 	it('reports a timeout header as a timeout', async () => {

@@ -29,3 +29,4 @@ export const RUNNERS: Record<string, JobRunnerFn>;
 export function childEnv(dir: string): Record<string, string>;
 export function composerSteps(project: string, input: string, output: string): [string, string[]][];
 export function createRunner(options?: RunnerOptions): Server;
+export function createTail(limit?: number): { add(line: string): void; text(): string };

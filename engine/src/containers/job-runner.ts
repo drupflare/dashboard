@@ -13,6 +13,7 @@ import {
 	jobBody,
 	JobRefused,
 	JOBS,
+	LOG_TAIL_BYTES,
 	READY_ATTEMPTS,
 	READY_DELAY_MS,
 	READY_TIMEOUT_MS,
@@ -80,6 +81,33 @@ export async function waitReady(
 	throw new NotReady(last);
 }
 
+async function readTail(body: ReadableStream<Uint8Array> | null): Promise<string | null> {
+	if (!body) return null;
+	const reader = body.getReader();
+	const chunks: Uint8Array[] = [];
+	let size = 0;
+	try {
+		while (size < LOG_TAIL_BYTES) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			chunks.push(value);
+			size += value.length;
+		}
+	} catch {
+		return null;
+	} finally {
+		await reader.cancel().catch(() => undefined);
+	}
+	const bytes = new Uint8Array(size);
+	let at = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, at);
+		at += chunk.length;
+	}
+	const text = new TextDecoder().decode(bytes.subarray(0, LOG_TAIL_BYTES)).trim();
+	return text === '' ? null : text;
+}
+
 export async function runJob(
 	deps: RunDeps,
 	request: JobRequest,
@@ -96,6 +124,7 @@ export async function runJob(
 	let bytesOut = 0;
 	let startedAt = deps.now();
 	let destroyed = false;
+	let logTail: string | null = null;
 
 	try {
 		// an instance left by an earlier run must not serve this one
@@ -137,7 +166,7 @@ export async function runJob(
 				bytesOut = length;
 			}
 		} else {
-			await response.body?.cancel();
+			logTail = await readTail(response.body);
 		}
 	} catch (error) {
 		console.error(`job ${request.kind} stopped while ${stage}`, error);
@@ -175,7 +204,8 @@ export async function runJob(
 		wallMs: doneAt - startedAt,
 		bytesIn: sending.sent(),
 		bytesOut,
-		destroyed
+		destroyed,
+		logTail
 	};
 }
 

@@ -8,6 +8,7 @@ import {
 	childEnv,
 	composerSteps,
 	createRunner,
+	createTail,
 	EXIT_HEADER,
 	EXIT_NOT_BUILT,
 	EXIT_OUTPUT_TOO_LARGE,
@@ -101,6 +102,38 @@ describe('echo-import', () => {
 	});
 });
 
+describe('createTail', () => {
+	it('returns every line while they fit', () => {
+		const tail = createTail(100);
+		tail.add('a');
+		tail.add('b');
+		expect(tail.text()).toBe('a\nb');
+	});
+
+	it('drops the oldest lines first when the limit is passed', () => {
+		const tail = createTail(10);
+		for (const line of ['aaaa', 'bbbb', 'cccc']) tail.add(line);
+		expect(tail.text()).toBe('bbbb\ncccc');
+	});
+
+	it('cuts a line longer than 400 characters and marks the cut', () => {
+		const tail = createTail(4096);
+		tail.add('y'.repeat(500));
+		expect(tail.text()).toBe(`${'y'.repeat(400)}...`);
+	});
+
+	it('keeps the last bytes of a single line that is over the limit', () => {
+		const tail = createTail(8);
+		tail.add('0123456789');
+		expect(Buffer.byteLength(tail.text())).toBeLessThanOrEqual(8);
+		expect(tail.text().endsWith('789')).toBe(true);
+	});
+
+	it('is empty before any line', () => {
+		expect(createTail().text()).toBe('');
+	});
+});
+
 describe('kinds that are not built', () => {
 	it.each(['template-build', 'drupal-hop'])(
 		'fails %s with a fixed code and a log line',
@@ -109,7 +142,7 @@ describe('kinds that are not built', () => {
 			const response = await post(base, head(kind));
 			expect(response.status).toBe(200);
 			expect(response.headers.get(EXIT_HEADER)).toBe(String(EXIT_NOT_BUILT));
-			expect(response.headers.get('content-length')).toBe('0');
+			expect(await response.text()).toBe(`[${kind}] ${kind} is not built`);
 			expect(logs).toContain(`[${kind}] ${kind} is not built`);
 		}
 	);
@@ -214,7 +247,47 @@ describe('job outcomes', () => {
 		const base = await start({ outputLimit: 8, ...withRunner(write('123456789')) });
 		const response = await post(base, head('echo-import'));
 		expect(response.headers.get(EXIT_HEADER)).toBe(String(EXIT_OUTPUT_TOO_LARGE));
-		expect(response.headers.get('content-length')).toBe('0');
+		expect(await response.text()).toBe('[echo-import] the result is larger than the limit');
+	});
+
+	it('returns the end of a failed job output as the body, tagged with the kind', async () => {
+		const base = await start(
+			withRunner(async ({ log }) => {
+				log('first');
+				log('second');
+				return 2;
+			})
+		);
+		const response = await post(base, head('echo-import'));
+		expect(response.headers.get(EXIT_HEADER)).toBe('2');
+		expect(response.headers.get('content-type')).toBe('text/plain; charset=utf-8');
+		const body = await response.text();
+		expect(response.headers.get('content-length')).toBe(String(Buffer.byteLength(body)));
+		expect(body).toBe('[echo-import] first\n[echo-import] second');
+	});
+
+	it('keeps only the last 4096 bytes of a failed job output', async () => {
+		const base = await start(
+			withRunner(async ({ log }) => {
+				for (let i = 0; i < 200; i++) log(`line ${i} ${'x'.repeat(60)}`);
+				return 1;
+			})
+		);
+		const text = await (await post(base, head('echo-import'))).text();
+		expect(new Blob([text]).size).toBeLessThanOrEqual(4096);
+		expect(text.endsWith(`line 199 ${'x'.repeat(60)}`)).toBe(true);
+		expect(text).not.toContain('line 0 ');
+	});
+
+	it('sends no output body after a job that succeeded', async () => {
+		const base = await start(
+			withRunner(async ({ log, output }) => {
+				log('noise');
+				await writeFile(output, 'ok');
+				return 0;
+			})
+		);
+		expect(await (await post(base, head('echo-import'))).text()).toBe('ok');
 	});
 
 	it('accepts an artifact of exactly the output limit', async () => {

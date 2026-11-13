@@ -205,6 +205,8 @@ export const JOB_MESSAGES: Record<JobState, string> = {
 	start_failed: 'The job could not start.'
 };
 
+export const LOG_TAIL_BYTES = 4096;
+
 // the header carries a process exit code, or one of two words when there is no code
 export function exitOf(header: string | null): { state: JobState; exitCode: number | null } {
 	if (header === 'timeout') return { state: 'timed_out', exitCode: null };
@@ -232,6 +234,7 @@ export interface RunRecord {
 	bytesIn: number;
 	bytesOut: number;
 	destroyed: boolean;
+	logTail: string | null;
 }
 
 export interface RunRefusal {

@@ -14,6 +14,29 @@ export const EXIT_HEADER = 'x-job-exit';
 export const EXIT_NOT_BUILT = 70;
 export const EXIT_OUTPUT_TOO_LARGE = 71;
 const HEAD_LIMIT = 1024;
+const TAIL_BYTES = 4096;
+const TAIL_LINE = 400;
+
+// keeps the end of a job's output, which is where a failure says why
+export function createTail(limit = TAIL_BYTES) {
+	let lines = [];
+	let size = 0;
+	return {
+		add(line) {
+			const text = line.length > TAIL_LINE ? `${line.slice(0, TAIL_LINE)}...` : line;
+			lines.push(text);
+			size += Buffer.byteLength(text) + 1;
+			while (size > limit && lines.length > 1) size -= Buffer.byteLength(lines.shift()) + 1;
+		},
+		text() {
+			const joined = lines.join('\n');
+			const bytes = Buffer.from(joined);
+			return bytes.length > limit
+				? bytes.subarray(bytes.length - limit).toString('utf8')
+				: joined;
+		}
+	};
+}
 
 class Refusal extends Error {
 	constructor(status, message) {
@@ -194,7 +217,12 @@ export function createRunner(options = {}) {
 			await pipeline(body, limited(inputLimit), createWriteStream(input));
 
 			const signal = AbortSignal.timeout(wallMs);
-			const say = (line) => log(`[${kind}] ${line}`);
+			const tail = createTail();
+			const say = (line) => {
+				const tagged = `[${kind}] ${line}`;
+				log(tagged);
+				tail.add(tagged);
+			};
 			let result;
 			try {
 				result = await runners[kind]({ dir, input, output, log: say, signal });
@@ -217,12 +245,22 @@ export function createRunner(options = {}) {
 					result = EXIT_OUTPUT_TOO_LARGE;
 				}
 			}
-			const headers = {
-				'content-type': 'application/octet-stream',
-				'content-length': result === 0 ? size : 0,
-				[EXIT_HEADER]: String(result)
-			};
-			await finish(response, 200, headers, result === 0 ? createReadStream(output) : null);
+			if (result === 0) {
+				const headers = {
+					'content-type': 'application/octet-stream',
+					'content-length': size,
+					[EXIT_HEADER]: String(result)
+				};
+				await finish(response, 200, headers, createReadStream(output));
+			} else {
+				const text = Buffer.from(tail.text());
+				const headers = {
+					'content-type': 'text/plain; charset=utf-8',
+					'content-length': text.length,
+					[EXIT_HEADER]: String(result)
+				};
+				await finish(response, 200, headers, text.length ? Readable.from([text]) : null);
+			}
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
