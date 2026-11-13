@@ -66,7 +66,7 @@ export interface StreamSession {
 
 export interface FakeSource {
 	dump: string;
-	files: string;
+	files: string | Uint8Array;
 	// bytes per stdout chunk
 	chunk: number;
 	exitCode: number;
@@ -89,7 +89,8 @@ export function fakeSource(patch: Partial<FakeSource> = {}) {
 		...patch
 	};
 	const sessions: StreamSession[] = [];
-	const encode = (text: string) => new TextEncoder().encode(text);
+	const encode = (body: string | Uint8Array) =>
+		typeof body === 'string' ? new TextEncoder().encode(body) : body;
 	const streamOf = (bytes: Uint8Array): ReadableStream<Uint8Array> => {
 		let at = 0;
 		let sent = 0;
@@ -278,6 +279,70 @@ export function importDepsOf(
 		lander: createImportLander({ custody: world.deps.custody, worker: workerPort })
 	};
 	return { deps, worker, blobs, log };
+}
+
+// #endregion
+
+// #region a tar built by hand
+
+export interface TarItem {
+	name: string;
+	body?: Uint8Array | string;
+	type?: 'file' | 'directory' | 'symlink' | 'hardlink';
+}
+
+const TYPEFLAG = { file: '0', directory: '5', symlink: '2', hardlink: '1' } as const;
+
+const encoder = new TextEncoder();
+
+function entry(name: string, flag: string, body: Uint8Array, linked = false): Uint8Array[] {
+	const header = new Uint8Array(512);
+	const put = (text: string, at: number) => header.set(encoder.encode(text), at);
+	put(name.slice(0, 100), 0);
+	put('0000644\0', 100);
+	put('0000000\0', 108);
+	put('0000000\0', 116);
+	put(`${body.length.toString(8).padStart(11, '0')}\0`, 124);
+	put('00000000000\0', 136);
+	put('        ', 148);
+	put(flag, 156);
+	if (linked) put('/etc/passwd', 157);
+	put('ustar\0', 257);
+	put('00', 263);
+	const sum = header.reduce((total, byte) => total + byte, 0);
+	put(`${sum.toString(8).padStart(6, '0')}\0 `, 148);
+	const padded = new Uint8Array(Math.ceil(body.length / 512) * 512);
+	padded.set(body);
+	return [header, padded];
+}
+
+// a ustar archive with the two closing zero blocks, so the spec controls every header byte; a name
+// over 100 bytes goes in a GNU long name entry
+export function tarOf(items: TarItem[], options: { close?: boolean } = {}): Uint8Array {
+	const blocks: Uint8Array[] = [];
+	for (const item of items) {
+		const type = item.type ?? 'file';
+		const body =
+			type !== 'file'
+				? new Uint8Array(0)
+				: typeof item.body === 'string'
+					? encoder.encode(item.body)
+					: (item.body ?? new Uint8Array(0));
+		if (item.name.length > 100) {
+			blocks.push(...entry('././@LongLink', 'L', encoder.encode(`${item.name}\0`)));
+		}
+		blocks.push(
+			...entry(item.name, TYPEFLAG[type], body, type === 'symlink' || type === 'hardlink')
+		);
+	}
+	if (options.close ?? true) blocks.push(new Uint8Array(1024));
+	const out = new Uint8Array(blocks.reduce((total, block) => total + block.length, 0));
+	let at = 0;
+	for (const block of blocks) {
+		out.set(block, at);
+		at += block.length;
+	}
+	return out;
 }
 
 // #endregion

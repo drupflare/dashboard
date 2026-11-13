@@ -148,11 +148,10 @@ describe('bootOnce', () => {
 		await expect(fleetServices().getDb()).rejects.toMatchObject({ code: 'not_built' });
 	});
 
-	it('installs the import services with no files route, and takes them away on reset', async () => {
+	it('installs the import services and takes them away on reset', async () => {
 		const built = bootOnce(envWith({}));
 		expect(importServices().audit).toBe(built.imports.audit);
 		expect(importServices().probe).toBe(built.imports.probe);
-		expect(importServices().filesLandable).toBe(false);
 		resetBoot();
 		await expect(importServices().ring()).rejects.toMatchObject({ code: 'not_built' });
 		await expect(importServices().probe({ host: 'a.example', port: 22 })).rejects.toMatchObject(

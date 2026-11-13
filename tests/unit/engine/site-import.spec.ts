@@ -17,6 +17,7 @@ import {
 	ROOT,
 	sealCredential,
 	SOURCE_HOST,
+	tarOf,
 	type FakeSource
 } from './import-fakes';
 
@@ -100,7 +101,7 @@ const targetRow = (iw: Iw) =>
 
 const operationOf = async (iw: Iw) => (await iw.world.store.get(iw.world.operationId))!;
 
-const codeOf = (reason: string) => /^[\w.]+: ([a-z_]+): /.exec(reason)?.[1];
+const codeOf = (reason: string) => /^[\w.-]+: ([a-z_]+): /.exec(reason)?.[1];
 
 const bucketKeys = (iw: Iw) =>
 	[...iw.blobs.objects.keys()].filter((key) =>
@@ -139,7 +140,9 @@ describe('the plan', () => {
 		);
 		const ids = plan.steps.map((step) => step.id);
 		expect(ids).toContain('files-archive');
-		expect(ids).toContain('files');
+		expect(ids).not.toContain('files');
+		expect(ids.indexOf('convert')).toBeLessThan(ids.indexOf('files-convert'));
+		expect(ids.indexOf('files-convert')).toBeLessThan(ids.indexOf('reserve-name'));
 	});
 });
 
@@ -288,19 +291,136 @@ describe('the size ceiling', () => {
 });
 
 describe('the files archive', () => {
-	it('rolls back with a plain code while a new site has no route for the archive', async () => {
-		const iw = await importWorld({ source: { files: 'x'.repeat(100) } });
-		const { outcome } = await run(iw, {
-			patch: { dossier: { importable: true, estimateBytes: 1, fileCount: 2 } }
+	const WITH_FILES = { importable: true, estimateBytes: 1, fileCount: 2 };
+	const archive = () =>
+		tarOf([
+			{ name: './', type: 'directory' },
+			{ name: './logo.png', body: new Uint8Array([0, 1, 2, 3, 0, 255]) },
+			{ name: "./docs/it's.txt", body: 'FILEDATA-91' }
+		]);
+
+	it('lands the files rows in the one restore that carries the database', async () => {
+		const iw = await importWorld({ source: { files: archive() } });
+		const { outcome } = await run(iw, { patch: { dossier: WITH_FILES } });
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(iw.worker.calls.restores).toHaveLength(1);
+		const body = iw.worker.calls.restores[0]!.body;
+		expect(body).toContain(MARKER);
+		expect(body).toContain("'public://docs/it''s.txt'");
+		expect(body).toContain("'public://logo.png'");
+		expect(body).toContain("x'0001020300ff'");
+		const operation = await operationOf(iw);
+		expect(operation.steps.find((step) => step.id === 'files-convert')?.state).toBe(
+			'succeeded'
+		);
+		expect(operation.steps.every((step) => step.state === 'succeeded')).toBe(true);
+		const commands = iw.source.sessions.flatMap((session) => session.commands);
+		expect(commands.filter((command) => command.startsWith('tar '))).toHaveLength(1);
+		expect(credentialRows(iw.world)).toEqual([]);
+		expect(bucketKeys(iw)).toEqual([]);
+	});
+
+	it('says how many links it left behind', async () => {
+		const iw = await importWorld({
+			source: {
+				files: tarOf([
+					{ name: './a.txt', body: 'a' },
+					{ name: './link', type: 'symlink' }
+				])
+			}
+		});
+		const { outcome } = await run(iw, { patch: { dossier: WITH_FILES } });
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(JSON.stringify(await operationOf(iw))).toContain('1 links in the files folder');
+		expect(iw.worker.calls.restores[0]!.body).not.toContain('link');
+	});
+
+	it('counts the files and the database together and refuses before anything is made', async () => {
+		const probe = await importWorld();
+		await run(probe);
+		const database = probe.worker.calls.restores[0]!.body.length;
+		const files = tarOf([{ name: './big.bin', body: new Uint8Array(600) }]);
+		const iw = await importWorld({ source: { files } });
+		const { outcome, executed } = await run(iw, {
+			patch: { dossier: WITH_FILES, restoreCeilingBytes: database + 400 }
 		});
 		expect(outcome.status).toBe('rolled-back');
 		expect(outcome.status === 'rolled-back' ? codeOf(outcome.reason) : null).toBe(
-			'files_landing_unavailable'
+			'restore_too_large'
 		);
+		expect((await operationOf(iw)).steps.find((step) => step.state === 'failed')?.id).toBe(
+			'files-convert'
+		);
+		expect(executed).not.toContain('target.reserve-name');
+		expect(iw.worker.calls.restores).toEqual([]);
 		expect(credentialRows(iw.world)).toEqual([]);
 		expect(bucketKeys(iw)).toEqual([]);
-		const commands = iw.source.sessions.flatMap((session) => session.commands);
-		expect(commands.some((command) => command.startsWith('tar '))).toBe(true);
+	});
+
+	it('accepts the same files when the ceiling has room for both', async () => {
+		const probe = await importWorld();
+		await run(probe);
+		const database = probe.worker.calls.restores[0]!.body.length;
+		const iw = await importWorld({
+			source: { files: tarOf([{ name: './small.bin', body: new Uint8Array(20) }]) }
+		});
+		const { outcome } = await run(iw, {
+			patch: { dossier: WITH_FILES, restoreCeilingBytes: database + 4000 }
+		});
+		expect(outcome).toEqual({ status: 'succeeded' });
+	});
+
+	it.each([
+		['a path that climbs out', tarOf([{ name: '../x', body: 'x' }]), 'files_bad_path'],
+		['an archive that was cut short', archive().slice(0, 700), 'files_unreadable'],
+		['bytes that are not a tar', new Uint8Array(40).fill(7), 'files_unreadable']
+	])('rolls back on %s with a plain code', async (_name, files, code) => {
+		const iw = await importWorld({ source: { files } });
+		const { outcome } = await run(iw, { patch: { dossier: WITH_FILES } });
+		expect(outcome.status).toBe('rolled-back');
+		expect(outcome.status === 'rolled-back' ? codeOf(outcome.reason) : null).toBe(code);
+		expect(iw.worker.calls.restores).toEqual([]);
+		expect(targetRow(iw)!.state).toBe('deleted');
+		expect(credentialRows(iw.world)).toEqual([]);
+		expect(bucketKeys(iw)).toEqual([]);
+	});
+
+	it('stops the files stream above what the ceiling could ever hold', async () => {
+		const iw = await importWorld({
+			source: { files: new Uint8Array(24_000_000), chunk: 1_000_000 }
+		});
+		const { outcome } = await run(iw, {
+			patch: {
+				dossier: WITH_FILES,
+				restoreCeilingBytes: 16 * 1024 * 1024,
+				partBytes: 2_000_000
+			}
+		});
+		expect(outcome.status).toBe('rolled-back');
+		expect(outcome.status === 'rolled-back' ? codeOf(outcome.reason) : null).toBe(
+			'files_too_large'
+		);
+	});
+
+	it('converts again after a kill with the same rows and one stream from the server', async () => {
+		const dry = await importWorld({ source: { files: archive() } });
+		const first = await run(dry, { patch: { dossier: WITH_FILES } });
+		const at = first.executed.indexOf('files-convert') + 1;
+		expect(at).toBeGreaterThan(0);
+
+		const iw = await importWorld({ source: { files: archive() } });
+		const memo: Memo = new Map();
+		await run(iw, { memo, script: { killDuring: at }, patch: { dossier: WITH_FILES } }).catch(
+			(error) => expect(error).toBeInstanceOf(Killed)
+		);
+		expect(memo.has('files-convert')).toBe(false);
+		const { runner } = makeRunner(memo);
+		const input = inputOf(iw, { dossier: WITH_FILES });
+		expect(await runSiteImport(runner, iw.deps, input)).toEqual({ status: 'succeeded' });
+		expect(iw.worker.calls.restores).toHaveLength(1);
+		const body = iw.worker.calls.restores[0]!.body;
+		expect(body.split('INSERT OR REPLACE INTO "cfw_file" ').length - 1).toBe(2);
+		expect(iw.source.sessions.flatMap((session) => session.commands)).toHaveLength(2);
 	});
 });
 

@@ -510,8 +510,7 @@ describe('POST the survey', () => {
 			orgId: ORG,
 			credentialId: id,
 			root: '/var/www/html',
-			ceilingBytes: 16 * 1024 * 1024,
-			filesLandable: false
+			ceilingBytes: 16 * 1024 * 1024
 		});
 		const row = await env.DB.prepare(
 			'SELECT site_id, verification FROM operations WHERE id = ?'

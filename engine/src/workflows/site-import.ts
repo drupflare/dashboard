@@ -1,6 +1,7 @@
 import { utf8 } from '@contracts/common';
 import type { Plan } from '@contracts/operations';
 import { DEFAULT_RESTORE_CEILING_BYTES, joinParts, restorable } from '../backup-parts';
+import { convertFiles, filesArchiveLimit } from '../files-convert';
 import {
 	DUMP_LIMIT_FACTOR,
 	FILES_LIMIT_BYTES,
@@ -64,7 +65,7 @@ export const IMPORT_JOB_CAPS: Readonly<Record<string, { perMonth: number; perDay
 	'managed-free': { perMonth: 5, perDay: 2 }
 };
 
-const RESTORE_IDS = { restore: 'restore', apply: 'apply', files: 'files', verify: 'verify' };
+const RESTORE_IDS = { restore: 'restore', apply: 'apply', verify: 'verify' };
 
 export function planSiteImport(input: SiteImportInput): Plan {
 	const { create } = input;
@@ -85,6 +86,7 @@ export function planSiteImport(input: SiteImportInput): Plan {
 			{ id: 'dump', name: 'Stream the database dump into the bucket' },
 			...(files ? [{ id: 'files-archive', name: 'Stream the files into the bucket' }] : []),
 			{ id: 'convert', name: 'Convert the dump for the new site' },
+			...(files ? [{ id: 'files-convert', name: 'Convert the files for the new site' }] : []),
 			{ id: 'reserve-name', name: `Reserve ${create.subdomain}` },
 			...resources.create.map((resource) => ({
 				id: `resource.${resource.binding}`,
@@ -98,9 +100,6 @@ export function planSiteImport(input: SiteImportInput): Plan {
 			{ id: 'link', name: 'Record the server the site came from' },
 			{ id: RESTORE_IDS.restore, name: 'Send the converted database to the new site' },
 			{ id: RESTORE_IDS.apply, name: 'Wait for the new site to apply the database' },
-			...(files
-				? [{ id: RESTORE_IDS.files, name: 'Carry the files into the new site' }]
-				: []),
 			{ id: RESTORE_IDS.verify, name: 'Probe the new site' },
 			{ id: 'activate', name: 'Mark the new site active' },
 			{ id: 'forget', name: 'Delete the key and the copies in the bucket' }
@@ -176,7 +175,7 @@ async function stream(
 							partBytes: partBytesOf(input),
 							maxBytes: database
 								? ceilingOf(input) * DUMP_LIMIT_FACTOR
-								: FILES_LIMIT_BYTES
+								: Math.min(FILES_LIMIT_BYTES, filesArchiveLimit(ceilingOf(input)))
 						},
 						() => fenced(ctx)
 					)
@@ -252,6 +251,43 @@ async function convertAll(
 		},
 		{ begin: false }
 	);
+}
+
+// the files ride in the same restore body as the database, so they are counted against the one
+// ceiling here, before anything is made on the new side; the rows go in as one more part
+async function convertArchive(
+	ctx: Ctx,
+	deps: ImportDeps,
+	input: SiteImportInput,
+	sql: Streamed,
+	archive: Streamed
+): Promise<Streamed & { links: number }> {
+	return runStep(ctx, 'files-convert', 'files-convert', async () => {
+		await fenced(ctx);
+		const tar = await readWindow(
+			deps.blobs,
+			(part) => importKeys.files(input.orgId, input.operationId, part),
+			partBytesOf(input),
+			archive.bytes,
+			0,
+			archive.bytes
+		);
+		const converted = convertFiles(tar, {
+			nowMs: deps.now(),
+			ceilingBytes: ceilingOf(input),
+			databaseBytes: sql.bytes
+		});
+		if (converted.files === 0) return { ...sql, links: converted.links };
+		await deps.blobs.put(
+			importKeys.sql(input.orgId, input.operationId, sql.parts),
+			converted.sql
+		);
+		return {
+			parts: sql.parts + 1,
+			bytes: sql.bytes + converted.sql.byteLength,
+			links: converted.links
+		};
+	});
 }
 
 // #endregion
@@ -339,22 +375,6 @@ async function applyDatabase(
 			}
 			await deps.sleep(input.pollMs);
 		}
-	});
-}
-
-async function landFiles(
-	ctx: Ctx,
-	deps: ImportDeps,
-	input: SiteImportInput,
-	sent: Sent,
-	archive: Streamed
-): Promise<void> {
-	await runStep(ctx, 'files', RESTORE_IDS.files, async () => {
-		await fenced(ctx);
-		await deps.lander.files(sent.target, {
-			prefix: importKeys.filesPrefix(input.orgId, input.operationId),
-			parts: archive.parts
-		});
 	});
 }
 
@@ -484,6 +504,7 @@ export async function runSiteImport(
 	};
 	const resources = planResources(create.site, create.site.config, { database: create.database });
 	const carriesFiles = (input.dossier.fileCount ?? 0) > 0;
+	let left = 0;
 	try {
 		await startOperation(ctx);
 		await acquireLease(ctx, 'lease');
@@ -491,7 +512,13 @@ export async function runSiteImport(
 
 		const dump = await stream(ctx, deps, input, 'database');
 		const archive = carriesFiles ? await stream(ctx, deps, input, 'files') : null;
-		const sql = await convertAll(ctx, deps, input, dump);
+		const converted = await convertAll(ctx, deps, input, dump);
+		const withFiles =
+			archive === null
+				? { ...converted, links: 0 }
+				: await convertArchive(ctx, deps, input, converted, archive);
+		const sql: Streamed = { parts: withFiles.parts, bytes: withFiles.bytes };
+		left = withFiles.links;
 
 		const target = phase(ctx, 'target');
 		await reserveName(target, create);
@@ -507,7 +534,6 @@ export async function runSiteImport(
 
 		const sent = await sendDatabase(ctx, deps, input, sql);
 		await applyDatabase(ctx, deps, input, sent);
-		if (archive !== null) await landFiles(ctx, deps, input, sent, archive);
 		await verifySite(ctx, deps, input, sent);
 		await activate(target, create, sealed);
 		await forget(ctx, deps, input);
@@ -515,7 +541,10 @@ export async function runSiteImport(
 		if (!(error instanceof StepFailed)) throw error;
 		return rollback(ctx, deps, input, error);
 	}
-	await finishSuccess(ctx, `${create.site.id} was imported at ${create.hostname}`);
+	await finishSuccess(
+		ctx,
+		`${create.site.id} was imported at ${create.hostname}${left > 0 ? `; ${left} links in the files folder were left behind` : ''}`
+	);
 	await releaseLease(ctx);
 	return { status: 'succeeded' };
 }

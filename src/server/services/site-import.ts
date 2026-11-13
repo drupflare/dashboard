@@ -47,8 +47,6 @@ export interface ImportServices {
 	resolve: Resolver;
 	// connects, reads the host key the server presents and stops before any login
 	probe: (target: { host: string; port: number }) => Promise<HostKey>;
-	// false while a new site has no route that takes a files archive
-	filesLandable: boolean;
 	now: () => number;
 }
 
@@ -62,7 +60,6 @@ function productionServices(): ImportServices {
 		ring: notBuilt('Secret custody'),
 		resolve: notBuilt('The address lookup'),
 		probe: notBuilt('The host key check'),
-		filesLandable: false,
 		now: Date.now
 	};
 }
@@ -313,8 +310,7 @@ export async function startImportSurvey(
 		orgId: input.orgId,
 		credentialId: input.credentialId,
 		root: input.root,
-		ceilingBytes: backupServices().restoreCeilingBytes,
-		filesLandable: custody.filesLandable
+		ceilingBytes: backupServices().restoreCeilingBytes
 	};
 	const plan = planImportSurvey(params);
 	const { operation, created } = await createOperationRecord(db, {

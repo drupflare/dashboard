@@ -1,9 +1,7 @@
 import type { Custody } from '../custody';
-import { ImportError } from '../import-parts';
 import type { BackupWorker, ImportLander } from '../ports';
 
-// the database lands through the site's own restore route, as a restored backup does. The files
-// archive has no route on the site to land through, so that call refuses until one exists
+// the database and the files rows land through the site's own restore, as a restored backup does
 export function createImportLander(deps: {
 	custody: Pick<Custody, 'withOwnerToken'>;
 	worker: BackupWorker;
@@ -24,12 +22,6 @@ export function createImportLander(deps: {
 		reason: (site, label) =>
 			custody.withOwnerToken(site.siteId, site.ownerTokenId, (bearer) =>
 				worker.importReason(site.hostname, label, { bearer })
-			),
-		async files() {
-			throw new ImportError(
-				'files_landing_unavailable',
-				'the new site has no route that takes a files archive yet'
-			);
-		}
+			)
 	};
 }

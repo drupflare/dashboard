@@ -10,7 +10,8 @@ import {
 	PRIVATE_KEY,
 	PUBLIC_IP,
 	ROOT,
-	SERVER_FINGERPRINT
+	SERVER_FINGERPRINT,
+	tarOf
 } from './import-fakes';
 
 const target = (expectedFingerprint = SERVER_FINGERPRINT): SshTarget => ({
@@ -112,6 +113,35 @@ describe('createDumpStream', () => {
 			)
 		);
 		expect(filesError).toMatchObject({ code: 'files_too_large' });
+	});
+
+	it('stores a files tar byte for byte under tar parts that a retry writes again', async () => {
+		const tar = tarOf([
+			{ name: './a.bin', body: new Uint8Array([0, 255, 128, 10, 0]) },
+			{ name: './b.txt', body: 'b' }
+		]);
+		const { connector } = fakeSource({ files: tar });
+		const blobs = fakeBlobs();
+		const filesPrefix = importKeys.filesPrefix(`org_${'o'.repeat(26)}`, `op_${'p'.repeat(26)}`);
+		const run = () =>
+			createDumpStream(connector, blobs.blobs).run(
+				target(),
+				job({ kind: 'files', prefix: filesPrefix, partBytes: 1000 })
+			);
+		const first = await run();
+		const keys = [...blobs.objects.keys()];
+		expect(await run()).toEqual(first);
+		expect([...blobs.objects.keys()]).toEqual(keys);
+		expect(keys.every((key) => key.endsWith('.tar'))).toBe(true);
+		const joined = await readWindow(
+			blobs.blobs,
+			(seq) => partKey(filesPrefix, seq, 'tar'),
+			1000,
+			first.bytes,
+			0,
+			first.bytes
+		);
+		expect(Buffer.from(joined).equals(Buffer.from(tar))).toBe(true);
 	});
 
 	it('fails a command that exits nonzero without quoting what the server wrote', async () => {

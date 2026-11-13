@@ -14,7 +14,9 @@ export const IMPORT_ERROR_CODES = [
 	'part_missing',
 	'restore_too_large',
 	'files_too_large',
-	'files_landing_unavailable',
+	'files_unreadable',
+	'files_bad_path',
+	'files_too_many',
 	'import_failed',
 	'import_timeout'
 ] as const;

@@ -35,18 +35,16 @@ const majorOf = (version: string | null): number | null => {
 const DRUPAL_MAJOR = 11;
 const DATABASES = ['mysql', 'mariadb'];
 
-export interface DossierOptions {
-	// false while a new site has no route that takes a files archive
-	filesLandable?: boolean;
-}
+// the files travel in the restore body as hex, two characters a byte, plus a few statements a file
+const FILE_ROW_BYTES = 1024;
+
+// what the files add to a restore body, from the disk usage the survey read
+export const filesRestoreBytes = (kb: number, count: number) =>
+	kb * 1024 * 2 + count * FILE_ROW_BYTES;
 
 // every import-blocking check that cannot be read is a refusal, never a pass; the ceiling is the
-// most a new site accepts in one restore, so it limits the database and not the files
-export function dossierFor(
-	survey: SurveyInput,
-	ceilingBytes: number,
-	options: DossierOptions = {}
-): Dossier {
+// most a new site accepts in one restore, which the database and the files share
+export function dossierFor(survey: SurveyInput, ceilingBytes: number): Dossier {
 	const findings: Finding[] = [];
 	const refusals: string[] = [];
 	let verdict: Dossier['verdict'] = 'ready';
@@ -122,10 +120,13 @@ export function dossierFor(
 		});
 	}
 	if (survey.files.private) {
+		refusals.push(
+			`The site keeps private files at ${survey.files.private}, and private files are not carried into a new site yet`
+		);
 		findings.push({
-			status: 'information',
+			status: 'unsupported',
 			title: 'Private Files',
-			detail: `Private files are carried with the site at ${survey.files.private}`
+			detail: `The private files folder at ${survey.files.private} is not carried, and the check cannot tell whether it holds files`
 		});
 	}
 
@@ -175,14 +176,24 @@ export function dossierFor(
 			`The database is larger than the ${mib} MiB a new site accepts in one restore. A paged restore is needed for a larger database and is not available yet`
 		);
 	}
-	if (options.filesLandable === false && count !== null && count > 0) {
-		refusals.push('Uploaded files cannot be carried into a new site yet');
+	if (
+		survey.database.bytes !== null &&
+		survey.database.bytes <= ceilingBytes &&
+		kb !== null &&
+		count !== null &&
+		count > 0 &&
+		survey.database.bytes + filesRestoreBytes(kb, count) > ceilingBytes
+	) {
+		const mib = Math.floor(ceilingBytes / (1024 * 1024));
+		refusals.push(
+			`The database and the files together are larger than the ${mib} MiB a new site accepts in one restore. A paged restore is needed for a larger import and is not available yet`
+		);
 		const found = findings.findIndex((finding) => finding.title === 'Uploaded Files');
 		if (found >= 0) {
 			findings[found] = {
 				status: 'unsupported',
 				title: 'Uploaded Files',
-				detail: `${count} files, ${kb} KB, and a new site has no way to take them yet`
+				detail: `${count} files, ${kb} KB, which with the database is more than one restore takes`
 			};
 		}
 	}

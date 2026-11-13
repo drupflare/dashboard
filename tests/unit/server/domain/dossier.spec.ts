@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { dossierFor, type SurveyInput } from '../../../../src/server/domain/dossier';
+import {
+	dossierFor,
+	filesRestoreBytes,
+	type SurveyInput
+} from '../../../../src/server/domain/dossier';
 
 const CEILING = 10 * 1024 * 1024 * 1024;
 
@@ -119,23 +123,14 @@ describe('dossierFor', () => {
 		]);
 	});
 
-	it('accepts a database exactly at the restore ceiling', () => {
-		const ceiling = 16 * 1024 * 1024;
-		const dossier = dossierFor(
-			{ ...healthy(), database: { driver: 'mysql', bytes: ceiling } },
-			ceiling
-		);
-
-		expect(dossier.importable).toBe(true);
-	});
-
-	it('does not count the files against the restore ceiling', () => {
+	it('accepts a database exactly at the restore ceiling when there are no files', () => {
 		const ceiling = 16 * 1024 * 1024;
 		const dossier = dossierFor(
 			{
 				...healthy(),
-				database: { driver: 'mysql', bytes: 1_000_000 },
-				files: { kb: 5 * 1024 * 1024, count: 9000, private: null }
+				database: { driver: 'mysql', bytes: ceiling },
+				files: { kb: 0, count: 0, private: null },
+				fileRows: 0
 			},
 			ceiling
 		);
@@ -143,24 +138,80 @@ describe('dossierFor', () => {
 		expect(dossier.importable).toBe(true);
 	});
 
-	it('refuses uploaded files while a new site cannot take them', () => {
-		const dossier = dossierFor(healthy(), CEILING, { filesLandable: false });
+	it('refuses files that do not fit beside a database exactly at the ceiling', () => {
+		const ceiling = 16 * 1024 * 1024;
+		const dossier = dossierFor(
+			{ ...healthy(), database: { driver: 'mysql', bytes: ceiling } },
+			ceiling
+		);
 
 		expect(dossier.importable).toBe(false);
-		expect(dossier.refusals).toContain('Uploaded files cannot be carried into a new site yet');
-		expect(dossier.findings).toContainEqual(
+	});
+
+	it('counts the files and the database together against the restore ceiling', () => {
+		const ceiling = 16 * 1024 * 1024;
+		const survey = (kb: number, bytes: number) => ({
+			...healthy(),
+			database: { driver: 'mysql', bytes },
+			files: { kb, count: 10, private: null }
+		});
+		const room = ceiling - 1_000_000;
+		const fits = Math.floor((room - 10 * 1024) / 2048);
+		expect(dossierFor(survey(fits, 1_000_000), ceiling).importable).toBe(true);
+		const over = dossierFor(survey(fits + 1, 1_000_000), ceiling);
+		expect(over.importable).toBe(false);
+		expect(over.refusals).toEqual([
+			'The database and the files together are larger than the 16 MiB a new site accepts in one restore. A paged restore is needed for a larger import and is not available yet'
+		]);
+		expect(over.findings).toContainEqual(
 			expect.objectContaining({ status: 'unsupported', title: 'Uploaded Files' })
 		);
 	});
 
-	it('imports a site with no uploaded files whatever the files flag says', () => {
-		const dossier = dossierFor(
-			{ ...healthy(), files: { kb: 0, count: 0, private: null }, fileRows: 0 },
-			CEILING,
-			{ filesLandable: false }
-		);
+	it('prices the files as two characters a byte plus a row each', () => {
+		expect(filesRestoreBytes(10, 3)).toBe(10 * 1024 * 2 + 3 * 1024);
+	});
 
+	it('names only the database when the database alone is over the ceiling', () => {
+		const ceiling = 16 * 1024 * 1024;
+		const dossier = dossierFor(
+			{
+				...healthy(),
+				database: { driver: 'mysql', bytes: ceiling + 1 },
+				files: { kb: 5 * 1024 * 1024, count: 9000, private: null }
+			},
+			ceiling
+		);
+		expect(dossier.refusals).toHaveLength(1);
+		expect(dossier.refusals[0]).toContain('The database is larger than');
+	});
+
+	it('does not price files for a site with none', () => {
+		const ceiling = 16 * 1024 * 1024;
+		const dossier = dossierFor(
+			{
+				...healthy(),
+				database: { driver: 'mysql', bytes: ceiling },
+				files: { kb: 0, count: 0, private: null },
+				fileRows: 0
+			},
+			ceiling
+		);
 		expect(dossier.importable).toBe(true);
+	});
+
+	it('refuses a site with a private files folder, since only the public files are carried', () => {
+		const dossier = dossierFor(
+			{ ...healthy(), files: { kb: 28, count: 3, private: '../private' } },
+			CEILING
+		);
+		expect(dossier.importable).toBe(false);
+		expect(dossier.refusals).toEqual([
+			'The site keeps private files at ../private, and private files are not carried into a new site yet'
+		]);
+		expect(dossier.findings).toContainEqual(
+			expect.objectContaining({ status: 'unsupported', title: 'Private Files' })
+		);
 	});
 
 	it('refuses when the database size is unknown', () => {

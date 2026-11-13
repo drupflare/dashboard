@@ -330,13 +330,12 @@ export interface LandTarget {
 	ownerTokenId: string;
 }
 
-// the new site's own routes: its restore for the database, and a route for the files archive
+// the new site's own restore, which carries the database and the files rows in one body
 export interface ImportLander {
 	// sends the body unless the site already holds an import under this label
 	database(site: LandTarget, label: string, body: Uint8Array): Promise<void>;
 	state(site: LandTarget, label: string): Promise<ImportState>;
 	reason(site: LandTarget, label: string): Promise<string>;
-	files(site: LandTarget, archive: { prefix: string; parts: number }): Promise<void>;
 }
 
 // the sealed key of one import, opened only inside a call; a refusal names the credential problem

@@ -21,7 +21,6 @@ export interface ImportSurveyInput {
 	root: string;
 	// the most a new site accepts in one restore
 	ceilingBytes: number;
-	filesLandable: boolean;
 }
 
 export function planImportSurvey(input: Pick<ImportSurveyInput, 'credentialId'>): Plan {
@@ -67,8 +66,7 @@ export async function runImportSurvey(
 				capturedAt: survey.capturedAt,
 				dossier: dossierFor(
 					{ ...survey, errors: survey.errors.map(({ id }) => ({ id, detail: '' })) },
-					input.ceilingBytes,
-					{ filesLandable: input.filesLandable }
+					input.ceilingBytes
 				)
 			};
 			await deps.store.mutate(ctx.operationId, (operation) =>

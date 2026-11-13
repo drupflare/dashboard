@@ -36,8 +36,7 @@ async function surveyWorld(options: { fingerprint?: string | null; failWith?: Er
 		orgId: world.orgId,
 		credentialId,
 		root: ROOT,
-		ceilingBytes: 16 * 1024 * 1024,
-		filesLandable: true
+		ceilingBytes: 16 * 1024 * 1024
 	};
 	const frozen = await freezePlan(planImportSurvey(input));
 	await world.store.begin({

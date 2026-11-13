@@ -221,6 +221,7 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		dump: 'copying your database from the server',
 		'files-archive': 'copying your files from the server',
 		convert: 'converting the database for the new site',
+		'files-convert': 'preparing the files for the new site',
 		'reserve-name': 'reserving the new site address',
 		'resource.': 'creating the new site storage',
 		assets: 'uploading static files to the new site',
@@ -231,7 +232,6 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		link: 'recording where the new site came from',
 		restore: 'sending the database to the new site',
 		apply: 'waiting for the new site to load the database',
-		files: 'carrying the files into the new site',
 		verify: 'checking that the new site answers',
 		activate: 'marking the new site ready',
 		forget: 'deleting the key and the copies'
@@ -374,10 +374,13 @@ const IMPORT_REFUSALS: Record<string, string> = {
 	dump_empty: 'The server returned an empty database, so nothing was imported.',
 	dump_failed:
 		'The database copy on your server did not finish. Check that Drush works there, then start again.',
-	restore_too_large: `The database is larger than the ${RESTORE_LIMIT_MIB} MiB a managed site accepts in one restore. Nothing was created and your server was not changed. Larger restores need a paged restore, which is not available yet.`,
+	restore_too_large: `The database and the files together are larger than the ${RESTORE_LIMIT_MIB} MiB a managed site accepts in one restore. Nothing was created and your server was not changed. Larger restores need a paged restore, which is not available yet.`,
 	files_too_large: 'The files are larger than an import accepts. Nothing was created.',
-	files_landing_unavailable:
-		'Uploaded files cannot be carried into a new site yet. Nothing was created.',
+	files_unreadable:
+		'The copy of your files was cut short or could not be read. Nothing was created and your server was not changed. Start again.',
+	files_bad_path:
+		'A file on your server has a name that cannot be carried into a new site. Nothing was created and your server was not changed.',
+	files_too_many: 'Your server holds more files than an import carries. Nothing was created.',
 	import_failed: 'The new site could not load the database. Nothing was left behind.',
 	import_timeout: 'The new site took too long to load the database. Nothing was left behind.'
 };

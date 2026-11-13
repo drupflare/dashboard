@@ -499,6 +499,13 @@ describe('import copy', () => {
 		});
 	});
 
+	it('labels the files step the import plan writes and no longer a landing step', () => {
+		expect(stepLabel('site.import', 'files-convert')).toBe(
+			'Preparing the files for the new site'
+		);
+		expect(stepLabel('site.import', 'files')).toBe(GENERIC_STEP_LABEL);
+	});
+
 	it('never offers a retry, since a retry would need a new key', () => {
 		for (const type of ['site.import', 'import.survey']) {
 			for (const status of ['failed', 'rolled-back'])
@@ -516,7 +523,10 @@ describe('import copy', () => {
 		['dump_empty', 'empty database'],
 		['dump_failed', 'did not finish'],
 		['restore_too_large', 'paged restore'],
-		['files_landing_unavailable', 'files cannot be carried'],
+		['files_unreadable', 'files was cut short'],
+		['files_bad_path', 'name that cannot be carried'],
+		['files_too_many', 'more files'],
+		['files_too_large', 'files are larger'],
 		['import_failed', 'could not load'],
 		['import_timeout', 'too long']
 	])('turns the %s failure into a plain reason with no code in it', (code, text) => {
