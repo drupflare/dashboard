@@ -7,6 +7,7 @@ import { createSqlConverter } from '../../../../engine/src/adapters/sql-converte
 import { openSession } from '../../../../engine/src/adapters/ssh-session';
 import { createSshSurvey } from '../../../../engine/src/adapters/ssh-survey';
 import { DEFAULT_RESTORE_CEILING_BYTES, restorable } from '../../../../engine/src/backup-parts';
+import { convertFiles } from '../../../../engine/src/files-convert';
 import {
 	CACHE_STRUCTURE_ONLY,
 	FILES_LIMIT_BYTES,
@@ -21,6 +22,9 @@ interface RunBody extends Omit<SshTarget, 'host'> {
 	host: string;
 	dialHost: string;
 	partBytes?: number;
+	// a local worker to land the converted database in, with the site name it serves
+	landBase?: string;
+	site?: string;
 }
 
 const STAND_IN = '93.184.216.34';
@@ -98,11 +102,24 @@ async function timed<T>(steps: Record<string, unknown>[], name: string, fn: () =
 	}
 }
 
+const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+const encode = (text: string) => new TextEncoder().encode(text);
+
+function joined(parts: Uint8Array[]) {
+	const out = new Uint8Array(parts.reduce((sum, part) => sum + part.byteLength, 0));
+	let at = 0;
+	for (const part of parts) {
+		out.set(part, at);
+		at += part.byteLength;
+	}
+	return out;
+}
+
 // out fills as each step finishes, so a refusal part-way still returns what ran before it
 async function run(body: RunBody, out: Record<string, unknown>) {
 	const steps: Record<string, unknown>[] = [];
 	out.steps = steps;
-	const { host, dialHost, ...rest } = body;
+	const { host, dialHost, landBase, site, ...rest } = body;
 	const target: SshTarget = { ...rest, host };
 	const partBytes = body.partBytes ?? PART_BYTES;
 	const answers = [STAND_IN];
@@ -130,7 +147,10 @@ async function run(body: RunBody, out: Record<string, unknown>) {
 		createSshSurvey(connectors.survey, () => new Date()).run(target)
 	);
 	out.survey = survey;
-	out.dossier = dossierFor(survey, DEFAULT_RESTORE_CEILING_BYTES);
+	const dossier = dossierFor(survey, DEFAULT_RESTORE_CEILING_BYTES);
+	out.dossier = dossier;
+	const dialect = dossier.database;
+	const privatePath = dossier.privateFiles;
 
 	const { map, blobs } = memoryBlobs();
 	const dumpPrefix = importKeys.dumpPrefix(ORG, OP);
@@ -139,6 +159,7 @@ async function run(body: RunBody, out: Record<string, unknown>) {
 		prefix: dumpPrefix,
 		partBytes,
 		structureOnly: CACHE_STRUCTURE_ONLY,
+		dialect,
 		maxBytes: DEFAULT_RESTORE_CEILING_BYTES * 2
 	};
 	const dumpStream = createDumpStream(connectors.stream, blobs);
@@ -155,73 +176,214 @@ async function run(body: RunBody, out: Record<string, unknown>) {
 		sameKeys: JSON.stringify(firstKeys) === JSON.stringify(retryKeys)
 	};
 
+	let publicTar: { parts: number; bytes: number } | null = null;
 	if ((survey.files.count ?? 0) > 0) {
-		const filesJob = {
-			kind: 'files' as const,
-			prefix: importKeys.filesPrefix(ORG, OP),
-			partBytes,
-			maxBytes: FILES_LIMIT_BYTES
-		};
-		const archive = await timed(steps, 'files.dump', () => dumpStream.run(target, filesJob));
-		out.files = { parts: archive.parts, bytes: archive.bytes };
+		publicTar = await timed(steps, 'files.dump', () =>
+			dumpStream.run(target, {
+				kind: 'files',
+				prefix: importKeys.filesPrefix(ORG, OP),
+				partBytes,
+				maxBytes: FILES_LIMIT_BYTES
+			})
+		);
+		out.files = publicTar;
+	}
+	let privateTar: { parts: number; bytes: number } | null = null;
+	if (privatePath !== null) {
+		privateTar = await timed(steps, 'private.dump', () =>
+			dumpStream.run(target, {
+				kind: 'private',
+				path: privatePath,
+				prefix: importKeys.privatePrefix(ORG, OP),
+				partBytes,
+				maxBytes: FILES_LIMIT_BYTES
+			})
+		);
+		out.private = privateTar;
 	}
 
 	const converter = createSqlConverter();
 	const convertSteps: Record<string, unknown>[] = [];
 	out.convertSteps = convertSteps;
-	let offset = 0;
-	let seq = 0;
+	const dumpKey = (part: number) => importKeys.dump(ORG, OP, part);
+	let sqlParts = 0;
 	let sqlBytes = 0;
-	while (offset < dump.bytes) {
+	let workflowSteps = 0;
+	let lossy: string[] = [];
+	const store = async (seq: number, bytes: Uint8Array) => {
+		await blobs.put(importKeys.sql(ORG, OP, seq), bytes);
+		sqlBytes += bytes.byteLength;
+	};
+
+	if (dialect === 'mysql') {
+		let offset = 0;
+		let seq = 0;
+		while (offset < dump.bytes) {
+			const began = performance.now();
+			const window = await readWindow(
+				blobs,
+				dumpKey,
+				partBytes,
+				dump.bytes,
+				offset,
+				partBytes
+			);
+			const last = offset + window.byteLength >= dump.bytes;
+			const chunk = await converter.convertChunk(window, last);
+			if (chunk.cut <= 0) throw new Error('a conversion step made no progress');
+			await store(seq, encode(chunk.sql));
+			convertSteps.push({
+				seq,
+				ms: Math.round(performance.now() - began),
+				inBytes: chunk.cut,
+				outBytes: chunk.sql.length,
+				rows: chunk.rows
+			});
+			offset += chunk.cut;
+			seq++;
+			workflowSteps++;
+		}
+		sqlParts = seq;
+		workflowSteps++;
+	} else {
+		const cuts: number[] = [];
+		const ddls: string[] = [];
+		let offset = 0;
+		while (offset < dump.bytes) {
+			const began = performance.now();
+			const window = await readWindow(
+				blobs,
+				dumpKey,
+				partBytes,
+				dump.bytes,
+				offset,
+				partBytes
+			);
+			const last = offset + window.byteLength >= dump.bytes;
+			const scanned = await converter.scanPg(window, last);
+			cuts.push(scanned.cut);
+			ddls.push(scanned.ddl);
+			convertSteps.push({
+				pass: 'scan',
+				seq: cuts.length - 1,
+				ms: Math.round(performance.now() - began),
+				inBytes: scanned.cut
+			});
+			offset += scanned.cut;
+			workflowSteps++;
+		}
 		const began = performance.now();
-		const window = await readWindow(
-			blobs,
-			(part) => importKeys.dump(ORG, OP, part),
-			partBytes,
-			dump.bytes,
-			offset,
-			partBytes
-		);
-		const last = offset + window.byteLength >= dump.bytes;
-		const chunk = await converter.convertChunk(window, last);
-		if (chunk.cut <= 0) throw new Error('a conversion step made no progress');
-		const sql = new TextEncoder().encode(chunk.sql);
-		await blobs.put(importKeys.sql(ORG, OP, seq), sql);
+		const ddl = ddls.join('\n');
+		const schema = await converter.schemaPg(ddl);
+		lossy = schema.lossy;
+		await store(0, encode(schema.tables));
 		convertSteps.push({
-			seq,
+			pass: 'schema',
 			ms: Math.round(performance.now() - began),
-			inBytes: chunk.cut,
-			outBytes: sql.byteLength,
-			rows: chunk.rows,
-			statements: chunk.statements
+			outBytes: schema.tables.length
 		});
-		offset += chunk.cut;
-		sqlBytes += sql.byteLength;
-		seq++;
+		workflowSteps++;
+		let at = 0;
+		for (const [index, cut] of cuts.entries()) {
+			const started = performance.now();
+			const window = await readWindow(blobs, dumpKey, partBytes, dump.bytes, at, cut);
+			const chunk = await converter.dataPg(window, ddl);
+			await store(index + 1, encode(chunk.sql));
+			convertSteps.push({
+				pass: 'data',
+				seq: index + 1,
+				ms: Math.round(performance.now() - started),
+				inBytes: cut,
+				outBytes: chunk.sql.length,
+				rows: chunk.rows
+			});
+			at += cut;
+			workflowSteps++;
+		}
+		await store(cuts.length + 1, encode(schema.indexes));
+		sqlParts = cuts.length + 2;
+		workflowSteps++;
 	}
 	steps.push({
 		step: 'convert',
 		ms: convertSteps.reduce((sum, s) => sum + (s.ms as number), 0),
 		ok: true,
-		parts: seq
+		parts: sqlParts
 	});
 
-	const sqlParts: Uint8Array[] = [];
-	for (let i = 0; i < seq; i++) sqlParts.push((await blobs.get(importKeys.sql(ORG, OP, i)))!);
-	const sqlAll = new Uint8Array(sqlBytes);
-	let at = 0;
-	for (const part of sqlParts) {
-		sqlAll.set(part, at);
-		at += part.byteLength;
+	const filesLinks: Record<string, unknown> = {};
+	for (const [scheme, tar, keyOf] of [
+		['public', publicTar, importKeys.files],
+		['private', privateTar, importKeys.private]
+	] as const) {
+		if (tar === null) continue;
+		const converted = await timed(steps, `${scheme}.convert`, async () => {
+			const archive = await readWindow(
+				blobs,
+				(part) => keyOf(ORG, OP, part),
+				partBytes,
+				tar.bytes,
+				0,
+				tar.bytes
+			);
+			return convertFiles(archive, {
+				nowMs: Date.now(),
+				ceilingBytes: DEFAULT_RESTORE_CEILING_BYTES,
+				databaseBytes: sqlBytes,
+				scheme
+			});
+		});
+		await store(sqlParts, converted.sql);
+		sqlParts++;
+		workflowSteps++;
+		filesLinks[scheme] = {
+			files: converted.files,
+			bytes: converted.bytes,
+			sqlBytes: converted.sql.length
+		};
 	}
+	out.fileRows = filesLinks;
 
+	const all: Uint8Array[] = [];
+	for (let i = 0; i < sqlParts; i++) all.push((await blobs.get(importKeys.sql(ORG, OP, i)))!);
+	const sqlAll = joined(all);
 	out.convert = {
-		parts: seq,
-		sqlBytes,
+		dialect,
+		parts: sqlParts,
+		sqlBytes: sqlAll.byteLength,
 		sha256: await sha256(sqlAll),
-		restorable: restorable(sqlBytes, DEFAULT_RESTORE_CEILING_BYTES)
+		restorable: restorable(sqlAll.byteLength, DEFAULT_RESTORE_CEILING_BYTES),
+		lossy,
+		workflowSteps:
+			workflowSteps + 2 + (publicTar === null ? 0 : 1) + (privateTar === null ? 0 : 1)
 	};
-	out.landing = 'not run';
+
+	if (landBase === undefined || site === undefined) {
+		out.landing = 'not run';
+		return out;
+	}
+	const landed = await timed(steps, 'land', async () => {
+		const base = `${landBase}`;
+		const label = `rig-${site}`;
+		const posted = await fetch(`${base}/restore?label=${label}&site=${site}`, {
+			method: 'POST',
+			body: sqlAll as unknown as BodyInit
+		});
+		const text = await posted.text();
+		if (posted.status !== 200) return { status: posted.status, answer: text.slice(0, 300) };
+		const deadline = Date.now() + 120_000;
+		for (;;) {
+			const health = (await (await fetch(`${base}/health?site=${site}`)).json()) as {
+				import?: { generation?: string; state?: string; error?: string };
+			};
+			if (health.import?.generation === label && health.import.state !== 'pending') {
+				return { status: 200, answer: text.slice(0, 200), state: health.import.state };
+			}
+			if (Date.now() > deadline) return { status: 200, state: 'timeout' };
+			await new Promise((resolve) => setTimeout(resolve, 500));
+		}
+	});
+	out.landing = landed;
 	return out;
 }
 

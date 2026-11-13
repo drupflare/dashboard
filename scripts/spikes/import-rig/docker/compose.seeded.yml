@@ -1,0 +1,88 @@
+services:
+  my-db:
+    profiles: ['mysql']
+    image: mariadb:11.8.3
+    mem_limit: 1g
+    cpus: 1
+    environment:
+      MARIADB_ROOT_PASSWORD: rootpass
+      MARIADB_DATABASE: drupal
+      MARIADB_USER: drupal
+      MARIADB_PASSWORD: drupalpass
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_general_ci
+      - --sql-mode=STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION
+    healthcheck:
+      test: ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized']
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  my-drupal:
+    profiles: ['mysql']
+    image: drupal@sha256:d059fada2d2f9ebfcde8f8d3208007946d1ee843ee2dd9ed00b15ead0c282def
+    mem_limit: 2g
+    cpus: 2
+    depends_on:
+      my-db:
+        condition: service_healthy
+    environment: &drupal-env
+      DRUPAL_DB_DRIVER: mysql
+      DRUPAL_DB_HOST: my-db
+      DRUPAL_DB_NAME: drupal
+      DRUPAL_DB_USER: drupal
+      DRUPAL_DB_PASSWORD: drupalpass
+      DRUPAL_SITE_MAIL: e2e@example.com
+      SSH_USER: tester
+      SSH_PUBLIC_KEY: ${RIG_SSH_PUBKEY:-}
+    entrypoint: ['/bin/bash', '/opt/drangler/entrypoint-seeded.sh']
+    volumes:
+      - ./drupal:/opt/drangler:ro
+    healthcheck:
+      test: ['CMD', 'test', '-f', '/opt/drangler-ready']
+      interval: 5s
+      timeout: 5s
+      retries: 240
+    ports:
+      - '127.0.0.1:8182:80'
+      - '127.0.0.1:2232:22'
+
+  pg-db:
+    profiles: ['pgsql']
+    image: postgres:17.6
+    mem_limit: 1g
+    cpus: 1
+    environment:
+      POSTGRES_DB: drupal
+      POSTGRES_USER: drupal
+      POSTGRES_PASSWORD: drupalpass
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U drupal -d drupal']
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  pg-drupal:
+    profiles: ['pgsql']
+    image: drupal@sha256:d059fada2d2f9ebfcde8f8d3208007946d1ee843ee2dd9ed00b15ead0c282def
+    mem_limit: 2g
+    cpus: 2
+    depends_on:
+      pg-db:
+        condition: service_healthy
+    environment:
+      <<: *drupal-env
+      DRUPAL_DB_DRIVER: pgsql
+      DRUPAL_DB_HOST: pg-db
+    entrypoint: ['/bin/bash', '/opt/drangler/entrypoint-seeded.sh']
+    volumes:
+      - ./drupal:/opt/drangler:ro
+    healthcheck:
+      test: ['CMD', 'test', '-f', '/opt/drangler-ready']
+      interval: 5s
+      timeout: 5s
+      retries: 240
+    ports:
+      - '127.0.0.1:8184:80'
+      - '127.0.0.1:2234:22'
