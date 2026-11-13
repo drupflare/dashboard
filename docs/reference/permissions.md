@@ -56,6 +56,7 @@ Organisation roles are `owner`, `admin`, `developer`, `billing`, `viewer`. Site 
 | `integration.manage`             | org        | x         | x         |               |             |            |                 |                 |             |                                   |
 | `repo.read`                      | org        | x         | x         | x             |             | x          |                 |                 |             |                                   |
 | `repo.manage`                    | org        | x         | x         | x             |             |            |                 |                 |             |                                   |
+| `repo.connect`                   | org        | x         | x         |               |             |            |                 |                 |             | session only, step-up             |
 | `template.read`                  | org        | x         | x         | x             |             | x          |                 |                 |             |                                   |
 | `template.manage`                | org        | x         | x         | x             |             |            |                 |                 |             |                                   |
 | `billing.read`                   | org        | x         | x         |               | x           |            |                 |                 |             |                                   |
@@ -73,6 +74,9 @@ Organisation roles are `owner`, `admin`, `developer`, `billing`, `viewer`. Site 
 | `plane.read`                     | org        | x         | x         | x             |             | x          |                 |                 |             |                                   |
 | `plane.manage`                   | org        | x         | x         |               |             |            |                 |                 |             |                                   |
 | `plane.connect`                  | department | x         | x         | x             |             |            |                 |                 |             | session only                      |
+| `node.read`                      | org        | x         | x         | x             |             | x          |                 |                 |             |                                   |
+| `node.pair`                      | org        | x         | x         |               |             |            |                 |                 |             | session only, step-up             |
+| `node.revoke`                    | org        | x         | x         |               |             |            |                 |                 |             | step-up                           |
 | `release.read`                   | org        | x         | x         | x             |             | x          |                 |                 |             |                                   |
 | `release.manage`                 | org        | x         | x         |               |             |            |                 |                 |             |                                   |
 | `import.manage`                  | org        | x         | x         | x             |             |            |                 |                 |             |                                   |
@@ -97,10 +101,14 @@ Organisation roles are `owner`, `admin`, `developer`, `billing`, `viewer`. Site 
 | `site.upgrade`                   | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.cleanup`                   | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.adopt`                     | site       | x         | x         |               |             |            | x               |                 |             | session only, step-up             |
+| `site.cutover`                   | site       | x         | x         |               |             |            | x               |                 |             | session only, step-up             |
+| `site.cutover.decide`            | site       | x         | x         |               |             |            | x               |                 |             | session only, step-up             |
+| `site.cutover.read`              | site       | x         | x         |               |             |            | x               |                 |             |                                   |
 | `site.pull`                      | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.modify`                    | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.heal`                      | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.git.manage`                | site       | x         | x         | x             |             |            | x               |                 |             |                                   |
+| `site.remote.manage`             | site       | x         | x         | x             |             |            | x               |                 |             |                                   |
 | `site.domain.manage`             | site       | x         | x         |               |             |            | x               |                 |             |                                   |
 | `site.domain.rename`             | site       | x         | x         |               |             |            | x               |                 |             | step-up                           |
 | `site.credentials.rotate`        | site       | x         | x         |               |             |            |                 |                 |             | step-up                           |
@@ -157,9 +165,13 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `account.security.manage`
 - `org.delete`
 - `key.create`
+- `repo.connect`
 - `billing.portal`
 - `plane.connect`
+- `node.pair`
 - `site.adopt`
+- `site.cutover`
+- `site.cutover.decide`
 - `site.owner-token.reveal`
 - `site.owner-token.rotate`
 - `site.backup.export`
@@ -168,11 +180,16 @@ These refuse API keys. Every `admin.*` action refuses them too.
 
 - `org.delete`
 - `key.create`
+- `repo.connect`
+- `node.pair`
+- `node.revoke`
 - `fleet.bulk-destructive`
 - `transfer.accept`
 - `site.delete`
 - `site.transfer`
 - `site.adopt`
+- `site.cutover`
+- `site.cutover.decide`
 - `site.domain.rename`
 - `site.credentials.rotate`
 - `site.owner-token.reveal`
