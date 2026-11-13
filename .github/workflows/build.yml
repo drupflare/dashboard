@@ -129,23 +129,12 @@ jobs:
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
       - name: Install Dependencies
         run: bun install --frozen-lockfile
-      - name: Build
-        run: bun run build
-      - name: Render the Deploy Configs
-        run: |
-          bun scripts/render-deploy.ts dispatch staging
-          bun scripts/render-deploy.ts engine staging
+      - name: Render the Deploy Config
+        run: bun scripts/render-deploy.ts dispatch staging
       - name: Deploy the Dispatch Worker
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: dispatch
-          command: deploy -c wrangler.deploy.json
-      - name: Deploy the Engine Worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: engine
           command: deploy -c wrangler.deploy.json

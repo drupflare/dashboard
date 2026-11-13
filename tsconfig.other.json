@@ -11,5 +11,6 @@
 		"vitest.config.ts",
 		"vitest.node.config.ts",
 		"playwright.config.ts"
-	]
+	],
+	"exclude": ["scripts/spikes/ssh", "scripts/spikes/convert"]
 }
