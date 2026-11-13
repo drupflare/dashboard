@@ -26,6 +26,9 @@ const KIND_BY_TEMPLATE: Partial<Record<string, SiteKind>> = {
 	'bring-your-own': 'custom'
 };
 
+// the import card leads to its own page instead of creating a site kind
+export const IMPORT_TEMPLATE = 'import';
+
 export function kindFor(templateId: string): SiteKind | null {
 	return KIND_BY_TEMPLATE[templateId] ?? null;
 }

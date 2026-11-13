@@ -127,6 +127,7 @@ type Fetcher = (
 		method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
 		query?: Record<string, string>;
 		body?: Record<string, unknown>;
+		headers?: Record<string, string>;
 	}
 ) => Promise<unknown>;
 
@@ -147,8 +148,8 @@ export function useApi() {
 	return {
 		get: <T>(path: string, query?: Record<string, string>) =>
 			settle<T>(fetcher(`/api/v1${path}`, { method: 'GET', query })),
-		post: <T>(path: string, body?: Record<string, unknown>) =>
-			settle<T>(fetcher(`/api/v1${path}`, { method: 'POST', body })),
+		post: <T>(path: string, body?: Record<string, unknown>, headers?: Record<string, string>) =>
+			settle<T>(fetcher(`/api/v1${path}`, { method: 'POST', body, headers })),
 		patch: <T>(path: string, body?: Record<string, unknown>) =>
 			settle<T>(fetcher(`/api/v1${path}`, { method: 'PATCH', body })),
 		delete: <T>(path: string) => settle<T>(fetcher(`/api/v1${path}`, { method: 'DELETE' }))

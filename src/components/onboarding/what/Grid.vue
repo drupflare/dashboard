@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { kindFor } from '~/composables/useOnboarding';
+import { IMPORT_TEMPLATE, kindFor } from '~/composables/useOnboarding';
 
 interface TemplateChoice {
 	id: string;
@@ -22,9 +22,10 @@ const GROUPS = [
 const blocked = (template: TemplateChoice): boolean =>
 	!template.free && props.paidAllowed === false;
 
-// the grid shows a choice only when the create contract can express it and the plan allows it
+// a choice shows only when create or import can take it and the plan allows it
 function choosable(template: TemplateChoice): boolean {
-	return template.enabled && kindFor(template.id) !== null && !blocked(template);
+	const creates = kindFor(template.id) !== null || template.id === IMPORT_TEMPLATE;
+	return template.enabled && creates && !blocked(template);
 }
 
 function unavailableLabel(template: TemplateChoice): string {

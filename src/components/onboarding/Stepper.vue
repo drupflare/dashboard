@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { STEP_TITLES, type OnboardingStep } from '~/composables/useOnboarding';
+import { STEP_TITLES } from '~/composables/useOnboarding';
 
-defineProps<{ step: OnboardingStep }>();
+const props = withDefaults(defineProps<{ step: number; titles?: readonly string[] }>(), {
+	titles: () => [STEP_TITLES[1], STEP_TITLES[2]]
+});
 
-const steps: readonly OnboardingStep[] = [1, 2];
+const steps = computed(() => props.titles.map((_, index) => index + 1));
 </script>
 
 <template>
@@ -27,14 +29,14 @@ const steps: readonly OnboardingStep[] = [1, 2];
 					class="size-4 shrink-0"
 					aria-hidden="true"
 				/>
-				<span>{{ n }}. {{ STEP_TITLES[n] }}</span>
+				<span>{{ n }}. {{ titles[n - 1] }}</span>
 			</li>
 		</ol>
 		<p
 			role="status"
 			class="sr-only"
 		>
-			Step {{ step }} of 2: {{ STEP_TITLES[step] }}
+			Step {{ step }} of {{ titles.length }}: {{ titles[step - 1] }}
 		</p>
 	</div>
 </template>
