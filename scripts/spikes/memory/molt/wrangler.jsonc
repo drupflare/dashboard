@@ -1,0 +1,25 @@
+{
+	"name": "spike-memory-v3",
+	"main": "src/worker.mjs",
+	"compatibility_date": "2026-11-01",
+	"workers_dev": true,
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "MOLT_PROBE",
+				"class_name": "MoltProbe"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "spike-memory-v3-1",
+			"new_sqlite_classes": ["MoltProbe"]
+		}
+	],
+	"tail_consumers": [
+		{
+			"service": "spike-memory-v3-tail"
+		}
+	]
+}

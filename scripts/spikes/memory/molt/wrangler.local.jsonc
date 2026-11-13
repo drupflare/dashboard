@@ -1,0 +1,19 @@
+{
+	"name": "spike-memory-v3-local",
+	"main": "src/local.mjs",
+	"compatibility_date": "2026-10-26",
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "MOLT_PROBE",
+				"class_name": "MoltProbe"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "spike-memory-v3-local-1",
+			"new_sqlite_classes": ["MoltProbe"]
+		}
+	]
+}
