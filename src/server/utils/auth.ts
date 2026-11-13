@@ -12,6 +12,7 @@ import { ApiError } from '../../shared/errors';
 import { SESSION_HINT_COOKIE } from '../../shared/session-hint';
 import { nowUtc } from '../../shared/utils/time';
 import { findApiKeyByLookup } from '../db/repos/api-key-lookup';
+import { touchApiKey } from '../db/repos/organization';
 import type { Principal } from '../domain/authorize';
 import type { ApiKeyFacts } from '../domain/scopes';
 import { parseApiKey, verifyApiKey } from '../services/api-keys';
@@ -47,7 +48,8 @@ const keyRecordSchema = z.object({
 	keyHash: z.string(),
 	scopes: z.array(z.string()).optional(),
 	expiresAt: z.number().optional(),
-	revokedAt: z.number().optional()
+	revokedAt: z.number().optional(),
+	lastUsedAt: z.number().optional()
 });
 
 export type KeyIndexRecord = z.infer<typeof keyRecordSchema>;
@@ -55,7 +57,12 @@ export type KeyIndexRecord = z.infer<typeof keyRecordSchema>;
 // a dfk_ token carries a lookup id and no organisation, so keys are found through this index
 export interface KeyIndex {
 	find(lookupId: string): Promise<KeyIndexRecord | null>;
+	// records a use; the store may skip a mark that is already recent
+	touch?(record: KeyIndexRecord, at: number): Promise<void>;
 }
+
+// a key's last-used mark moves at most this often, so a busy key does not write on every call
+export const LAST_USED_WRITE_INTERVAL_MS = 5 * 60_000;
 
 const keyIndexName = (lookupId: string) => `apikey:${lookupId}`;
 
@@ -94,8 +101,18 @@ export function collegeKeyIndex(getDb: () => Promise<CollegeDBClient>): KeyIndex
 				keyHash: record.keyHash,
 				scopes: record.scopes,
 				...(record.expiresAt === null ? {} : { expiresAt: record.expiresAt }),
-				...(record.revokedAt === null ? {} : { revokedAt: record.revokedAt })
+				...(record.revokedAt === null ? {} : { revokedAt: record.revokedAt }),
+				...(record.lastUsedAt === null ? {} : { lastUsedAt: record.lastUsedAt })
 			};
+		},
+		async touch(record, at) {
+			await touchApiKey(
+				await getDb(),
+				record.orgId,
+				record.keyId,
+				at,
+				at - LAST_USED_WRITE_INTERVAL_MS
+			);
 		}
 	};
 }
@@ -153,8 +170,13 @@ async function resolveKey(services: AuthServices, token: string): Promise<Princi
 	if (!parsed) return null;
 	const record = await services.keys.find(parsed.lookupId);
 	if (!record) return null;
-	const checked = await verifyApiKey(token, record, nowUtc().toMillis());
+	const now = nowUtc().toMillis();
+	const checked = await verifyApiKey(token, record, now);
 	if (!checked.ok) return null;
+	const stale =
+		record.lastUsedAt === undefined || now - record.lastUsedAt >= LAST_USED_WRITE_INTERVAL_MS;
+	// the mark is for display; a failed write never refuses a valid key
+	if (stale) await services.keys.touch?.(record, now).catch(() => undefined);
 	const principal: Principal = { kind: 'key', keyId: record.keyId, issuerId: record.issuerId };
 	keyFacts.set(principal, {
 		id: record.keyId,

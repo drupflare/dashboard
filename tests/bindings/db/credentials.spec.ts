@@ -245,7 +245,8 @@ describe('API key lookup on D1', () => {
 			keyHash: expect.stringMatching(/^hash-/),
 			scopes: ['site.read', 'member.read'],
 			expiresAt: 5000,
-			revokedAt: null
+			revokedAt: null,
+			lastUsedAt: null
 		});
 		expect(await findApiKeyByLookup(db, lookupId())).toBeNull();
 	});

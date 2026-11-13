@@ -10,6 +10,7 @@ export interface ApiKeyLookupRecord {
 	scopes: string[];
 	expiresAt: number | null;
 	revokedAt: number | null;
+	lastUsedAt: number | null;
 }
 
 interface KeyRow {
@@ -19,6 +20,7 @@ interface KeyRow {
 	scopes: string;
 	expires_at: number | null;
 	revoked_at: number | null;
+	last_used_at: number | null;
 }
 
 // a token names its key and not its organisation, and keys live on the organisation's shard, so the
@@ -73,7 +75,7 @@ export async function findApiKeyByLookup(
 	if (!link) return null;
 	const row = await db.first<KeyRow>(
 		link.organization_id,
-		`SELECT id, created_by, key_hash, scopes, expires_at, revoked_at FROM api_keys
+		`SELECT id, created_by, key_hash, scopes, expires_at, revoked_at, last_used_at FROM api_keys
 		 WHERE organization_id = ? AND id = ?`,
 		[link.organization_id, link.key_id]
 	);
@@ -85,6 +87,26 @@ export async function findApiKeyByLookup(
 		keyHash: row.key_hash,
 		scopes: parseScopes(row.scopes),
 		expiresAt: row.expires_at,
-		revokedAt: row.revoked_at
+		revokedAt: row.revoked_at,
+		lastUsedAt: row.last_used_at
 	};
+}
+
+// the public prefix of each key, by key id; one keyed read on the directory shard
+export async function listLookupIds(
+	db: CollegeDBClient,
+	organizationId: string,
+	keyIds: readonly string[]
+): Promise<Map<string, string>> {
+	const found = new Map<string, string>();
+	if (keyIds.length === 0) return found;
+	const marks = keyIds.map(() => '?').join(', ');
+	const { results } = await db.all<{ lookup_id: string; key_id: string }>(
+		DIRECTORY_KEY,
+		`SELECT lookup_id, key_id FROM api_key_lookup
+		 WHERE organization_id = ? AND key_id IN (${marks})`,
+		[organizationId, ...keyIds]
+	);
+	for (const row of results) found.set(row.key_id, row.lookup_id);
+	return found;
 }

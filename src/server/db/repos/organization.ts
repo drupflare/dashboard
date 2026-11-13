@@ -53,6 +53,7 @@ export interface ApiKey {
 	expiresAt: number | null;
 	revokedAt: number | null;
 	createdAt: number;
+	lastUsedAt: number | null;
 }
 
 export interface Delegation {
@@ -120,6 +121,7 @@ interface ApiKeyRow {
 	expires_at: number | null;
 	revoked_at: number | null;
 	created_at: number;
+	last_used_at: number | null;
 }
 
 interface DelegationRow {
@@ -153,7 +155,7 @@ const MEMBER_COLUMNS = 'id, organization_id, user_id, role, created_at, updated_
 const INVITE_COLUMNS =
 	'id, organization_id, email, role, state, invited_by, expires_at, created_at, updated_at';
 const API_KEY_COLUMNS =
-	'id, organization_id, name, scopes, created_by, expires_at, revoked_at, created_at';
+	'id, organization_id, name, scopes, created_by, expires_at, revoked_at, created_at, last_used_at';
 const DELEGATION_COLUMNS = `id, organization_id, agency_organization_id, role, site_id,
 	state, expires_at, created_by, accepted_by, created_at, updated_at, revoked_at`;
 const SITE_GRANT_COLUMNS =
@@ -204,7 +206,8 @@ function toApiKey(row: ApiKeyRow): ApiKey {
 		createdBy: row.created_by,
 		expiresAt: row.expires_at,
 		revokedAt: row.revoked_at,
-		createdAt: row.created_at
+		createdAt: row.created_at,
+		lastUsedAt: row.last_used_at
 	};
 }
 
@@ -497,7 +500,8 @@ export async function createApiKey(
 		createdBy: input.createdBy,
 		expiresAt: input.expiresAt,
 		revokedAt: null,
-		createdAt: now
+		createdAt: now,
+		lastUsedAt: null
 	};
 	await uniqueOrDuplicate(() =>
 		db.run(
@@ -532,17 +536,82 @@ export async function getApiKeyByHash(
 	return row ? toApiKey(row) : null;
 }
 
-export async function revokeApiKey(
+export async function getApiKey(
 	db: CollegeDBClient,
 	organizationId: string,
 	id: string
+): Promise<ApiKey | null> {
+	const row = await db.first<ApiKeyRow>(
+		organizationId,
+		`SELECT ${API_KEY_COLUMNS} FROM api_keys WHERE organization_id = ? AND id = ?`,
+		[organizationId, id]
+	);
+	return row ? toApiKey(row) : null;
+}
+
+export async function revokeApiKey(
+	db: CollegeDBClient,
+	organizationId: string,
+	id: string,
+	at: number = Date.now()
 ): Promise<boolean> {
 	const result = await db.run(
 		organizationId,
 		'UPDATE api_keys SET revoked_at = ? WHERE organization_id = ? AND id = ? AND revoked_at IS NULL',
-		[Date.now(), organizationId, id]
+		[at, organizationId, id]
 	);
 	return wasChanged(result);
+}
+
+// newest first; the cursor is the last row's created_at and id
+export async function listApiKeys(
+	db: CollegeDBClient,
+	organizationId: string,
+	options: { after?: { createdAt: number; id: string }; count: number }
+): Promise<ApiKey[]> {
+	const keyset =
+		options.after === undefined ? '' : 'AND (created_at < ? OR (created_at = ? AND id < ?))';
+	const cursor =
+		options.after === undefined
+			? []
+			: [options.after.createdAt, options.after.createdAt, options.after.id];
+	const { results } = await db.all<ApiKeyRow>(
+		organizationId,
+		`SELECT ${API_KEY_COLUMNS} FROM api_keys WHERE organization_id = ? ${keyset}
+		 ORDER BY created_at DESC, id DESC LIMIT ?`,
+		[organizationId, ...cursor, options.count]
+	);
+	return results.map(toApiKey);
+}
+
+export async function countActiveApiKeys(
+	db: CollegeDBClient,
+	organizationId: string,
+	now: number
+): Promise<number> {
+	const row = await db.first<{ n: number }>(
+		organizationId,
+		`SELECT COUNT(*) AS n FROM api_keys WHERE organization_id = ? AND revoked_at IS NULL
+		 AND (expires_at IS NULL OR expires_at > ?)`,
+		[organizationId, now]
+	);
+	return row?.n ?? 0;
+}
+
+// moves the mark forward only; a write that finds a newer mark changes nothing
+export async function touchApiKey(
+	db: CollegeDBClient,
+	organizationId: string,
+	id: string,
+	at: number,
+	staleBefore: number
+): Promise<void> {
+	await db.run(
+		organizationId,
+		`UPDATE api_keys SET last_used_at = ?
+		 WHERE organization_id = ? AND id = ? AND (last_used_at IS NULL OR last_used_at <= ?)`,
+		[at, organizationId, id, staleBefore]
+	);
 }
 
 export async function createDelegation(
