@@ -66,6 +66,25 @@ export default defineNuxtConfig({
 		preset: 'cloudflare_module',
 		experimental: { tasks: true },
 		moduleSideEffects: ['reflect-metadata'],
+		externals: { inline: ['@drupflare/untarl'] },
+		rollupConfig: {
+			plugins: [
+				{
+					// untarl ships TypeScript source and nitro skips esbuild inside node_modules
+					name: 'untarl-ts',
+					async transform(code: string, id: string) {
+						if (!id.includes('/@drupflare/untarl/src/')) return null;
+						const { transform } = await import('esbuild');
+						const out = await transform(code, {
+							loader: 'ts',
+							format: 'esm',
+							target: 'es2022'
+						});
+						return { code: out.code, map: null };
+					}
+				}
+			]
+		},
 		scheduledTasks: {
 			'*/15 * * * *': [
 				'pending-secrets-purge',

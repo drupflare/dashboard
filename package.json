@@ -89,5 +89,8 @@
 	},
 	"lint-staged": {
 		"*.{ts,js,mjs,css,md,json,jsonc}": "prettier --write"
+	},
+	"patchedDependencies": {
+		"@drupflare/untarl@0.1.0": "patches/@drupflare%2Funtarl@0.1.0.patch"
 	}
 }
