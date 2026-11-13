@@ -1,9 +1,4 @@
-import { toBase64Url } from '@contracts/common';
 import { describe, expect, it } from 'vitest';
-import type { ConnectionRow, RemoteRow } from '../../../../src/server/db/repos/repo-connections';
-import type { ProviderFetch } from '../../../../src/server/integrations/git-providers';
-import { guardedProviderFetch } from '../../../../src/server/integrations/git-providers/guard';
-import { hmacSha256Hex } from '../../../../src/server/services/crypto';
 import {
 	acceptDelivery,
 	attachRemote,
@@ -11,165 +6,20 @@ import {
 	listRepositories,
 	revokeConnection,
 	startConnect,
-	type RepoConnectionDeps,
-	type RepoConnectionStore
+	type RepoConnectionDeps
 } from '../../../../src/server/services/repo-connections';
-import type { OnceStore } from '../../../../src/server/services/single-use';
-import { loadKeyRing } from '../../../../src/shared/custody/envelope';
 import { ApiError } from '../../../../src/shared/errors';
-
-const NOW = 1_800_000_000_000;
-const ORG = 'org_1';
-const TOKEN = 'glpat-plain-token-value';
-const DNS: Record<string, string[]> = {
-	'git.example.org': ['93.184.216.34'],
-	'loop.example.org': ['127.0.0.1'],
-	'meta.example.org': ['169.254.169.254'],
-	'hub.example.org': ['93.184.216.35'],
-	'github.com': ['140.82.112.3'],
-	'api.github.com': ['140.82.112.5']
-};
-const resolve = async (hostname: string): Promise<string[]> => DNS[hostname] ?? [];
-
-function fakeStore() {
-	const connections = new Map<string, ConnectionRow>();
-	const remotes = new Map<string, RemoteRow>();
-	const deliveries = new Set<string>();
-	const store: RepoConnectionStore = {
-		async insertConnection(row) {
-			connections.set(row.id, { ...row });
-		},
-		async getConnection(orgId, id) {
-			const row = connections.get(id);
-			return row && row.organizationId === orgId ? { ...row } : null;
-		},
-		async listConnections(orgId) {
-			return [...connections.values()]
-				.filter((r) => r.organizationId === orgId)
-				.map((r) => ({ ...r }));
-		},
-		async activeByExternal(provider, externalId) {
-			const row = [...connections.values()].find(
-				(r) =>
-					r.provider === provider && r.externalId === externalId && r.state === 'active'
-			);
-			return row ? { ...row } : null;
-		},
-		async setCredential(id, envelope) {
-			const row = connections.get(id);
-			if (!row || row.state !== 'active') return false;
-			row.credentialEnvelope = envelope;
-			return true;
-		},
-		async revokeConnection(orgId, id, now) {
-			const row = connections.get(id);
-			if (!row || row.organizationId !== orgId || row.state !== 'active') return false;
-			Object.assign(row, { state: 'revoked', credentialEnvelope: null, revokedAt: now });
-			return true;
-		},
-		async insertRemote(row) {
-			remotes.set(row.id, { ...row });
-		},
-		async listRemotes(orgId, siteId) {
-			return [...remotes.values()].filter(
-				(r) => r.organizationId === orgId && r.siteId === siteId
-			);
-		},
-		async remotesForPush(provider, repo, branch) {
-			return [...remotes.values()]
-				.filter((r) => {
-					const c = connections.get(r.connectionId);
-					return (
-						c?.provider === provider &&
-						c.state === 'active' &&
-						r.repoFullName === repo &&
-						r.branch === branch
-					);
-				})
-				.map((r) => ({ ...r }));
-		},
-		async setPull(id, status, at) {
-			const row = remotes.get(id);
-			if (row) Object.assign(row, { lastPullStatus: status, lastPullAt: at });
-		},
-		async hasDelivery(provider, id) {
-			return deliveries.has(`${provider}:${id}`);
-		},
-		async recordDelivery(provider, id) {
-			deliveries.add(`${provider}:${id}`);
-		}
-	};
-	return { store, connections, remotes };
-}
-
-function fakeOnce(): OnceStore {
-	const values = new Map<string, { value: string; expiresAt: number }>();
-	const take = async (key: string, now: number) => {
-		const entry = values.get(key);
-		values.delete(key);
-		return entry && entry.expiresAt > now ? entry.value : null;
-	};
-	return {
-		async put(key, value, expiresAt) {
-			values.set(key, { value, expiresAt });
-		},
-		async get(key, now) {
-			const entry = values.get(key);
-			return entry && entry.expiresAt > now ? entry.value : null;
-		},
-		take,
-		async takeIf() {
-			return false;
-		}
-	};
-}
-
-const githubReply = (installations: number[]) => (url: string) => {
-	if (url.includes('/login/oauth/access_token'))
-		return Response.json({ access_token: 'ghu_user' });
-	if (url.includes('/user/installations')) {
-		return Response.json({ installations: installations.map((id) => ({ id })) });
-	}
-	return Response.json([]);
-};
-
-async function harness(reply: (url: string) => Response = () => Response.json([])) {
-	const { store, connections, remotes } = fakeStore();
-	const calls: string[] = [];
-	const transport: ProviderFetch = async (url) => {
-		calls.push(url);
-		return reply(url);
-	};
-	const pulls: string[] = [];
-	const deps: RepoConnectionDeps = {
-		store,
-		once: fakeOnce(),
-		ring: await loadKeyRing({ KEK_V1: toBase64Url(new Uint8Array(32).fill(7)) }),
-		fetch: guardedProviderFetch({ fetch: transport, resolve }),
-		resolve,
-		now: () => NOW,
-		github: {
-			appId: '1',
-			privateKey: '',
-			slug: 'drupflare',
-			clientId: 'ghcid',
-			clientSecret: 'ghsecret',
-			webhookSecret: 'gh-secret'
-		},
-		gitlab: {
-			clientId: 'cid',
-			clientSecret: 'csecret',
-			redirectUri: 'https://app.example/cb',
-			webhookSecret: 'gl-secret'
-		},
-		pullRemote: async (remote, sha) => {
-			pulls.push(`${remote.id}@${sha}`);
-			return 'installed';
-		},
-		audit: async () => {}
-	};
-	return { deps, connections, remotes, calls, pulls };
-}
+import { orgOfRepoState } from '../../../../src/shared/oauth';
+import {
+	NOW,
+	ORG,
+	TOKEN,
+	githubConnection,
+	githubReply,
+	harness,
+	pushBody,
+	signBody
+} from './repo-connections-support';
 
 async function refusedWith(work: () => Promise<unknown>): Promise<ApiError> {
 	try {
@@ -198,6 +48,39 @@ describe('startConnect and completeConnect', () => {
 			})
 		);
 		expect(other.code).toBe('validation');
+	});
+
+	it('puts the provider and the organisation in the state, so the shared callback page can route it', async () => {
+		const { deps } = await harness();
+		const start = await startConnect(deps, { orgId: ORG, provider: 'github' });
+		if (start.kind !== 'redirect') throw new Error('expected a redirect');
+		const url = new URL(start.url);
+		expect(`${url.origin}${url.pathname}`).toBe(
+			'https://github.com/apps/drupflare/installations/new'
+		);
+		const state = url.searchParams.get('state') ?? '';
+		expect(state.startsWith('github.repo.')).toBe(true);
+		expect(state.length).toBeLessThanOrEqual(256);
+		expect(orgOfRepoState(state)).toBe(ORG);
+	});
+
+	it('answers not built, and stores nothing, when the key ring is missing', async () => {
+		const { deps, connections } = await harness(() =>
+			Response.json([{ full_name: 'ops/site', default_branch: 'main' }])
+		);
+		deps.ring = async () => {
+			throw new ApiError('not_built', 'Secret custody is not available yet');
+		};
+		const error = await refusedWith(() =>
+			startConnect(deps, {
+				orgId: ORG,
+				provider: 'gitea',
+				token: TOKEN,
+				baseUrl: 'https://git.example.org'
+			})
+		);
+		expect(error.code).toBe('not_built');
+		expect(connections.size).toBe(0);
 	});
 
 	async function githubState(deps: RepoConnectionDeps, orgId = ORG): Promise<string> {
@@ -410,21 +293,11 @@ describe('attachRemote', () => {
 
 describe('acceptDelivery', () => {
 	async function githubRemote() {
-		const h = await harness(githubReply([42]));
-		const start = await startConnect(h.deps, { orgId: ORG, provider: 'github' });
-		const state =
-			start.kind === 'redirect' ? (new URL(start.url).searchParams.get('state') ?? '') : '';
-		const connection = await completeConnect(h.deps, {
-			orgId: ORG,
-			provider: 'github',
-			state,
-			installationId: '42',
-			code: 'user-code'
-		});
+		const h = await githubConnection();
 		await attachRemote(h.deps, {
 			orgId: ORG,
 			siteId: 'site_1',
-			connectionId: connection.id,
+			connectionId: h.connection.id,
 			repo: 'ops/site',
 			branch: 'main',
 			mountPath: 'modules/custom/site'
@@ -432,17 +305,7 @@ describe('acceptDelivery', () => {
 		return h;
 	}
 
-	const pushBody = (installationId: number, ref = 'refs/heads/main') =>
-		JSON.stringify({
-			ref,
-			after: 'a'.repeat(40),
-			repository: { full_name: 'ops/site' },
-			installation: { id: installationId }
-		});
-
-	async function sign(body: string) {
-		return `sha256=${await hmacSha256Hex('gh-secret', body)}`;
-	}
+	const sign = signBody;
 
 	it('refuses a bad signature and pulls nothing', async () => {
 		const h = await githubRemote();
@@ -455,7 +318,7 @@ describe('acceptDelivery', () => {
 				signature: 'sha256=00'
 			})
 		);
-		expect(error.code).toBe('validation');
+		expect(error.code).toBe('unauthenticated');
 		expect(h.pulls).toHaveLength(0);
 	});
 
@@ -557,7 +420,7 @@ describe('acceptDelivery', () => {
 				signature: 'wrong'
 			})
 		);
-		expect(denied.code).toBe('validation');
+		expect(denied.code).toBe('unauthenticated');
 		const ok = await acceptDelivery(h.deps, 'gitlab', {
 			eventName: 'Push Hook',
 			deliveryId: 'g2',

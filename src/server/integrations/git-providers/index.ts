@@ -1,5 +1,4 @@
-export const PROVIDER_IDS = ['github', 'gitlab', 'bitbucket', 'gitea', 'forgejo'] as const;
-export type ProviderId = (typeof PROVIDER_IDS)[number];
+export { PROVIDER_IDS, type ProviderId } from '../../../shared/repo-connections';
 
 // every provider call goes through this, so tests pass a fake and nothing reaches a real host
 export type ProviderFetch = (input: string, init?: RequestInit) => Promise<Response>;

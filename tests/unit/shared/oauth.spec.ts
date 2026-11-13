@@ -6,8 +6,10 @@ import {
 	OAUTH_LABELS,
 	OAUTH_PROVIDERS,
 	consentTextFor,
+	orgOfRepoState,
 	providerOfState,
 	purposeOfState,
+	repoStateFor,
 	stateFor
 } from '../../../src/shared/oauth';
 
@@ -33,6 +35,33 @@ describe('the purpose in the state', () => {
 	it('does not read a link out of a token that happens to say link', () => {
 		for (const state of ['github.link', 'github.link.abc.def', '', 'link.github.abc']) {
 			expect(purposeOfState(state)).toBe('sign-in');
+		}
+	});
+});
+
+describe('the repository state', () => {
+	it('names the provider and the organisation and reads as neither a sign-in nor a link', () => {
+		const state = repoStateFor('github', 'tok-en_1', 'org_abc');
+		expect(providerOfState(state)).toBe('github');
+		expect(orgOfRepoState(state)).toBe('org_abc');
+		expect(purposeOfState(state)).toBe('sign-in');
+	});
+
+	it('keeps an organisation id that holds a dot whole', () => {
+		expect(orgOfRepoState(repoStateFor('gitlab', 'tok', 'org.a.b'))).toBe('org.a.b');
+	});
+
+	it('reads nothing out of a sign-in, a link or an incomplete state', () => {
+		for (const state of [
+			stateFor('github', 'abc'),
+			stateFor('github', 'abc', 'link'),
+			'github.repo',
+			'github.repo.tok',
+			'github.repo.tok.',
+			'github.other.tok.org_1',
+			''
+		]) {
+			expect(orgOfRepoState(state), state).toBeNull();
 		}
 	});
 });

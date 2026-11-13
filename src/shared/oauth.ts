@@ -33,6 +33,17 @@ export const stateFor = (
 	purpose: OAuthPurpose = 'sign-in'
 ): string => (purpose === 'link' ? `${provider}.link.${token}` : `${provider}.${token}`);
 
+// a repository connection returns to the same address, so its state names the organisation that
+// started it; the single-use record, not this value, decides who may finish it
+export const repoStateFor = (provider: OAuthProvider, token: string, orgId: string): string =>
+	`${provider}.repo.${token}.${orgId}`;
+
+export function orgOfRepoState(state: string): string | null {
+	const parts = state.split('.');
+	if (parts.length < 4 || parts[1] !== 'repo') return null;
+	return parts.slice(3).join('.') || null;
+}
+
 export function providerOfState(state: string): OAuthProvider | null {
 	const head = state.split('.')[0];
 	return (OAUTH_PROVIDERS as readonly string[]).includes(head ?? '')

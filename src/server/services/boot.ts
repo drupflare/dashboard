@@ -13,6 +13,7 @@ import { entitlementKeys } from '../domain/entitlements';
 import { renderMail } from '../emails';
 import { cloudflareEmailSender, type EmailBinding } from '../integrations/email';
 import { engineConfigOf, engineEventSender, engineStarter } from '../integrations/engine';
+import { guardedProviderFetch } from '../integrations/git-providers/guard';
 import { OAUTH_PROVIDERS, oauthClients, type OAuthConfig } from '../integrations/oauth';
 import { probeHostKey } from '../integrations/ssh-key';
 import { dohResolve } from '../integrations/url-guard';
@@ -62,6 +63,12 @@ import {
 	type OwnerTokenStore,
 	type PendingSecretDeps
 } from './owner-tokens';
+import {
+	collegeRepoStore,
+	setRepoConnectionDeps,
+	type PullStatus,
+	type RepoConnectionDeps
+} from './repo-connections';
 import { collegeOnceStore } from './single-use';
 import {
 	resetSiteHealthServices,
@@ -90,6 +97,16 @@ export interface BootOptions {
 	baseUrl?: string;
 	// public client ids the build carries in the runtime config, by provider
 	oauthClientIds?: Partial<Record<string, string>>;
+	// the GitHub App values the build carries in the runtime config; a Worker secret of the same
+	// NUXT_ name wins
+	githubApp?: {
+		appId?: string;
+		clientId?: string;
+		slug?: string;
+		privateKey?: string;
+		clientSecret?: string;
+		webhookSecret?: string;
+	};
 	// the entitlement, budget, policy, suspension and support ports; each defaults to empty
 	facts?: Omit<FactsDeps, 'store'>;
 }
@@ -150,6 +167,41 @@ export function oauthConfig(
 		};
 	}
 	return config;
+}
+
+export const GITHUB_APP_SLUG = 'drupflare';
+
+// the app needs all six values; with any missing it is left out and its routes answer 501
+export function githubAppOf(
+	env: BootEnv,
+	values: NonNullable<BootOptions['githubApp']> = {}
+): RepoConnectionDeps['github'] {
+	const appId = text(env, 'NUXT_PUBLIC_GITHUB_APP_ID') ?? (values.appId || undefined);
+	const clientId =
+		text(env, 'NUXT_PUBLIC_GITHUB_APP_CLIENT_ID') ?? (values.clientId || undefined);
+	const clientSecret =
+		text(env, 'NUXT_GITHUB_APP_CLIENT_SECRET') ?? (values.clientSecret || undefined);
+	const webhookSecret =
+		text(env, 'NUXT_GITHUB_APP_WEBHOOK_SECRET') ?? (values.webhookSecret || undefined);
+	// a secret set from one line carries the PEM's newlines as the two characters \n
+	const privateKey = (
+		text(env, 'NUXT_GITHUB_APP_PRIVATE_KEY') ??
+		(values.privateKey || undefined)
+	)?.replaceAll('\\n', '\n');
+	if (!appId || !clientId || !clientSecret || !webhookSecret || !privateKey) return null;
+	return {
+		appId,
+		clientId,
+		clientSecret,
+		webhookSecret,
+		privateKey,
+		slug: text(env, 'NUXT_PUBLIC_GITHUB_APP_SLUG') ?? (values.slug || GITHUB_APP_SLUG)
+	};
+}
+
+// the site's own git route pulls by a remote id that attaching never creates, so no pull can run yet
+export async function pullUnavailable(): Promise<PullStatus> {
+	return 'failed';
 }
 
 // admin needs both halves: the role on the user record and an Access login for the same address
@@ -303,6 +355,7 @@ export interface BuiltServices {
 	imports: Partial<ImportServices>;
 	siteHealth: Partial<SiteHealthServices>;
 	capacity: Partial<CapacityServices>;
+	repoConnections: RepoConnectionDeps;
 	pendingSecrets: () => Promise<PendingSecretDeps>;
 	heads: HeadStore;
 }
@@ -426,6 +479,28 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 				(input, init) => fetch(input, init)
 			)
 		},
+		repoConnections: {
+			store: collegeRepoStore(getDb),
+			once: collegeOnceStore(getDb),
+			ring: async () => (await pendingSecrets()).ring,
+			fetch: guardedProviderFetch({
+				fetch: (input, init) => fetch(input, init),
+				resolve: (hostname) => dohResolve(hostname)
+			}),
+			resolve: (hostname) => dohResolve(hostname),
+			now: Date.now,
+			github: githubAppOf(env, options.githubApp),
+			gitlab: null,
+			pullRemote: pullUnavailable,
+			audit: async (orgId, action, targetId) => {
+				await append(
+					await getDb(),
+					orgId,
+					{ actor: 'dashboard', action, target: targetId },
+					heads
+				);
+			}
+		},
 		pendingSecrets,
 		heads
 	};
@@ -448,6 +523,7 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	setImportServices(built.imports);
 	setSiteHealthServices(built.siteHealth);
 	setCapacityServices(built.capacity);
+	setRepoConnectionDeps(built.repoConnections);
 	setPendingSecretDeps(built.pendingSecrets);
 	booted = built;
 	return built;
@@ -471,6 +547,7 @@ export function resetBoot(): void {
 	resetImportServices();
 	resetSiteHealthServices();
 	resetCapacityServices();
+	setRepoConnectionDeps(null);
 	resetPendingSecretDeps();
 }
 

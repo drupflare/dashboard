@@ -22,6 +22,14 @@ export default defineNitroPlugin((nitroApp) => {
 					github: config.public.githubClientId as string,
 					gitlab: config.public.gitlabClientId as string,
 					cloudflare: config.public.cloudflareClientId as string
+				},
+				githubApp: {
+					appId: config.public.githubAppId as string,
+					clientId: config.public.githubAppClientId as string,
+					slug: config.public.githubAppSlug as string,
+					privateKey: config.githubApp.privateKey as string,
+					clientSecret: config.githubApp.clientSecret as string,
+					webhookSecret: config.githubApp.webhookSecret as string
 				}
 			});
 		} catch (error) {

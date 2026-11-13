@@ -24,7 +24,15 @@ export default defineNuxtConfig({
 		public: {
 			githubClientId: process.env.NUXT_PUBLIC_GITHUB_CLIENT_ID || '',
 			gitlabClientId: process.env.NUXT_PUBLIC_GITLAB_CLIENT_ID || '',
-			cloudflareClientId: process.env.NUXT_PUBLIC_CLOUDFLARE_CLIENT_ID || ''
+			cloudflareClientId: process.env.NUXT_PUBLIC_CLOUDFLARE_CLIENT_ID || '',
+			githubAppId: process.env.NUXT_PUBLIC_GITHUB_APP_ID || '',
+			githubAppClientId: process.env.NUXT_PUBLIC_GITHUB_APP_CLIENT_ID || '',
+			githubAppSlug: process.env.NUXT_PUBLIC_GITHUB_APP_SLUG || 'drupflare'
+		},
+		githubApp: {
+			privateKey: '',
+			clientSecret: '',
+			webhookSecret: ''
 		},
 		turnstile: {
 			secretKey: process.env.NUXT_TURNSTILE_SECRET_KEY || ''

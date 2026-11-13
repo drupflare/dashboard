@@ -6,6 +6,8 @@ import {
 	type KeyRing
 } from '../../shared/custody/envelope';
 import { ApiError } from '../../shared/errors';
+import { repoStateFor } from '../../shared/oauth';
+import type { ConnectionView, RemoteView } from '../../shared/repo-connections';
 import type { ConnectionRow, RemoteRow } from '../db/repos/repo-connections';
 import * as repo from '../db/repos/repo-connections';
 import {
@@ -122,7 +124,8 @@ export function collegeRepoStore(getDb: () => Promise<CollegeDBClient>): RepoCon
 export interface RepoConnectionDeps {
 	store: RepoConnectionStore;
 	once: OnceStore;
-	ring: KeyRing;
+	// loads on first use, so a missing key answers 501 on the routes that seal a credential
+	ring: () => Promise<KeyRing>;
 	// every provider call goes through the guard in integrations/git-providers/guard.ts
 	fetch: ProviderFetch;
 	// resolver for the host check that runs before a token is sent
@@ -151,27 +154,7 @@ export function repoConnectionDeps(): RepoConnectionDeps {
 
 // #region views
 
-export interface ConnectionView {
-	id: string;
-	provider: ProviderId;
-	displayName: string;
-	scopes: string[];
-	state: 'active' | 'revoked';
-	createdAt: number;
-}
-
-export interface RemoteView {
-	id: string;
-	siteId: string;
-	connectionId: string;
-	repo: string;
-	branch: string;
-	mountPath: string;
-	intervalMinutes: number;
-	lastPullStatus: PullStatus | null;
-	lastPullAt: number | null;
-	createdAt: number;
-}
+export type { ConnectionView, RemoteView };
 
 function connectionView(row: ConnectionRow): ConnectionView {
 	return {
@@ -216,7 +199,7 @@ async function seal(
 	connectionId: string,
 	plaintext: string
 ): Promise<string> {
-	return JSON.stringify(await encryptRecord(plaintext, aadOf(connectionId), deps.ring));
+	return JSON.stringify(await encryptRecord(plaintext, aadOf(connectionId), await deps.ring()));
 }
 
 async function open(deps: RepoConnectionDeps, row: ConnectionRow): Promise<string> {
@@ -225,7 +208,7 @@ async function open(deps: RepoConnectionDeps, row: ConnectionRow): Promise<strin
 			reason: 'no_credential'
 		});
 	}
-	return decryptRecordText(JSON.parse(row.credentialEnvelope), aadOf(row.id), deps.ring);
+	return decryptRecordText(JSON.parse(row.credentialEnvelope), aadOf(row.id), await deps.ring());
 }
 
 function githubOf(deps: RepoConnectionDeps): GitHubApp {
@@ -310,9 +293,9 @@ export async function startConnect(
 async function putState(
 	deps: RepoConnectionDeps,
 	orgId: string,
-	provider: ProviderId
+	provider: 'github' | 'gitlab'
 ): Promise<string> {
-	const state = randomToken(24);
+	const state = repoStateFor(provider, randomToken(24), orgId);
 	await deps.once.put(
 		`repo-connect:${state}`,
 		JSON.stringify({ orgId, provider }),
@@ -593,7 +576,7 @@ export async function acceptDelivery(
 		provider === 'github'
 			? await verifyGitHubSignature(secret, input.rawBody, input.signature)
 			: verifyGitLabToken(secret, input.signature);
-	if (!verified) throw new ApiError('validation', 'The webhook signature is not valid');
+	if (!verified) throw new ApiError('unauthenticated', 'The webhook signature is not valid');
 	if (input.deliveryId === '') throw new ApiError('validation', 'The delivery id is missing');
 	if (await deps.store.hasDelivery(provider, input.deliveryId)) {
 		return { duplicate: true, matched: 0 };

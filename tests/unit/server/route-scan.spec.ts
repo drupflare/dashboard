@@ -180,6 +180,32 @@ describe('route scan: live route tree', () => {
 		expect(route?.meta).toMatchObject({ scope: 'admin', action: 'admin.capacity.read' });
 	});
 
+	it('finds the repository routes, each with an action that holds the right roles', async () => {
+		const { routes } = await scanRoutes(API_ROOT);
+		const found = Object.fromEntries(
+			routes
+				.filter((route) => /repo-connections|\/remotes$/.test(route.path))
+				.map((route) => [`${route.method} ${route.path}`, route.meta.action])
+		);
+		expect(found).toEqual({
+			'get /api/v1/orgs/{orgId}/repo-connections': 'repo.read',
+			'post /api/v1/orgs/{orgId}/repo-connections': 'repo.connect',
+			'post /api/v1/orgs/{orgId}/repo-connections/complete': 'repo.connect',
+			'get /api/v1/orgs/{orgId}/repo-connections/{id}/repositories': 'repo.read',
+			'post /api/v1/orgs/{orgId}/repo-connections/{id}/revoke': 'repo.connect',
+			'get /api/v1/orgs/{orgId}/sites/{id}/remotes': 'site.read',
+			'post /api/v1/orgs/{orgId}/sites/{id}/remotes': 'site.remote.manage'
+		});
+		expect(ORG_ROLE_ACTIONS.developer).not.toContain('repo.connect');
+		expect(ORG_ROLE_ACTIONS.admin).toContain('repo.connect');
+		expect(isSessionOnly('repo.connect')).toBe(true);
+	});
+
+	it('lists the GitHub hook as a file outside the scan, beside the Stripe hook', () => {
+		expect(isAllowListed('hooks/github.post.ts')).toBe(true);
+		expect(listRouteFiles(API_ROOT)).toContain('hooks/github.post.ts');
+	});
+
 	it('gives every live route a non-empty action in the permission table', async () => {
 		const { routes } = await scanRoutes(API_ROOT);
 		for (const route of routes) {

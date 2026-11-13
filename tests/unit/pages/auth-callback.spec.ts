@@ -292,3 +292,116 @@ describe('auth callback page', () => {
 		expect(navigate).not.toHaveBeenCalled();
 	});
 });
+
+describe('auth callback page: a repository connection', () => {
+	const state = 'github.repo.tok_en-1.org_abc';
+	const complete = 'POST /api/v1/orgs/org_abc/repo-connections/complete';
+	const done = {
+		status: 201,
+		body: {
+			id: 'conn_1',
+			provider: 'github',
+			displayName: 'GitHub installation 42',
+			scopes: [],
+			state: 'active',
+			createdAt: 1
+		}
+	};
+	const query = `?code=abc&installation_id=42&setup_action=install&state=${state}`;
+
+	it('finishes an installation for the organisation in the state, never signing in', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/me': { body: { ...me, stepUpUntil: soon() } },
+			[complete]: done
+		});
+		const wrapper = await mountAt(query);
+		await vi.waitFor(() =>
+			expect(navigate).toHaveBeenCalledWith('/org/integrations?connected=github')
+		);
+		const post = calls.find((call) => call.method === 'POST');
+		expect(post?.body).toEqual({
+			provider: 'github',
+			state,
+			code: 'abc',
+			installationId: '42'
+		});
+		expect(calls.some((call) => call.path.includes('/auth/oauth/'))).toBe(false);
+		expect(wrapper.text()).toContain('Connecting Your Account');
+	});
+
+	it('asks for a fresh sign-in first and sends nothing until it is given', async () => {
+		cleanup = registerApi({ 'GET /api/v1/me': { body: me }, [complete]: done });
+		const wrapper = await mountAt(query);
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm Your Identity'));
+		expect(wrapper.text()).toContain('Confirm Your Sign-In');
+		expect(wrapper.text()).toContain('GitHub sent you back');
+		expect(calls.some((call) => call.method === 'POST')).toBe(false);
+		expect(navigate).not.toHaveBeenCalled();
+	});
+
+	it('shows the server refusal and offers the way back', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/me': { body: { ...me, stepUpUntil: soon() } },
+			[complete]: failure(
+				'validation',
+				'This GitHub installation is not on your account',
+				'req_gh'
+			)
+		});
+		const wrapper = await mountAt(query);
+		await vi.waitFor(() =>
+			expect(wrapper.find('[role="alert"]').text()).toContain('not on your account')
+		);
+		expect(wrapper.text()).toContain('Connection Did Not Finish');
+		expect(wrapper.find('a[href="/account"]').exists()).toBe(true);
+		expect(navigate).not.toHaveBeenCalled();
+	});
+
+	it('says the session ended instead of asking a signed-out person to confirm', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/me': {
+				status: 401,
+				body: { code: 'unauthenticated', message: 'Sign in', details: {}, requestId: 'r' }
+			},
+			[complete]: done
+		});
+		const wrapper = await mountAt(query);
+		await vi.waitFor(() =>
+			expect(wrapper.find('[role="alert"]').text()).toContain('session has ended')
+		);
+		expect(calls.some((call) => call.method === 'POST')).toBe(false);
+	});
+
+	it('explains a pending approval when the organization owner has to accept first', async () => {
+		cleanup = registerApi({});
+		const wrapper = await mountAt(`?setup_action=request&state=${state}`);
+		await vi.waitFor(() =>
+			expect(wrapper.find('[role="alert"]').text()).toContain('has to approve')
+		);
+		expect(calls).toHaveLength(0);
+	});
+
+	it('does not call the server when the provider sent neither a code nor an installation', async () => {
+		cleanup = registerApi({});
+		const wrapper = await mountAt(`?error=access_denied&state=${state}`);
+		await vi.waitFor(() => expect(wrapper.find('[role="alert"]').exists()).toBe(true));
+		expect(wrapper.text()).toContain('did not finish the connection');
+		expect(calls).toHaveLength(0);
+	});
+
+	it('leaves a plain GitHub sign-in on the sign-in path', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/auth/oauth/github/callback': {
+				body: {
+					status: 'signed_in',
+					user: { id: 'usr_1', email: me.email, displayName: null },
+					isNew: false
+				}
+			},
+			'GET /api/v1/me': { body: me }
+		});
+		await mountAt('?code=abc&state=github.token');
+		await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/sites'));
+		expect(calls.some((call) => call.path.includes('repo-connections'))).toBe(false);
+	});
+});

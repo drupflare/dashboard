@@ -4877,6 +4877,505 @@
 				}
 			}
 		},
+		"/api/v1/orgs/{orgId}/repo-connections": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdRepoConnections",
+				"summary": "List repository connections",
+				"description": "Lists the provider connections of the organisation in the path, active and revoked, oldest first. A connection never shows its stored credential.",
+				"tags": ["repos"],
+				"x-action": "repo.read",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }, { "apiKey": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"provider": {
+														"type": "string",
+														"enum": [
+															"github",
+															"gitlab",
+															"bitbucket",
+															"gitea",
+															"forgejo"
+														]
+													},
+													"displayName": { "type": "string" },
+													"scopes": {
+														"type": "array",
+														"items": { "type": "string" }
+													},
+													"state": {
+														"type": "string",
+														"enum": ["active", "revoked"]
+													},
+													"createdAt": { "type": "number" }
+												},
+												"required": [
+													"id",
+													"provider",
+													"displayName",
+													"scopes",
+													"state",
+													"createdAt"
+												],
+												"additionalProperties": false
+											}
+										}
+									},
+									"required": ["items"],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			},
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdRepoConnections",
+				"summary": "Start a repository connection",
+				"description": "GitHub and GitLab answer with a redirect address on the provider, where the person picks what to share; finish with the complete route when the provider returns. Bitbucket, Gitea and Forgejo take a read-only token and answer with the stored connection. The token is sealed and never shown again. It needs a signed-in session with a fresh sign-in, so an API key is refused.",
+				"tags": ["repos"],
+				"x-action": "repo.connect",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"provider": {
+										"type": "string",
+										"enum": [
+											"github",
+											"gitlab",
+											"bitbucket",
+											"gitea",
+											"forgejo"
+										]
+									},
+									"token": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 4096
+									},
+									"baseUrl": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 2048
+									}
+								},
+								"required": ["provider"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"oneOf": [
+										{
+											"type": "object",
+											"properties": {
+												"kind": { "type": "string", "const": "redirect" },
+												"url": { "type": "string" }
+											},
+											"required": ["kind", "url"],
+											"additionalProperties": false
+										},
+										{
+											"type": "object",
+											"properties": {
+												"kind": { "type": "string", "const": "connected" },
+												"connection": {
+													"type": "object",
+													"properties": {
+														"id": { "type": "string" },
+														"provider": {
+															"type": "string",
+															"enum": [
+																"github",
+																"gitlab",
+																"bitbucket",
+																"gitea",
+																"forgejo"
+															]
+														},
+														"displayName": { "type": "string" },
+														"scopes": {
+															"type": "array",
+															"items": { "type": "string" }
+														},
+														"state": {
+															"type": "string",
+															"enum": ["active", "revoked"]
+														},
+														"createdAt": { "type": "number" }
+													},
+													"required": [
+														"id",
+														"provider",
+														"displayName",
+														"scopes",
+														"state",
+														"createdAt"
+													],
+													"additionalProperties": false
+												}
+											},
+											"required": ["kind", "connection"],
+											"additionalProperties": false
+										}
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/repo-connections/{id}/repositories": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdRepoConnectionsIdRepositories",
+				"summary": "List the repositories of a connection",
+				"description": "Asks the provider which repositories the connection can read, up to 100. A GitHub installation lists only the repositories it was installed on. A revoked connection is refused.",
+				"tags": ["repos"],
+				"x-action": "repo.read",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }, { "apiKey": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1, "maxLength": 64 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"fullName": { "type": "string" },
+													"defaultBranch": { "type": ["string", "null"] }
+												},
+												"required": ["fullName", "defaultBranch"],
+												"additionalProperties": false
+											}
+										}
+									},
+									"required": ["items"],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/repo-connections/{id}/revoke": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdRepoConnectionsIdRevoke",
+				"summary": "Revoke a repository connection",
+				"description": "Revokes the connection in the path and clears its stored credential in the same write. A second revoke answers the same view. Remotes that use it stop pulling. A GitHub installation is removed from the GitHub side in GitHub settings. It needs a signed-in session with a fresh sign-in, so an API key is refused.",
+				"tags": ["repos"],
+				"x-action": "repo.connect",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1, "maxLength": 64 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": { "type": "string" },
+										"provider": {
+											"type": "string",
+											"enum": [
+												"github",
+												"gitlab",
+												"bitbucket",
+												"gitea",
+												"forgejo"
+											]
+										},
+										"displayName": { "type": "string" },
+										"scopes": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"state": {
+											"type": "string",
+											"enum": ["active", "revoked"]
+										},
+										"createdAt": { "type": "number" }
+									},
+									"required": [
+										"id",
+										"provider",
+										"displayName",
+										"scopes",
+										"state",
+										"createdAt"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/repo-connections/complete": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdRepoConnectionsComplete",
+				"summary": "Finish a repository connection",
+				"description": "Finishes a GitHub or GitLab connection with what the provider sent back. The state must be the one this organisation started, and it works once. For GitHub the installation must be one the signed-in person can reach on GitHub. It needs a signed-in session with a fresh sign-in, so an API key is refused.",
+				"tags": ["repos"],
+				"x-action": "repo.connect",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"provider": { "type": "string", "enum": ["github", "gitlab"] },
+									"state": { "type": "string", "minLength": 1, "maxLength": 256 },
+									"code": { "type": "string", "minLength": 1, "maxLength": 2048 },
+									"installationId": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 32
+									}
+								},
+								"required": ["provider", "state"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": { "type": "string" },
+										"provider": {
+											"type": "string",
+											"enum": [
+												"github",
+												"gitlab",
+												"bitbucket",
+												"gitea",
+												"forgejo"
+											]
+										},
+										"displayName": { "type": "string" },
+										"scopes": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"state": {
+											"type": "string",
+											"enum": ["active", "revoked"]
+										},
+										"createdAt": { "type": "number" }
+									},
+									"required": [
+										"id",
+										"provider",
+										"displayName",
+										"scopes",
+										"state",
+										"createdAt"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/orgs/{orgId}/sites": {
 			"get": {
 				"operationId": "getApiV1OrgsOrgIdSites",
@@ -8788,6 +9287,233 @@
 					"401": { "$ref": "#/components/responses/Unauthenticated" },
 					"403": { "$ref": "#/components/responses/Forbidden" },
 					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/remotes": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdSitesIdRemotes",
+				"summary": "List the repositories attached to a site",
+				"description": "Lists the remotes of the site in the path with the result of the last pull on each. A site of another organisation is not found.",
+				"tags": ["repos"],
+				"x-action": "site.read",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }, { "apiKey": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"siteId": { "type": "string" },
+													"connectionId": { "type": "string" },
+													"repo": { "type": "string" },
+													"branch": { "type": "string" },
+													"mountPath": { "type": "string" },
+													"intervalMinutes": {
+														"type": "integer",
+														"minimum": -9007199254740991,
+														"maximum": 9007199254740991
+													},
+													"lastPullStatus": {
+														"anyOf": [
+															{
+																"type": "string",
+																"enum": ["installed", "failed"]
+															},
+															{ "type": "null" }
+														]
+													},
+													"lastPullAt": { "type": ["number", "null"] },
+													"createdAt": { "type": "number" }
+												},
+												"required": [
+													"id",
+													"siteId",
+													"connectionId",
+													"repo",
+													"branch",
+													"mountPath",
+													"intervalMinutes",
+													"lastPullStatus",
+													"lastPullAt",
+													"createdAt"
+												],
+												"additionalProperties": false
+											}
+										}
+									},
+									"required": ["items"],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			},
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdSitesIdRemotes",
+				"summary": "Attach a repository to a site",
+				"description": "Attaches one branch of a repository, through an active connection of the organisation, to the site in the path. The mount path must sit inside modules, themes or profiles. The interval is in minutes, from 5, and defaults to 60.",
+				"tags": ["repos"],
+				"x-action": "site.remote.manage",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }, { "apiKey": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"connectionId": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 64
+									},
+									"repo": { "type": "string", "minLength": 1, "maxLength": 300 },
+									"branch": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 200
+									},
+									"mountPath": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 200
+									},
+									"intervalMinutes": {
+										"type": "integer",
+										"minimum": -9007199254740991,
+										"maximum": 9007199254740991
+									}
+								},
+								"required": ["connectionId", "repo", "branch", "mountPath"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": { "type": "string" },
+										"siteId": { "type": "string" },
+										"connectionId": { "type": "string" },
+										"repo": { "type": "string" },
+										"branch": { "type": "string" },
+										"mountPath": { "type": "string" },
+										"intervalMinutes": {
+											"type": "integer",
+											"minimum": -9007199254740991,
+											"maximum": 9007199254740991
+										},
+										"lastPullStatus": {
+											"anyOf": [
+												{
+													"type": "string",
+													"enum": ["installed", "failed"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"lastPullAt": { "type": ["number", "null"] },
+										"createdAt": { "type": "number" }
+									},
+									"required": [
+										"id",
+										"siteId",
+										"connectionId",
+										"repo",
+										"branch",
+										"mountPath",
+										"intervalMinutes",
+										"lastPullStatus",
+										"lastPullAt",
+										"createdAt"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
 					"426": { "$ref": "#/components/responses/ContractUnsupported" },
 					"429": { "$ref": "#/components/responses/RateLimited" },
 					"500": { "$ref": "#/components/responses/InternalError" }

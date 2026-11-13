@@ -3,6 +3,7 @@ import { toApiClientError, useApi } from '~/composables/useApi';
 import {
 	OAUTH_LABELS,
 	OAUTH_PROVIDERS,
+	orgOfRepoState,
 	providerOfState,
 	purposeOfState,
 	type OAuthProvider
@@ -17,7 +18,7 @@ type Result =
 const route = useRoute();
 const session = useSessionStore();
 
-const phase = ref<'working' | 'signin' | 'confirm' | 'failed'>('working');
+const phase = ref<'working' | 'signin' | 'confirm' | 'repo' | 'failed'>('working');
 const message = ref('');
 const linkEmail = ref('');
 const linkProvider = ref<OAuthProvider | null>(null);
@@ -31,6 +32,8 @@ const fresh = () => {
 };
 
 const linkLabel = computed(() => (linkProvider.value ? OAUTH_LABELS[linkProvider.value] : ''));
+const linkLabelOf = (provider: OAuthProvider | undefined) =>
+	provider ? OAUTH_LABELS[provider] : 'The provider';
 
 function fail(text: string) {
 	message.value = text;
@@ -57,9 +60,48 @@ async function showLinkStep() {
 const signInRedirect = () =>
 	`/login?redirect=${encodeURIComponent(`/auth/callback?link=${linkProvider.value}`)}`;
 
+type RepoReturn = {
+	orgId: string;
+	provider: OAuthProvider;
+	body: Record<string, string>;
+};
+
+const repoReturn = ref<RepoReturn | null>(null);
+
 function stepUpDone() {
 	needsStepUp.value = false;
-	void confirmLink();
+	if (repoReturn.value) void finishRepo();
+	else void confirmLink();
+}
+
+// a repository connection needs a fresh sign-in, so a stale session asks for one and then resumes
+async function finishRepo() {
+	const pending = repoReturn.value;
+	if (!pending) return;
+	await session.load();
+	if (!session.me) {
+		fail('Your session has ended. Sign in, then start the connection again.');
+		return;
+	}
+	if (!fresh()) {
+		needsStepUp.value = true;
+		phase.value = 'repo';
+		return;
+	}
+	phase.value = 'working';
+	try {
+		await useApi().post(`/orgs/${pending.orgId}/repo-connections/complete`, pending.body);
+		await navigateTo(`/org/integrations?connected=${pending.provider}`);
+	} catch (cause) {
+		const apiError = toApiClientError(cause);
+		const details = apiError.details as { requires?: string } | null;
+		if (details?.requires === 'step-up') {
+			needsStepUp.value = true;
+			phase.value = 'repo';
+			return;
+		}
+		fail(apiError.message);
+	}
 }
 
 async function confirmLink() {
@@ -94,6 +136,25 @@ onMounted(async () => {
 	if (!state && !code && !error && linked) {
 		linkProvider.value = linked;
 		await showLinkStep();
+		return;
+	}
+	const repoOrg = state ? orgOfRepoState(state) : null;
+	if (state && provider && repoOrg) {
+		connecting.value = true;
+		const installationId = single(route.query.installation_id);
+		if (error || (!code && !installationId)) {
+			fail(
+				single(route.query.setup_action) === 'request'
+					? 'The owner of that GitHub organization has to approve the installation first. Connect again once they have.'
+					: 'The provider did not finish the connection. Start again from the integrations page.'
+			);
+			return;
+		}
+		const body: Record<string, string> = { provider, state };
+		if (code) body.code = code;
+		if (installationId) body.installationId = installationId;
+		repoReturn.value = { orgId: repoOrg, provider, body };
+		await finishRepo();
 		return;
 	}
 	if (!state || !provider || (!code && !error)) {
@@ -191,6 +252,20 @@ onMounted(async () => {
 					>Cancel</UButton
 				>
 			</div>
+		</template>
+		<template v-else-if="phase === 'repo'">
+			<h1 class="text-xl font-bold text-highlighted">Confirm Your Sign-In</h1>
+			<p class="text-muted">
+				{{ linkLabelOf(repoReturn?.provider) }} sent you back. Confirm your sign-in to
+				finish connecting your repositories.
+			</p>
+			<AccountStepUp
+				v-if="needsStepUp"
+				@done="stepUpDone"
+				@cancel="
+					fail('The connection was not finished. Start again from the integrations page.')
+				"
+			/>
 		</template>
 		<template v-else>
 			<h1 class="text-xl font-bold text-highlighted">

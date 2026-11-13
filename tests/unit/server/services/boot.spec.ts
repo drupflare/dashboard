@@ -6,8 +6,10 @@ import {
 	bootOnce,
 	bootedServices,
 	buildServices,
+	githubAppOf,
 	mailFor,
 	oauthConfig,
+	pullUnavailable,
 	resetBoot,
 	turnstileSecretOf,
 	webauthnConfig,
@@ -17,6 +19,7 @@ import { capacityServices } from '../../../../src/server/services/capacity';
 import { consoleMailSender } from '../../../../src/server/services/email-codes';
 import { factsLoader } from '../../../../src/server/services/facts';
 import { fleetServices } from '../../../../src/server/services/fleet';
+import { repoConnectionDeps } from '../../../../src/server/services/repo-connections';
 import { importServices } from '../../../../src/server/services/site-import';
 import { siteServices } from '../../../../src/server/services/sites';
 import { authServices, stepUpAtOf } from '../../../../src/server/utils/auth';
@@ -168,6 +171,106 @@ describe('bootOnce', () => {
 		await expect(backupServices().startOperation({} as never)).rejects.toMatchObject({
 			code: 'not_built'
 		});
+	});
+});
+
+describe('repository connections', () => {
+	const app = {
+		NUXT_PUBLIC_GITHUB_APP_ID: '5738550',
+		NUXT_PUBLIC_GITHUB_APP_CLIENT_ID: 'Iv-client',
+		NUXT_GITHUB_APP_PRIVATE_KEY:
+			'-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----\n',
+		NUXT_GITHUB_APP_CLIENT_SECRET: 'client-secret',
+		NUXT_GITHUB_APP_WEBHOOK_SECRET: 'hook-secret'
+	};
+
+	it('installs the deps on boot and takes them away on reset', () => {
+		const built = bootOnce(envWith(app));
+		expect(repoConnectionDeps()).toBe(built.repoConnections);
+		resetBoot();
+		expect(() => repoConnectionDeps()).toThrow(expect.objectContaining({ code: 'not_built' }));
+	});
+
+	it('reads the app from the Worker secrets and the public ids, with the slug defaulting', () => {
+		const github = buildServices(envWith(app)).repoConnections.github;
+		expect(github).toEqual({
+			appId: '5738550',
+			clientId: 'Iv-client',
+			slug: 'drupflare',
+			privateKey: app.NUXT_GITHUB_APP_PRIVATE_KEY,
+			clientSecret: 'client-secret',
+			webhookSecret: 'hook-secret'
+		});
+	});
+
+	it('takes the ids and secrets from the runtime config when the Worker has none', () => {
+		const github = githubAppOf(envWith(), {
+			appId: '1',
+			clientId: 'c',
+			slug: 'other',
+			privateKey: 'k',
+			clientSecret: 's',
+			webhookSecret: 'w'
+		});
+		expect(github).toEqual({
+			appId: '1',
+			clientId: 'c',
+			slug: 'other',
+			privateKey: 'k',
+			clientSecret: 's',
+			webhookSecret: 'w'
+		});
+		const mixed = githubAppOf(envWith({ NUXT_GITHUB_APP_WEBHOOK_SECRET: 'from-secret' }), {
+			appId: '1',
+			clientId: 'c',
+			privateKey: 'k',
+			clientSecret: 's',
+			webhookSecret: 'from-config'
+		});
+		expect(mixed?.webhookSecret).toBe('from-secret');
+	});
+
+	it('leaves the app out when any of its six values is missing or empty, and keeps the rest', () => {
+		for (const name of Object.keys(app)) {
+			const github = githubAppOf(envWith({ ...app, [name]: '' }));
+			expect(github, name).toBeNull();
+		}
+		const built = buildServices(envWith());
+		expect(built.repoConnections.github).toBeNull();
+		expect(built.repoConnections.gitlab).toBeNull();
+		expect(built.repoConnections.store).toBeDefined();
+	});
+
+	it('turns a one-line PEM back into lines', () => {
+		const github = githubAppOf(envWith({ ...app, NUXT_GITHUB_APP_PRIVATE_KEY: 'a\\nb\\nc' }));
+		expect(github?.privateKey).toBe('a\nb\nc');
+	});
+
+	it('answers 501 for a credential until a KEK_V<n> secret is set', async () => {
+		const closed = buildServices(envWith(app)).repoConnections;
+		await expect(closed.ring()).rejects.toMatchObject({ code: 'not_built' });
+		const key = Buffer.from(new Uint8Array(32).fill(3)).toString('base64url');
+		const open = buildServices(envWith({ ...app, KEK_V1: key })).repoConnections;
+		expect((await open.ring()).current).toBe(1);
+	});
+
+	it('reports a pull as failed until the site route can take one', async () => {
+		const deps = buildServices(envWith(app)).repoConnections;
+		expect(await deps.pullRemote({} as never, 'a'.repeat(40))).toBe('failed');
+		expect(await pullUnavailable()).toBe('failed');
+	});
+
+	it('sends provider calls through the guard, so a private address is refused before a request', async () => {
+		const sent: string[] = [];
+		vi.stubGlobal('fetch', async (url: string) => {
+			sent.push(url);
+			return new Response('{}');
+		});
+		const deps = buildServices(envWith(app)).repoConnections;
+		await expect(deps.fetch('http://api.github.com/user')).rejects.toThrow(/public https/);
+		await expect(deps.fetch('https://127.0.0.1/user')).rejects.toThrow(/public https/);
+		expect(sent).toEqual([]);
+		vi.unstubAllGlobals();
 	});
 });
 

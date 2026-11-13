@@ -91,6 +91,38 @@ describe('gen-openapi: live route tree', () => {
 		expect(op['x-action']).toBe('admin.capacity.read');
 		expect(op.responses['200']).toBeDefined();
 	});
+
+	it('documents the repository connection and remote routes with their actions and success statuses', async () => {
+		const committed = JSON.parse(readFileSync(OUTPUT, 'utf8')) as Json;
+		const org = '/api/v1/orgs/{orgId}';
+		const expected: [string, string, string, string][] = [
+			[`${org}/repo-connections`, 'get', 'repo.read', '200'],
+			[`${org}/repo-connections`, 'post', 'repo.connect', '200'],
+			[`${org}/repo-connections/complete`, 'post', 'repo.connect', '201'],
+			[`${org}/repo-connections/{id}/revoke`, 'post', 'repo.connect', '200'],
+			[`${org}/repo-connections/{id}/repositories`, 'get', 'repo.read', '200'],
+			[`${org}/sites/{id}/remotes`, 'post', 'site.remote.manage', '201'],
+			[`${org}/sites/{id}/remotes`, 'get', 'site.read', '200']
+		];
+		for (const [path, method, action, status] of expected) {
+			const op = committed.paths[path]?.[method];
+			expect(op, `${method} ${path}`).toBeDefined();
+			expect(op['x-action'], `${method} ${path}`).toBe(action);
+			expect(op.responses[status], `${method} ${path}`).toBeDefined();
+		}
+		for (const [path, method, action] of expected) {
+			if (isSessionOnly(action as never)) {
+				expect(committed.paths[path][method].security, `${method} ${path}`).toEqual([
+					{ session: [] }
+				]);
+			}
+		}
+	});
+
+	it('leaves the signature-checked GitHub hook out, as it is not a defineApi route', async () => {
+		const committed = JSON.parse(readFileSync(OUTPUT, 'utf8')) as Json;
+		expect(Object.keys(committed.paths).filter((path) => path.includes('hooks'))).toEqual([]);
+	});
 });
 
 describe('gen-openapi: sample routes', () => {
