@@ -151,4 +151,14 @@ describe('SideNav', () => {
 		expect(billing?.text()).toBe('Billing');
 		expect(billing?.props('external')).toBe(false);
 	});
+
+	it('links integrations as a client route', async () => {
+		useSessionStore().me = me;
+		const wrapper = await mount(SideNav);
+		const integrations = wrapper
+			.findAllComponents(NuxtLink)
+			.find((link) => link.props('to') === '/org/integrations');
+		expect(integrations?.text()).toBe('Integrations');
+		expect(integrations?.props('external')).toBe(false);
+	});
 });

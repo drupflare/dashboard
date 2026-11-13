@@ -8,6 +8,12 @@ const ACTIVE = 'border-brand-600 bg-elevated !text-highlighted dark:border-brand
 const items = computed(() => [
 	{ to: '/sites', label: 'Sites', icon: 'i-lucide-globe', external: false },
 	{ to: '/planes', label: 'Planes', icon: 'i-lucide-server', external: false },
+	{
+		to: '/org/integrations',
+		label: 'Integrations',
+		icon: 'i-lucide-git-branch',
+		external: false
+	},
 	{ to: '/org/billing', label: 'Billing', icon: 'i-lucide-credit-card', external: false },
 	{ to: '/account', label: 'Account', icon: 'i-lucide-user-round', external: false },
 	...(session.me?.platformRole === 'admin'
