@@ -4,6 +4,13 @@ import type { UploadMetadata } from '@drupflare/workforce';
 import type { BackupRecord, ExportPage } from './backup-parts';
 import type { BundleLimits, BundleManifest, BundleModule } from './bundle';
 import type { Custody, FirstRunAdmin, FirstRunReads, FirstRunSecrets } from './custody';
+import type {
+	GitPullResult,
+	GitRemoteSpec,
+	GitSiteRemote,
+	PullStatus,
+	RemoteRecord
+} from './git-parts';
 import type { Granted, LeaseRefusal, Refused } from './lease';
 import type { OperationStore, SiteRowState } from './operations/store';
 import type { ResourceLedger } from './ownership';
@@ -363,6 +370,41 @@ export interface ImportDeps extends BackupDeps {
 	dump: DumpStream;
 	converter: SqlConverter;
 	lander: ImportLander;
+}
+
+// #endregion
+
+// #region git
+
+// the site's own /git owner routes; a refusal throws a GitError, and an answer that never came
+// throws a retryable error
+export interface GitWorker {
+	remotes(hostname: string, auth: OwnerAuth): Promise<GitSiteRemote[]>;
+	pull(hostname: string, remoteId: string, auth: OwnerAuth): Promise<GitPullResult>;
+}
+
+// a pull on a repository the site does not follow yet: the provider token is minted for this one
+// call, sent to the site for this one call, and never stored on the site
+export interface GitTokenPull {
+	pull(
+		site: { hostname: string; siteId: string },
+		remote: GitRemoteSpec,
+		auth: OwnerAuth
+	): Promise<GitPullResult>;
+}
+
+export interface RemoteLedger {
+	get(organizationId: string, siteId: string, id: string): Promise<RemoteRecord | null>;
+	record(
+		id: string,
+		result: { status: PullStatus; at: number; reason: string | null }
+	): Promise<void>;
+}
+
+export interface GitDeps extends BackupDeps {
+	git: GitWorker;
+	tokenPull: GitTokenPull;
+	remotes: RemoteLedger;
 }
 
 // #endregion

@@ -9,6 +9,7 @@ export { SiteLease } from './site-lease';
 export {
 	BackupCreate,
 	BackupRestore,
+	GitPull,
 	ImportSurvey,
 	MigrationCutover,
 	SiteAdopt,
@@ -43,7 +44,8 @@ export default {
 						'backup-restore': env.BACKUP_RESTORE,
 						'migration-cutover': env.MIGRATION_CUTOVER,
 						'site-import': env.SITE_IMPORT,
-						'import-survey': env.IMPORT_SURVEY
+						'import-survey': env.IMPORT_SURVEY,
+						'git-pull': env.GIT_PULL
 					}
 				}),
 	scheduled: (_controller, env, ctx) => {

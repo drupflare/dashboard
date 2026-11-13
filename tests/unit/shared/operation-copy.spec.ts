@@ -19,6 +19,7 @@ import {
 	needsLargerRestore,
 	OPERATION_COPY,
 	operationTypeLabel,
+	pullRefusalReason,
 	refusalReason,
 	ROLLBACK_BOUNDARY_COPY,
 	SITE_HOLD_DAYS,
@@ -36,7 +37,8 @@ const COVERED = [
 	'import.survey',
 	'migration.cutover',
 	'backup.create',
-	'backup.restore'
+	'backup.restore',
+	'git.pull'
 ];
 const WORKFLOWS = fileURLToPath(new URL('../../../engine/src/workflows/', import.meta.url));
 
@@ -45,7 +47,9 @@ function enginePlanSteps(): { type: string; id: string }[] {
 	const pairs: { type: string; id: string }[] = [];
 	for (const file of readdirSync(WORKFLOWS).filter((name) => name.endsWith('.ts'))) {
 		const text = readFileSync(WORKFLOWS + file, 'utf8');
-		const marks = [...text.matchAll(/type: '((?:site|backup|migration|import)\.[a-z-]+)'/g)];
+		const marks = [
+			...text.matchAll(/type: '((?:site|backup|migration|import|git)\.[a-z-]+)'/g)
+		];
 		marks.forEach((mark, i) => {
 			const type = mark[1] ?? '';
 			const segment = text.slice(mark.index, marks[i + 1]?.index ?? text.length);
@@ -580,5 +584,84 @@ describe('import copy', () => {
 		expect(
 			importRefusalReason({ details: { reason: 'new_thing' }, message: 'server words' })
 		).toBe('server words');
+	});
+});
+
+describe('git pull copy', () => {
+	it('titles the pull and goes back to the site on success and on failure', () => {
+		const copy = copyFor('git.pull');
+		expect(copy.title).toBe('Pulling From Your Repository');
+		expect(copy.link({ targetIds: [SITE] })).toEqual({
+			to: `/sites/${SITE}`,
+			label: 'Back to the Site'
+		});
+		expect(copy.failureLink({ targetIds: [SITE] })?.to).toBe(`/sites/${SITE}`);
+		expect(operationTypeLabel('git.pull')).toBe('Pull');
+	});
+
+	it('labels every step id the plan writes in plain words', () => {
+		for (const id of ['lease', 'find', 'pull', 'record']) {
+			expect(stepLabel('git.pull', id)).not.toBe(GENERIC_STEP_LABEL);
+		}
+		expect(stepLabel('git.pull', 'pull')).toBe('Installing the latest commit');
+	});
+
+	it('never offers a retry, since the next push or press starts a new pull', () => {
+		expect(canRetry('git.pull', 'failed')).toBe(false);
+	});
+
+	it.each([
+		['site_not_ready', 'not live'],
+		['no_owner_token', 'no owner access'],
+		['owner_token_rejected', 'did not accept'],
+		['site_unreachable', 'did not answer'],
+		['site_busy', 'Another change'],
+		['lease_lost', 'took over'],
+		['remote_not_on_site', 'Git page'],
+		['remote_mount_differs', 'different folder'],
+		['remote_gone', 'no longer follows'],
+		['no_branch', 'no branch'],
+		['no_module', 'no Drupal module'],
+		['path_conflict', 'another repository'],
+		['rolled_back', 'went back'],
+		['pull_refused', 'could not fetch'],
+		['answer_unreadable', 'unknown']
+	])('turns the %s code into a plain reason', (code, text) => {
+		const reason = failureReason({
+			type: 'git.pull',
+			status: 'failed',
+			failedStep: 'pull',
+			failedError: `${code}: engine words`
+		});
+		expect(reason).toContain(text);
+		expect(reason).not.toContain('engine words');
+		expect(reason).toMatch(/^[\x20-\x7e]+$/);
+	});
+
+	it('names the step when the failure has no code of its own', () => {
+		expect(
+			failureReason({
+				type: 'git.pull',
+				status: 'failed',
+				failedStep: 'find',
+				failedError: 'something odd'
+			})
+		).toBe('Stopped while finding the repository on the site.');
+	});
+
+	it.each([
+		['site_not_live', 'not live'],
+		['site_busy', 'still running'],
+		['connection_revoked', 'revoked'],
+		['idempotency_key_reused', 'clashes']
+	])('turns the %s route refusal into a plain reason', (reason, text) => {
+		expect(pullRefusalReason({ details: { reason }, message: 'server words' })).toContain(text);
+	});
+
+	it('falls back to the server message for a reason it does not name', () => {
+		expect(
+			pullRefusalReason({ details: { reason: 'new_thing' }, message: 'server words' })
+		).toBe('server words');
+		expect(pullRefusalReason({ details: null, message: 'server words' })).toBe('server words');
 	});
 });

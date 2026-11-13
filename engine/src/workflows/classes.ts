@@ -4,6 +4,7 @@ import {
 	buildBackupDeps,
 	buildCutoverDeps,
 	buildDeps,
+	buildGitDeps,
 	buildImportDeps,
 	type EngineEnv
 } from '../env';
@@ -11,6 +12,7 @@ import { PermanentError, StepFailed, type StepRunner } from '../step';
 import { runBackupCreate, type BackupCreateInput } from './backup-create';
 import { runBackupRestore, type BackupRestoreInput } from './backup-restore';
 import type { Outcome } from './common';
+import { runGitPull, type GitPullInput } from './git-pull';
 import { runImportSurvey, type ImportSurveyInput } from './import-survey';
 import {
 	runMigrationCutover,
@@ -186,6 +188,12 @@ export class MigrationCutover extends WorkflowEntrypoint<EngineEnv, MigrationCut
 			await buildCutoverDeps(this.env),
 			event.payload
 		);
+	}
+}
+
+export class GitPull extends WorkflowEntrypoint<EngineEnv, GitPullInput> {
+	async run(event: Readonly<WorkflowEvent<GitPullInput>>, step: WorkflowStep): Promise<Outcome> {
+		return runGitPull(runnerOf(step), await buildGitDeps(this.env), event.payload);
 	}
 }
 

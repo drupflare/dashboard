@@ -1,4 +1,6 @@
 import { toBase64Url } from '@contracts/common';
+import type { Operation } from '@contracts/operations';
+import type { StoredOperation } from '../../../../src/server/db/repos/operations';
 import type { ConnectionRow, RemoteRow } from '../../../../src/server/db/repos/repo-connections';
 import type { ProviderFetch } from '../../../../src/server/integrations/git-providers';
 import { guardedProviderFetch } from '../../../../src/server/integrations/git-providers/guard';
@@ -13,6 +15,35 @@ import type { OnceStore } from '../../../../src/server/services/single-use';
 import { loadKeyRing } from '../../../../src/shared/custody/envelope';
 
 export const NOW = 1_800_000_000_000;
+
+export function fakePullOperation(siteId: string): StoredOperation['operation'] {
+	const at = new Date(NOW).toISOString();
+	return {
+		id: `op_${'p'.repeat(26)}` as Operation['id'],
+		orgId: ORG as Operation['orgId'],
+		type: 'git.pull',
+		status: 'planned',
+		idempotencyKey: 'key',
+		targetIds: [siteId],
+		preconditions: [],
+		planDigest: `sha256:${'0'.repeat(64)}`,
+		fencingEpoch: 0,
+		blastRadius: { sites: 1, destructiveSites: 0, productionDeploys: 0 },
+		rollbackPoint: null,
+		cursor: null,
+		steps: [],
+		verification: 'pending',
+		finalObservation: null,
+		budget: {
+			maxDestructiveSites: 5,
+			maxConcurrentProductionDeploys: 10,
+			elevated: false,
+			bulkDeleteConfirmation: null
+		},
+		createdAt: at,
+		updatedAt: at
+	};
+}
 export const ORG = 'org_1';
 export const TOKEN = 'glpat-plain-token-value';
 export const WEBHOOK_SECRET = 'gh-secret';
@@ -83,9 +114,14 @@ export function fakeStore() {
 				})
 				.map((r) => ({ ...r }));
 		},
-		async setPull(id, status, at) {
+		async setPull(id, status, at, reason) {
 			const row = remotes.get(id);
-			if (row) Object.assign(row, { lastPullStatus: status, lastPullAt: at });
+			if (row)
+				Object.assign(row, {
+					lastPullStatus: status,
+					lastPullAt: at,
+					lastPullReason: reason
+				});
 		},
 		async hasDelivery(provider, id) {
 			return deliveries.has(`${provider}:${id}`);
@@ -158,9 +194,9 @@ export async function harness(reply: (url: string) => Response = () => Response.
 			redirectUri: 'https://app.example/cb',
 			webhookSecret: 'gl-secret'
 		},
-		pullRemote: async (remote, sha) => {
-			pulls.push(`${remote.id}@${sha}`);
-			return 'installed';
+		pullRemote: async (remote, trigger) => {
+			pulls.push(`${remote.id}:${trigger.key}`);
+			return { operation: fakePullOperation(remote.siteId), version: 0 };
 		},
 		audit: async () => {}
 	};

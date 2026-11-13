@@ -5,6 +5,7 @@ import { D1BackupLedger, r2BackupBlobs } from './adapters/backups';
 import { custodyOf } from './adapters/custody';
 import { unavailableCutoverPorts } from './adapters/cutover';
 import { createDumpStream } from './adapters/dump-stream';
+import { D1RemoteLedger, gitWorkerOf, unavailableTokenPull } from './adapters/git';
 import { hostsOf } from './adapters/hosts';
 import { createImportLander } from './adapters/import-lander';
 import { importStoreOf } from './adapters/import-store';
@@ -19,9 +20,10 @@ import { workforceCloudflare } from './adapters/workforce';
 import { readConfig } from './config';
 import { D1OperationStore } from './operations/store';
 import { D1ResourceLedger } from './ownership';
-import type { BackupDeps, CutoverDeps, EngineDeps, ImportDeps } from './ports';
+import type { BackupDeps, CutoverDeps, EngineDeps, GitDeps, ImportDeps } from './ports';
 import type { BackupCreateInput } from './workflows/backup-create';
 import type { BackupRestoreInput } from './workflows/backup-restore';
+import type { GitPullInput } from './workflows/git-pull';
 import type { ImportSurveyInput } from './workflows/import-survey';
 import type { MigrationCutoverInput } from './workflows/migration-cutover';
 import type { SiteAdoptInput } from './workflows/site-adopt';
@@ -51,6 +53,7 @@ export interface EngineEnv {
 	MIGRATION_CUTOVER: Workflow<MigrationCutoverInput>;
 	SITE_IMPORT: Workflow<SiteImportInput>;
 	IMPORT_SURVEY: Workflow<ImportSurveyInput>;
+	GIT_PULL: Workflow<GitPullInput>;
 	RELEASES_URL: string;
 	CF_ACCOUNT_ID: string;
 	CF_API_TOKEN: string;
@@ -104,6 +107,15 @@ export async function buildImportDeps(env: EngineEnv): Promise<ImportDeps> {
 		dump: createDumpStream(edgeportStreamConnector, base.blobs),
 		converter: createSqlConverter(),
 		lander: createImportLander({ custody: base.custody, worker: base.worker })
+	};
+}
+
+export async function buildGitDeps(env: EngineEnv): Promise<GitDeps> {
+	return {
+		...(await buildBackupDeps(env)),
+		git: gitWorkerOf(fetch, Number(env.SITE_TIMEOUT_MS)),
+		tokenPull: unavailableTokenPull,
+		remotes: new D1RemoteLedger(env.DB)
 	};
 }
 

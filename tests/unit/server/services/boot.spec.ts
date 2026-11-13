@@ -9,7 +9,6 @@ import {
 	githubAppOf,
 	mailFor,
 	oauthConfig,
-	pullUnavailable,
 	resetBoot,
 	turnstileSecretOf,
 	webauthnConfig,
@@ -254,10 +253,11 @@ describe('repository connections', () => {
 		expect((await open.ring()).current).toBe(1);
 	});
 
-	it('reports a pull as failed until the site route can take one', async () => {
+	it('starts a pull as a git.pull operation, so a missing site answers not found', async () => {
 		const deps = buildServices(envWith(app)).repoConnections;
-		expect(await deps.pullRemote({} as never, 'a'.repeat(40))).toBe('failed');
-		expect(await pullUnavailable()).toBe('failed');
+		expect(typeof deps.pullRemote).toBe('function');
+		const remote = { organizationId: 'org_1', siteId: 'site_1', id: 'rem_1' } as never;
+		await expect(deps.pullRemote(remote, { key: 'k' })).rejects.toBeDefined();
 	});
 
 	it('sends provider calls through the guard, so a private address is refused before a request', async () => {

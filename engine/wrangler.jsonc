@@ -32,7 +32,8 @@
 			"class_name": "MigrationCutover"
 		},
 		{ "name": "site-import", "binding": "SITE_IMPORT", "class_name": "SiteImport" },
-		{ "name": "import-survey", "binding": "IMPORT_SURVEY", "class_name": "ImportSurvey" }
+		{ "name": "import-survey", "binding": "IMPORT_SURVEY", "class_name": "ImportSurvey" },
+		{ "name": "git-pull", "binding": "GIT_PULL", "class_name": "GitPull" }
 	],
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },
@@ -124,7 +125,8 @@
 					"name": "import-survey-stage",
 					"binding": "IMPORT_SURVEY",
 					"class_name": "ImportSurvey"
-				}
+				},
+				{ "name": "git-pull-stage", "binding": "GIT_PULL", "class_name": "GitPull" }
 			],
 			"migrations": [
 				{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },

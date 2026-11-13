@@ -38,7 +38,7 @@ function logCall(
 	console.log(JSON.stringify({ event: 'engine.site-call', hostname, path, status, ms, replay }));
 }
 
-function siteFetcher(fetcher: typeof fetch, timeoutMs: number) {
+export function siteFetcher(fetcher: typeof fetch, timeoutMs: number) {
 	if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
 		throw new ConfigError('SITE_TIMEOUT_MS');
 	}

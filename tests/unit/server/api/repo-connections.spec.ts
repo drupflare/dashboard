@@ -4,6 +4,7 @@ import revoke from '../../../../src/server/api/v1/orgs/[orgId]/repo-connections/
 import complete from '../../../../src/server/api/v1/orgs/[orgId]/repo-connections/complete.post';
 import connectionsList from '../../../../src/server/api/v1/orgs/[orgId]/repo-connections/index.get';
 import connect from '../../../../src/server/api/v1/orgs/[orgId]/repo-connections/index.post';
+import pull from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/remotes/[remoteId]/pull.post';
 import remotesList from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/remotes/index.get';
 import attach from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/remotes/index.post';
 import { setRepoConnectionDeps } from '../../../../src/server/services/repo-connections';
@@ -394,5 +395,70 @@ describe('the repository routes against GitHub', () => {
 		expect(github.status).toBe(501);
 		const token = await post(connect, ROUTE, BASE, GIT);
 		expect(token.status).toBe(200);
+	});
+});
+
+describe('POST /sites/{id}/remotes/{remoteId}/pull', () => {
+	const PULL_ROUTE = '/api/v1/orgs/:orgId/sites/:id/remotes/:remoteId/pull';
+
+	async function attached(role: Parameters<typeof load>[0] = {}) {
+		const h = await ready(role);
+		const made = await connectWithToken();
+		if (made.kind !== 'connected') throw new Error('expected a connection');
+		const reply = await post(attach, REMOTES_ROUTE, REMOTES, {
+			connectionId: made.connection.id,
+			repo: 'ops/site',
+			branch: 'main',
+			mountPath: 'modules/custom/site'
+		});
+		return {
+			...h,
+			remote: remoteViewSchema.parse(reply.json),
+			connectionId: made.connection.id
+		};
+	}
+
+	const press = (remoteId: string, headers: Record<string, string> = {}) =>
+		post(pull, PULL_ROUTE, `${REMOTES}/${remoteId}/pull`, {}, { ...asUser, ...headers });
+
+	it('answers 202 with the operation and starts it under the Idempotency-Key', async () => {
+		const h = await attached();
+		const reply = await press(h.remote.id, { 'idempotency-key': 'press-key-1' });
+		expect(reply.status).toBe(202);
+		expect(reply.json).toMatchObject({
+			type: 'git.pull',
+			targetIds: [SITE]
+		});
+		expect(h.pulls).toEqual([`${h.remote.id}:press-key-1`]);
+	});
+
+	it('refuses a press with no Idempotency-Key and starts nothing', async () => {
+		const h = await attached();
+		const reply = await press(h.remote.id);
+		expect(reply.status).toBe(400);
+		expect(h.pulls).toEqual([]);
+	});
+
+	it('answers 404 for a remote the site does not have', async () => {
+		const h = await attached();
+		const reply = await press('rem_missing', { 'idempotency-key': 'press-key-2' });
+		expect(reply.status).toBe(404);
+		expect(h.pulls).toEqual([]);
+	});
+
+	it('answers 422 with a plain reason when the connection was revoked', async () => {
+		const h = await attached();
+		await post(revoke, `${ROUTE}/:id/revoke`, `${BASE}/${h.connectionId}/revoke`, {});
+		const reply = await press(h.remote.id, { 'idempotency-key': 'press-key-3' });
+		expect(reply.status).toBe(422);
+		expect(h.pulls).toEqual([]);
+	});
+
+	it('refuses a viewer', async () => {
+		const h = await attached();
+		setup({ deps: { load: load({ role: 'viewer' }) } });
+		const reply = await press(h.remote.id, { 'idempotency-key': 'press-key-4' });
+		expect(reply.status).toBe(403);
+		expect(h.pulls).toEqual([]);
 	});
 });

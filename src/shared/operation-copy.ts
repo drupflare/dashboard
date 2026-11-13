@@ -142,6 +142,15 @@ export const OPERATION_COPY = {
 		failure: 'Could Not Restore the Backup',
 		link: siteOf,
 		failureLink: siteOf
+	},
+	'git.pull': {
+		title: 'Pulling From Your Repository',
+		running:
+			'The site keeps serving while the new code is installed. Leaving this page does not stop the pull.',
+		success: 'The latest commit is installed.',
+		failure: 'Could Not Pull the Repository',
+		link: siteOf,
+		failureLink: siteOf
 	}
 } satisfies Partial<Record<Operation['type'], OperationCopy>>;
 
@@ -172,7 +181,8 @@ const TYPE_LABELS: Record<string, string> = {
 	'site.purge': 'Permanent Delete',
 	'migration.cutover': 'Move',
 	'backup.create': 'Backup',
-	'backup.restore': 'Restore'
+	'backup.restore': 'Restore',
+	'git.pull': 'Pull'
 };
 
 export function operationTypeLabel(type: string | undefined): string {
@@ -290,6 +300,12 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		apply: 'waiting for the site to load the backup',
 		adopt: 'waiting for the files to copy, then removing the temporary access',
 		verify: 'checking that the restored site answers'
+	},
+	'git.pull': {
+		lease: 'locking the site for this change',
+		find: 'finding the repository on the site',
+		pull: 'installing the latest commit',
+		record: 'saving the result'
 	}
 };
 
@@ -385,6 +401,33 @@ const IMPORT_REFUSALS: Record<string, string> = {
 	import_timeout: 'The new site took too long to load the database. Nothing was left behind.'
 };
 
+const GIT_PULL_REFUSALS: Record<string, string> = {
+	site_not_ready: 'The site is not live, so nothing was pulled.',
+	no_owner_token:
+		'Drupflare has no owner access to this site, so it cannot pull. Reconnect the site, then pull again.',
+	owner_token_rejected:
+		'The site did not accept the access Drupflare holds, so nothing was pulled. Reconnect the site, then pull again.',
+	site_unreachable: 'The site did not answer. Check that it is online, then pull again.',
+	site_busy:
+		'Another change to this site was running, so nothing was pulled. Pull again when it finishes.',
+	lease_lost: 'Another change took over the site while this ran. Pull again.',
+	remote_not_on_site:
+		"This site does not follow the repository yet, and Drupflare cannot add it for you yet. Add the repository on the site's own Git page, then pull again.",
+	remote_mount_differs:
+		'The site follows this repository at a different folder than the one saved here, so nothing was pulled.',
+	remote_gone: 'The site no longer follows this repository, so nothing was pulled.',
+	no_branch: 'The repository has no branch with that name.',
+	no_module: 'That commit has no Drupal module, theme or profile to install.',
+	path_conflict:
+		'Some files in that commit belong to another repository on this site, so nothing was installed.',
+	rolled_back:
+		'The site would not start with that commit, so it went back to the code it had. Fix the code and push again.',
+	pull_refused:
+		'The site could not fetch that commit from the provider. The access saved on the site may have expired.',
+	answer_unreadable:
+		'The site answered in a way Drupflare could not read, so the result is unknown. Pull again to check.'
+};
+
 const FAILED_STATUSES: ReadonlySet<string> = new Set(['failed', 'cancelled', 'rolled-back']);
 
 // the one plain reason shown on the progress page, the site's activity list and the admin list
@@ -403,6 +446,10 @@ export function failureReason(operation: {
 	}
 	if (operation.type === 'site.import' || operation.type === 'import.survey') {
 		const refusal = IMPORT_REFUSALS[errorCode(operation.failedError) ?? ''];
+		if (refusal !== undefined) return refusal;
+	}
+	if (operation.type === 'git.pull') {
+		const refusal = GIT_PULL_REFUSALS[errorCode(operation.failedError) ?? ''];
 		if (refusal !== undefined) return refusal;
 	}
 	const phrase =
@@ -502,4 +549,17 @@ const IMPORT_ROUTE_REFUSALS: Record<string, string> = {
 export function importRefusalReason(error: { details: unknown; message: string }): string {
 	const reason = (error.details as { reason?: unknown } | null)?.reason;
 	return (typeof reason === 'string' && IMPORT_ROUTE_REFUSALS[reason]) || error.message;
+}
+
+const PULL_ROUTE_REFUSALS: Record<string, string> = {
+	site_not_live: 'This site is not live, so nothing can be pulled.',
+	site_busy: REFUSALS.site_busy!,
+	connection_revoked: 'The connection for this repository was revoked. Connect it again first.',
+	idempotency_key_reused: REFUSALS.idempotency_key_reused!
+};
+
+// the plain reason for a pull that never started; the server message is the fallback
+export function pullRefusalReason(error: { details: unknown; message: string }): string {
+	const reason = (error.details as { reason?: unknown } | null)?.reason;
+	return (typeof reason === 'string' && PULL_ROUTE_REFUSALS[reason]) || error.message;
 }

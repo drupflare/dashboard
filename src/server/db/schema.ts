@@ -714,7 +714,8 @@ export const SCHEMA_STATEMENTS: string[] = [
 	interval_minutes INTEGER NOT NULL CHECK (interval_minutes >= 5),
 	last_pull_status TEXT,
 	last_pull_at INTEGER,
-	created_at INTEGER NOT NULL
+	created_at INTEGER NOT NULL,
+	last_pull_reason TEXT
 )`,
 	`CREATE TABLE IF NOT EXISTS repo_deliveries (
 	provider TEXT NOT NULL,

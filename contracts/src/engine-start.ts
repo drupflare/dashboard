@@ -50,7 +50,8 @@ export const WORKFLOW_NAMES = [
 	'import-survey',
 	'backup-create',
 	'backup-restore',
-	'migration-cutover'
+	'migration-cutover',
+	'git-pull'
 ] as const;
 export type WorkflowName = (typeof WORKFLOW_NAMES)[number];
 

@@ -37,6 +37,7 @@ export const remoteViewSchema = z.strictObject({
 	intervalMinutes: z.number().int(),
 	lastPullStatus: z.enum(['installed', 'failed']).nullable(),
 	lastPullAt: z.number().nullable(),
+	lastPullReason: z.string().nullable().optional(),
 	createdAt: z.number()
 });
 

@@ -46,6 +46,7 @@ import {
 import { collegeAttemptStore, consoleMailSender, type MailSender } from './email-codes';
 import { collegeFactsStore, factsLoader, type FactsDeps } from './facts';
 import { fleetConfigOf, resetFleetServices, setFleetServices, type FleetServices } from './fleet';
+import { startGitPull } from './git-pull';
 import { collegeIdentityStore, setIdentityServices, type IdentityServices } from './identities';
 import {
 	resetCutoverServices,
@@ -66,7 +67,6 @@ import {
 import {
 	collegeRepoStore,
 	setRepoConnectionDeps,
-	type PullStatus,
 	type RepoConnectionDeps
 } from './repo-connections';
 import { collegeOnceStore } from './single-use';
@@ -197,11 +197,6 @@ export function githubAppOf(
 		privateKey,
 		slug: text(env, 'NUXT_PUBLIC_GITHUB_APP_SLUG') ?? (values.slug || GITHUB_APP_SLUG)
 	};
-}
-
-// the site's own git route pulls by a remote id that attaching never creates, so no pull can run yet
-export async function pullUnavailable(): Promise<PullStatus> {
-	return 'failed';
 }
 
 // admin needs both halves: the role on the user record and an Access login for the same address
@@ -394,6 +389,14 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			throw error;
 		}
 	};
+	const siteServices: SiteServices = {
+		getDb,
+		entitlements: collegeSiteEntitlements(getDb, billing),
+		planOf,
+		billingAccountOf,
+		startOperation,
+		config: siteInputConfigOf(env)
+	};
 	return {
 		auth: {
 			kv: env.KV,
@@ -430,14 +433,7 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			...auditWriters(getDb, heads)
 		},
 		ownerTokens,
-		sites: {
-			getDb,
-			entitlements: collegeSiteEntitlements(getDb, billing),
-			planOf,
-			billingAccountOf,
-			startOperation,
-			config: siteInputConfigOf(env)
-		},
+		sites: siteServices,
 		backups: backupServicesOf({ BLOB: env.BLOB }, { getDb, startOperation }, heads),
 		cutover: {
 			sendEvent: engineEventSender({ ...engineConfigOf(env), now: Date.now }),
@@ -491,7 +487,7 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			now: Date.now,
 			github: githubAppOf(env, options.githubApp),
 			gitlab: null,
-			pullRemote: pullUnavailable,
+			pullRemote: (remote, trigger) => startGitPull(siteServices, remote, trigger.key),
 			audit: async (orgId, action, targetId) => {
 				await append(
 					await getDb(),

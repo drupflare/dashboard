@@ -1,3 +1,4 @@
+import { sha256Hex } from '@contracts/common';
 import type { CollegeDBClient } from '@earth-app/collegedb';
 import {
 	decryptRecordText,
@@ -7,7 +8,9 @@ import {
 } from '../../shared/custody/envelope';
 import { ApiError } from '../../shared/errors';
 import { repoStateFor } from '../../shared/oauth';
+import { pullRefusalReason } from '../../shared/operation-copy';
 import type { ConnectionView, RemoteView } from '../../shared/repo-connections';
+import type { StoredOperation } from '../db/repos/operations';
 import type { ConnectionRow, RemoteRow } from '../db/repos/repo-connections';
 import * as repo from '../db/repos/repo-connections';
 import {
@@ -61,6 +64,10 @@ const LABEL: Record<ProviderId, string> = {
 
 export type PullStatus = 'installed' | 'failed';
 
+export interface PullTrigger {
+	key: string;
+}
+
 export interface RepoConnectionStore {
 	insertConnection(row: ConnectionRow): Promise<void>;
 	getConnection(orgId: string, id: string): Promise<ConnectionRow | null>;
@@ -71,7 +78,7 @@ export interface RepoConnectionStore {
 	insertRemote(row: RemoteRow): Promise<void>;
 	listRemotes(orgId: string, siteId: string): Promise<RemoteRow[]>;
 	remotesForPush(provider: ProviderId, repo: string, branch: string): Promise<RemoteRow[]>;
-	setPull(id: string, status: PullStatus, at: number): Promise<void>;
+	setPull(id: string, status: PullStatus, at: number, reason: string | null): Promise<void>;
 	hasDelivery(provider: ProviderId, deliveryId: string): Promise<boolean>;
 	recordDelivery(provider: ProviderId, deliveryId: string, now: number): Promise<void>;
 }
@@ -105,8 +112,8 @@ export function collegeRepoStore(getDb: () => Promise<CollegeDBClient>): RepoCon
 		async remotesForPush(provider, name, branch) {
 			return repo.listRemotesForPush(await getDb(), provider, name, branch);
 		},
-		async setPull(id, status, at) {
-			await repo.setRemotePull(await getDb(), id, status, at);
+		async setPull(id, status, at, reason) {
+			await repo.setRemotePull(await getDb(), id, status, at, reason);
 		},
 		async hasDelivery(provider, deliveryId) {
 			return repo.hasDelivery(await getDb(), provider, deliveryId);
@@ -133,7 +140,8 @@ export interface RepoConnectionDeps {
 	now: () => number;
 	github: Omit<GitHubApp, 'fetch' | 'now'> | null;
 	gitlab: Omit<GitLabApp, 'fetch'> | null;
-	pullRemote: (remote: RemoteRow, sha: string) => Promise<PullStatus>;
+	// starts a git.pull operation and returns it; the key makes a repeat return the same one
+	pullRemote: (remote: RemoteRow, trigger: PullTrigger) => Promise<StoredOperation>;
 	audit: (orgId: string, action: string, targetId: string) => Promise<void>;
 }
 
@@ -181,6 +189,7 @@ function remoteView(row: RemoteRow): RemoteView {
 				? row.lastPullStatus
 				: null,
 		lastPullAt: row.lastPullAt,
+		lastPullReason: row.lastPullReason,
 		createdAt: row.createdAt
 	};
 }
@@ -533,6 +542,7 @@ export async function attachRemote(
 		intervalMinutes: interval,
 		lastPullStatus: null,
 		lastPullAt: null,
+		lastPullReason: null,
 		createdAt: deps.now()
 	};
 	await deps.store.insertRemote(row);
@@ -598,7 +608,21 @@ export async function acceptDelivery(
 	return handlePush(deps, provider, event);
 }
 
-// one git pull per matching remote; a failed pull is stored on the remote and does not fail the delivery
+// the owner pressed pull; the Idempotency-Key makes a second press return the same operation
+export async function pullNow(
+	deps: RepoConnectionDeps,
+	input: { orgId: string; siteId: string; remoteId: string; idempotencyKey: string }
+): Promise<StoredOperation> {
+	const remote = (await deps.store.listRemotes(input.orgId, input.siteId)).find(
+		(row) => row.id === input.remoteId
+	);
+	if (remote === undefined) throw new ApiError('not_found', 'Not found');
+	await requireActive(deps, input.orgId, remote.connectionId);
+	return deps.pullRemote(remote, { key: input.idempotencyKey });
+}
+
+// one git.pull operation per matching remote; the workflow writes the result on the remote, and a
+// pull that cannot start is stored there as failed without failing the delivery
 export async function handlePush(
 	deps: RepoConnectionDeps,
 	provider: ProviderId,
@@ -615,8 +639,17 @@ export async function handlePush(
 		// a GitHub installation id must match, so a same-named repo on another installation is not pulled
 		if (provider === 'github' && connection.externalId !== event.installationId) continue;
 		matched++;
-		const status = await deps.pullRemote(remote, event.sha).catch((): PullStatus => 'failed');
-		await deps.store.setPull(remote.id, status, deps.now());
+		// the delivery id and the remote make the key, so a redelivery returns the same operation
+		const key = `git-pull:${await sha256Hex(`${provider}:${event.deliveryId}:${remote.id}`)}`;
+		try {
+			await deps.pullRemote(remote, { key });
+		} catch (error) {
+			const reason =
+				error instanceof ApiError
+					? pullRefusalReason(error)
+					: 'The pull could not be started. Press Pull to try again.';
+			await deps.store.setPull(remote.id, 'failed', deps.now(), reason);
+		}
 	}
 	await deps.store.recordDelivery(provider, event.deliveryId, deps.now());
 	return { duplicate: false, matched };

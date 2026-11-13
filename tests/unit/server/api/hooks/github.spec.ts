@@ -4,6 +4,7 @@ import {
 	attachRemote,
 	setRepoConnectionDeps
 } from '../../../../../src/server/services/repo-connections';
+import { ApiError } from '../../../../../src/shared/errors';
 import { send } from '../../fixtures/harness';
 import { ORG, githubConnection, pushBody, signBody } from '../../services/repo-connections-support';
 
@@ -59,8 +60,8 @@ describe('POST /api/hooks/github', () => {
 		expect(reply.status).toBe(200);
 		expect(reply.json).toEqual({ received: true, duplicate: false, matched: 1 });
 		expect(h.pulls).toHaveLength(1);
-		expect(h.pulls[0]).toMatch(/@a{40}$/);
-		expect([...h.remotes.values()][0]?.lastPullStatus).toBe('installed');
+		expect(h.pulls[0]).toMatch(/:git-pull:[0-9a-f]{64}$/);
+		expect([...h.remotes.values()][0]?.lastPullStatus).toBeNull();
 	});
 
 	it('refuses a wrong signature with 401 and pulls nothing', async () => {
@@ -129,10 +130,16 @@ describe('POST /api/hooks/github', () => {
 
 	it('still acknowledges a push whose pull failed, and keeps the failure on the remote', async () => {
 		const h = await installed();
-		h.deps.pullRemote = async () => 'failed';
+		h.deps.pullRemote = async () => {
+			throw new ApiError('conflict', 'busy', { reason: 'site_busy' });
+		};
 		const reply = await deliver(pushBody(42));
 		expect(reply.status).toBe(200);
-		expect([...h.remotes.values()][0]?.lastPullStatus).toBe('failed');
+		const [remote] = [...h.remotes.values()];
+		expect(remote?.lastPullStatus).toBe('failed');
+		expect(remote?.lastPullReason).toBe(
+			'Another change to this site is still running. Wait for it to finish, then try again.'
+		);
 	});
 
 	it('refuses a body over the cap before it checks anything', async () => {

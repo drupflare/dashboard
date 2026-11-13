@@ -4,6 +4,7 @@ import {
 	attachRemote,
 	completeConnect,
 	listRepositories,
+	pullNow,
 	revokeConnection,
 	startConnect,
 	type RepoConnectionDeps
@@ -291,6 +292,75 @@ describe('attachRemote', () => {
 	});
 });
 
+describe('pullNow', () => {
+	async function attached() {
+		const h = await githubConnection();
+		const remote = await attachRemote(h.deps, {
+			orgId: ORG,
+			siteId: 'site_1',
+			connectionId: h.connection.id,
+			repo: 'ops/site',
+			branch: 'main',
+			mountPath: 'modules/custom/site'
+		});
+		return { ...h, remote };
+	}
+
+	it('starts a pull for the remote under the key it was given', async () => {
+		const h = await attached();
+		const operation = await pullNow(h.deps, {
+			orgId: ORG,
+			siteId: 'site_1',
+			remoteId: h.remote.id,
+			idempotencyKey: 'press-1'
+		});
+		expect(operation.operation.type).toBe('git.pull');
+		expect(h.pulls).toEqual([`${h.remote.id}:press-1`]);
+	});
+
+	it('answers not found for a remote on another site or another organisation', async () => {
+		const h = await attached();
+		for (const [orgId, siteId] of [
+			[ORG, 'site_other'],
+			['org_other', 'site_1']
+		] as const) {
+			const error = await refusedWith(() =>
+				pullNow(h.deps, { orgId, siteId, remoteId: h.remote.id, idempotencyKey: 'k' })
+			);
+			expect(error.code).toBe('not_found');
+		}
+		expect(h.pulls).toHaveLength(0);
+	});
+
+	it('refuses a pull through a revoked connection', async () => {
+		const h = await attached();
+		await revokeConnection(h.deps, ORG, h.connection.id);
+		const error = await refusedWith(() =>
+			pullNow(h.deps, {
+				orgId: ORG,
+				siteId: 'site_1',
+				remoteId: h.remote.id,
+				idempotencyKey: 'k'
+			})
+		);
+		expect(error.details).toMatchObject({ reason: 'connection_revoked' });
+		expect(h.pulls).toHaveLength(0);
+	});
+
+	it('hands a repeated key to the starter again, which returns the first operation', async () => {
+		const h = await attached();
+		const input = {
+			orgId: ORG,
+			siteId: 'site_1',
+			remoteId: h.remote.id,
+			idempotencyKey: 'same'
+		};
+		await pullNow(h.deps, input);
+		await pullNow(h.deps, input);
+		expect(h.pulls).toEqual([`${h.remote.id}:same`, `${h.remote.id}:same`]);
+	});
+});
+
 describe('acceptDelivery', () => {
 	async function githubRemote() {
 		const h = await githubConnection();
@@ -376,6 +446,9 @@ describe('acceptDelivery', () => {
 		expect(result).toEqual({ duplicate: false, matched: 1 });
 		const [remote] = [...h.remotes.values()];
 		expect(remote?.lastPullStatus).toBe('failed');
+		expect(remote?.lastPullReason).toBe(
+			'The pull could not be started. Press Pull to try again.'
+		);
 	});
 
 	it('accepts a GitLab push with the plain secret header and ignores a tag push', async () => {
@@ -404,6 +477,7 @@ describe('acceptDelivery', () => {
 			intervalMinutes: 60,
 			lastPullStatus: null,
 			lastPullAt: null,
+			lastPullReason: null,
 			createdAt: NOW
 		});
 		const body = JSON.stringify({

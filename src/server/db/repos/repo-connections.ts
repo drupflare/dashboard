@@ -26,6 +26,7 @@ export interface RemoteRow {
 	intervalMinutes: number;
 	lastPullStatus: string | null;
 	lastPullAt: number | null;
+	lastPullReason: string | null;
 	createdAt: number;
 }
 
@@ -53,13 +54,14 @@ interface RemoteDbRow {
 	interval_minutes: number;
 	last_pull_status: string | null;
 	last_pull_at: number | null;
+	last_pull_reason: string | null;
 	created_at: number;
 }
 
 const CONNECTION_COLUMNS =
 	'id, organization_id, provider, external_id, display_name, credential_envelope, scopes, state, created_at, revoked_at';
 const REMOTE_COLUMNS =
-	'id, site_id, organization_id, connection_id, repo_full_name, branch, mount_path, interval_minutes, last_pull_status, last_pull_at, created_at';
+	'id, site_id, organization_id, connection_id, repo_full_name, branch, mount_path, interval_minutes, last_pull_status, last_pull_at, last_pull_reason, created_at';
 
 function parseScopes(raw: string): string[] {
 	const parsed: unknown = JSON.parse(raw);
@@ -93,6 +95,7 @@ function toRemote(row: RemoteDbRow): RemoteRow {
 		intervalMinutes: row.interval_minutes,
 		lastPullStatus: row.last_pull_status,
 		lastPullAt: row.last_pull_at,
+		lastPullReason: row.last_pull_reason,
 		createdAt: row.created_at
 	};
 }
@@ -198,7 +201,7 @@ export async function insertRemote(db: CollegeDBClient, row: RemoteRow): Promise
 	await uniqueOrDuplicate(() =>
 		db.run(
 			DIRECTORY_KEY,
-			`INSERT INTO site_remotes (${REMOTE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO site_remotes (${REMOTE_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			[
 				row.id,
 				row.siteId,
@@ -210,6 +213,7 @@ export async function insertRemote(db: CollegeDBClient, row: RemoteRow): Promise
 				row.intervalMinutes,
 				row.lastPullStatus,
 				row.lastPullAt,
+				row.lastPullReason,
 				row.createdAt
 			]
 		)
@@ -240,7 +244,7 @@ export async function listRemotesForPush(
 	const { results } = await db.all<RemoteDbRow>(
 		DIRECTORY_KEY,
 		`SELECT r.id, r.site_id, r.organization_id, r.connection_id, r.repo_full_name, r.branch,
-		 r.mount_path, r.interval_minutes, r.last_pull_status, r.last_pull_at, r.created_at
+		 r.mount_path, r.interval_minutes, r.last_pull_status, r.last_pull_at, r.last_pull_reason, r.created_at
 		 FROM site_remotes r JOIN repo_connections c ON c.id = r.connection_id
 		 WHERE c.provider = ? AND c.state = 'active' AND r.repo_full_name = ? AND r.branch = ?
 		 ORDER BY r.id`,
@@ -253,12 +257,13 @@ export async function setRemotePull(
 	db: CollegeDBClient,
 	id: string,
 	status: string,
-	at: number
+	at: number,
+	reason: string | null
 ): Promise<void> {
 	await db.run(
 		DIRECTORY_KEY,
-		'UPDATE site_remotes SET last_pull_status = ?, last_pull_at = ? WHERE id = ?',
-		[status, at, id]
+		'UPDATE site_remotes SET last_pull_status = ?, last_pull_at = ?, last_pull_reason = ? WHERE id = ?',
+		[status, at, reason, id]
 	);
 }
 
