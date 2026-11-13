@@ -1,0 +1,468 @@
+import type { CommandResult } from './types';
+import type { Transport } from './types';
+
+/** One read-only command the survey issues, and what a non-zero exit from it means. */
+export interface SurveyStep {
+	id: string;
+	command: string;
+	/** a required step that fails aborts nothing, but its absence is reported as an error */
+	required: boolean;
+	description: string;
+}
+
+export interface SiteSurvey {
+	source: 'vps';
+	host: string;
+	root: string;
+	capturedAt: string | null;
+	php: { version: string | null; extensions: string[] };
+	drush: string | null;
+	drupal: {
+		version: string | null;
+		profile: string | null;
+		uri: string | null;
+		/** the root drush reported; a survey against the wrong one measures a different site */
+		root: string | null;
+	};
+	database: { driver: string | null; name: string | null; bytes: number | null };
+	/** `private` is the private files directory drush reports, as written in settings.php */
+	files: { kb: number | null; count: number | null; private?: string | null };
+	/**
+	 * Whether the database answered a trivial query, and how many `file_managed` rows it holds.
+	 *
+	 * Both are CONTROLS rather than measurements. `drush status` reporting no driver and a database
+	 * that refuses a connection produce the same blank field, and zero files on disk means nothing
+	 * until you know whether the site has uploads at all: zero and zero is a site with none, zero
+	 * and four thousand is a missing volume.
+	 */
+	dbAlive: boolean | null;
+	fileRows: number | null;
+	modules: string[];
+	nodes: number | null;
+	imageStyles: number | null;
+	/** null when no Redis answered, which is not the same as a Redis holding nothing */
+	redis?: RedisState | null;
+	errors: { id: string; detail: string }[];
+}
+
+/**
+ * Every command the survey will run, in order.
+ *
+ * READ-ONLY BY CONSTRUCTION. Nothing here writes a file, changes a config or takes a lock, so a
+ * survey against a production VPS is safe to run during traffic; that is the property that makes
+ * `--dry-run` printing this list a useful review rather than theatre.
+ *
+ * The `drush sql:query` steps are MySQL-shaped and are all optional, because a site on PostgreSQL or
+ * SQLite should still produce a survey rather than an error report.
+ */
+export function surveyPlan(
+	root: string,
+	opts: { drush?: string; siteDir?: string } = {}
+): SurveyStep[] {
+	const drush = opts.drush ?? `cd ${root} && drush`;
+	const site = opts.siteDir ?? 'default';
+	return [
+		{ id: 'php-version', command: 'php -v', required: true, description: 'PHP version' },
+		{ id: 'php-modules', command: 'php -m', required: true, description: 'loaded extensions' },
+		{
+			id: 'drush-version',
+			command: `${drush} --version`,
+			required: false,
+			description: 'drush presence'
+		},
+		{
+			id: 'drush-status',
+			command: `${drush} status --format=json`,
+			required: true,
+			description: 'Drupal version, database driver, site URI'
+		},
+		{
+			id: 'modules',
+			command: `${drush} pm:list --status=enabled --type=module --format=json`,
+			required: true,
+			description: 'enabled modules'
+		},
+		{
+			// REQUIRED because its failure is the evidence behind a blocker. `source.files-missing`
+			// reads `survey.errors[files-kb]`, and an optional step's non-zero exit is not recorded
+			// there -- so a `du` that answered "No such file or directory" produced no finding at
+			// all and the whole verdict was unreachable
+			id: 'files-kb',
+			command: `du -sk ${root}/sites/${site}/files`,
+			required: true,
+			description: 'public files size'
+		},
+		{
+			id: 'files-count',
+			command: `find ${root}/sites/${site}/files -type f | wc -l`,
+			required: false,
+			description: 'public file count'
+		},
+		{
+			id: 'db-bytes',
+			command:
+				`${drush} sql:query ` +
+				'"SELECT SUM(data_length + index_length) FROM information_schema.tables ' +
+				'WHERE table_schema = DATABASE()"',
+			required: false,
+			description: 'database size (MySQL only)'
+		},
+		{
+			id: 'db-alive',
+			command: `${drush} sql:query "SELECT 1"`,
+			required: false,
+			description: 'whether the database answers'
+		},
+		{
+			id: 'file-rows',
+			command: `${drush} sql:query "SELECT COUNT(*) FROM file_managed"`,
+			required: false,
+			description: 'managed file rows'
+		},
+		{
+			id: 'nodes',
+			command: `${drush} sql:query "SELECT COUNT(*) FROM node"`,
+			required: false,
+			description: 'node count'
+		},
+		{
+			id: 'image-styles',
+			command:
+				`${drush} sql:query ` +
+				`"SELECT COUNT(*) FROM config WHERE name LIKE 'image.style.%'"`,
+			required: false,
+			description: 'image style count'
+		},
+		{
+			// names are reduced to counted prefixes as they arrive and never stored
+			id: 'redis-keys',
+			command: 'redis-cli --scan',
+			required: false,
+			description: 'Redis keys outside the Drupal cache bins'
+		}
+	];
+}
+
+/** what a Redis on the host holds that a SQL dump cannot carry */
+export interface RedisState {
+	keys: number;
+	/** keys under the redis module's default `drupal.redis.` prefix, which are cache and regenerate */
+	cache: number;
+	/** everything else, counted by prefix with ids, hashes and addresses replaced by `N` */
+	prefixes: { prefix: string; count: number }[];
+}
+
+/** `unsubscribe_token_9f2c...` to `unsubscribe_token_N`, and `a:12:b@x.com:c` to `a:N` */
+export function redisPrefix(key: string): string {
+	return key
+		.replace(/[^:]*@[^:]*/g, 'N')
+		.replace(/[0-9a-f]{16,}|[0-9]+/g, 'N')
+		.split(':')
+		.slice(0, 2)
+		.join(':');
+}
+
+/** Counts `redis-cli --scan` output by prefix. The key names themselves are dropped. */
+export function parseRedisKeys(stdout: string): RedisState | null {
+	const lines = stdout.split('\n').filter((l) => l.trim() !== '');
+	// an auth error or a usage message is output too, and counting it as a key would be a finding
+	if (
+		lines.length === 0 ||
+		lines.some((l) => /^(\(error\)|NOAUTH|ERR |Could not connect)/.test(l))
+	) {
+		return null;
+	}
+	const counts = new Map<string, number>();
+	let cache = 0;
+	for (const key of lines) {
+		if (key.startsWith('drupal.redis.')) {
+			cache++;
+			continue;
+		}
+		const prefix = redisPrefix(key);
+		counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
+	}
+	return {
+		keys: lines.length,
+		cache,
+		prefixes: [...counts]
+			.map(([prefix, count]) => ({ prefix, count }))
+			.sort((a, b) => b.count - a.count || a.prefix.localeCompare(b.prefix))
+			.slice(0, 12)
+	};
+}
+
+/** `PHP 8.3.6 (cli) (built: ...)` to `8.3.6`. */
+export function parsePhpVersion(stdout: string): string | null {
+	const match = /^PHP\s+(\d+\.\d+\.\d+[^\s]*)/m.exec(stdout);
+	return match?.[1] ?? null;
+}
+
+/**
+ * The `[PHP Modules]` section of `php -m`, without the Zend one.
+ *
+ * Both sections are flat lists of bare names, so a parser that ignored the headers would report
+ * `Zend OPcache` as a loadable extension and a rule keyed on extension names would then be wrong.
+ */
+export function parsePhpModules(stdout: string): string[] {
+	const out: string[] = [];
+	let inPhp = false;
+	for (const line of stdout.split('\n')) {
+		const trimmed = line.trim();
+		if (/^\[.*\]$/.test(trimmed)) {
+			inPhp = trimmed.toLowerCase() === '[php modules]';
+			continue;
+		}
+		if (inPhp && trimmed !== '') out.push(trimmed);
+	}
+	return out;
+}
+
+interface DrushStatus {
+	[key: string]: unknown;
+}
+
+/** Reads a key under either the hyphenated or the camel form drush has used across major versions. */
+function statusField(status: DrushStatus, ...names: string[]): string | null {
+	for (const name of names) {
+		const value = status[name];
+		if (typeof value === 'string' && value !== '') return value;
+	}
+	return null;
+}
+
+export interface DrushStatusFields {
+	drupalVersion: string | null;
+	dbDriver: string | null;
+	dbName: string | null;
+	uri: string | null;
+	profile: string | null;
+	/** the root drush bootstrapped, which is not always the one `--root` named */
+	root: string | null;
+	privatePath: string | null;
+}
+
+/** Parses `drush status --format=json`, tolerating both key spellings and a non-JSON body. */
+export function parseDrushStatus(stdout: string): DrushStatusFields | null {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stdout);
+	} catch {
+		return null;
+	}
+	if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+	const status = parsed as DrushStatus;
+	return {
+		drupalVersion: statusField(status, 'drupal-version', 'drupalVersion'),
+		dbDriver: statusField(status, 'db-driver', 'dbDriver'),
+		dbName: statusField(status, 'db-name', 'dbName'),
+		uri: statusField(status, 'uri'),
+		profile: statusField(status, 'install-profile', 'installProfile'),
+		root: statusField(status, 'root', 'drupal-root', 'drupalRoot'),
+		privatePath: statusField(status, 'private', 'file-private-path', 'filePrivatePath')
+	};
+}
+
+/** Enabled module machine names from `drush pm:list --format=json`, sorted. */
+export function parseModuleList(stdout: string): string[] {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(stdout);
+	} catch {
+		return [];
+	}
+	if (parsed === null || typeof parsed !== 'object') return [];
+	if (Array.isArray(parsed)) {
+		return parsed.filter((v): v is string => typeof v === 'string').sort();
+	}
+	return Object.keys(parsed as Record<string, unknown>).sort();
+}
+
+/**
+ * The last standalone integer in a body of output.
+ *
+ * `drush sql:query` prints a column header on some drivers and not others, and `du` prefixes the
+ * path; taking the last integer-only token is the one rule that reads all of them without a
+ * per-driver branch.
+ */
+export function parseCount(stdout: string): number | null {
+	let found: number | null = null;
+	for (const line of stdout.split('\n')) {
+		const match = /^(\d+)(\s|$)/.exec(line.trim());
+		if (match?.[1] !== undefined) found = Number(match[1]);
+	}
+	return found;
+}
+
+/** `123456\t/var/www/html/sites/default/files` to `123456`, in kilobytes. */
+export function parseDuKb(stdout: string): number | null {
+	const match = /^(\d+)\s/m.exec(stdout.trim());
+	return match?.[1] === undefined ? null : Number(match[1]);
+}
+
+/** An empty survey, so a caller that only has partial output still has a well-typed record. */
+export function emptySurvey(host: string, root: string): SiteSurvey {
+	return {
+		source: 'vps',
+		host,
+		root,
+		capturedAt: null,
+		php: { version: null, extensions: [] },
+		drush: null,
+		drupal: { version: null, profile: null, uri: null, root: null },
+		database: { driver: null, name: null, bytes: null },
+		files: { kb: null, count: null },
+		dbAlive: null,
+		fileRows: null,
+		modules: [],
+		nodes: null,
+		imageStyles: null,
+		redis: null,
+		errors: []
+	};
+}
+
+export interface SurveyDeps {
+	transport: Transport;
+	now?: () => Date;
+}
+
+/**
+ * Runs the whole plan and folds the output into a survey.
+ *
+ * A failing step is recorded and the run continues. A partial survey is the normal case -- a host
+ * without drush still answers `php -v` -- and the rules layer is written to treat an unknown as
+ * unknown rather than as a pass.
+ */
+export async function runSurvey(
+	deps: SurveyDeps,
+	host: string,
+	root: string,
+	resumeFrom: SiteSurvey | null = null,
+	layout: { drush?: string; siteDir?: string } = {}
+): Promise<SiteSurvey> {
+	const survey = resumeFrom === null ? emptySurvey(host, root) : { ...resumeFrom, host, root };
+	survey.capturedAt = (deps.now ?? (() => new Date()))().toISOString();
+	const settled = resumeFrom === null ? new Set<string>() : settledSteps(resumeFrom);
+	// a step is re-run only when it has NEITHER a value nor a recorded error, because a step that
+	// failed the same way twice will fail the same way a third time and re-running it is what turns
+	// a resume into a restart
+	if (resumeFrom !== null) survey.errors = [...resumeFrom.errors];
+
+	for (const step of surveyPlan(root, layout)) {
+		if (settled.has(step.id)) continue;
+		let result: CommandResult;
+		try {
+			result = await deps.transport.exec(step.command);
+		} catch (e) {
+			survey.errors.push({ id: step.id, detail: e instanceof Error ? e.message : String(e) });
+			continue;
+		}
+		if (result.code !== 0) {
+			if (step.required) {
+				survey.errors.push({
+					id: step.id,
+					detail: `exit ${result.code}: ${result.stderr.trim().split('\n')[0] ?? 'no detail'}`
+				});
+			}
+			// a control that RAN and refused is a measurement, where an absent one is not: the
+			// whole point of `SELECT 1` is separating "no driver reported" from "driver reported,
+			// database refuses", and both would read as null if the failure were dropped
+			if (step.id === 'db-alive') survey.dbAlive = false;
+			continue;
+		}
+		applyStep(survey, step.id, result.stdout);
+	}
+	return survey;
+}
+
+/**
+ * Which steps a resume may skip: the ones that already produced a value or a recorded error.
+ *
+ * Read off the SURVEY rather than off a separate list, so a field that stops being filled by a step
+ * cannot leave the two disagreeing about what was done.
+ */
+export function settledSteps(survey: SiteSurvey): Set<string> {
+	const done = new Set<string>(survey.errors.map((e) => e.id));
+	const has = (id: string, value: unknown) => {
+		if (
+			value !== null &&
+			value !== undefined &&
+			!(Array.isArray(value) && value.length === 0)
+		) {
+			done.add(id);
+		}
+	};
+	has('php-version', survey.php.version);
+	has('php-modules', survey.php.extensions);
+	has('drush-version', survey.drush);
+	has('drush-status', survey.drupal.version);
+	has('modules', survey.modules);
+	has('files-kb', survey.files.kb);
+	has('files-count', survey.files.count);
+	has('db-bytes', survey.database.bytes);
+	has('db-alive', survey.dbAlive);
+	has('file-rows', survey.fileRows);
+	has('nodes', survey.nodes);
+	has('image-styles', survey.imageStyles);
+	has('redis-keys', survey.redis);
+	return done;
+}
+
+/** Folds one step's stdout into the survey. Split out so a spec can drive a single parser path. */
+export function applyStep(survey: SiteSurvey, id: string, stdout: string): void {
+	switch (id) {
+		case 'php-version':
+			survey.php.version = parsePhpVersion(stdout);
+			return;
+		case 'php-modules':
+			survey.php.extensions = parsePhpModules(stdout);
+			return;
+		case 'drush-version':
+			survey.drush = /(\d+\.\d+\.\d+)/.exec(stdout)?.[1] ?? null;
+			return;
+		case 'drush-status': {
+			const status = parseDrushStatus(stdout);
+			if (status === null) return;
+			survey.drupal.version = status.drupalVersion;
+			survey.drupal.profile = status.profile;
+			survey.drupal.uri = status.uri;
+			survey.drupal.root = status.root;
+			survey.database.driver = status.dbDriver;
+			survey.database.name = status.dbName;
+			if (status.privatePath !== null) survey.files.private = status.privatePath;
+			return;
+		}
+		case 'modules':
+			survey.modules = parseModuleList(stdout);
+			return;
+		case 'files-kb':
+			survey.files.kb = parseDuKb(stdout);
+			return;
+		case 'files-count':
+			survey.files.count = parseCount(stdout);
+			return;
+		case 'db-bytes':
+			survey.database.bytes = parseCount(stdout);
+			return;
+		case 'db-alive':
+			// the query returns the literal 1, and anything at all coming back means the driver
+			// connected; a failed step never reaches here, so absent stays null
+			survey.dbAlive = parseCount(stdout) !== null;
+			return;
+		case 'file-rows':
+			survey.fileRows = parseCount(stdout);
+			return;
+		case 'nodes':
+			survey.nodes = parseCount(stdout);
+			return;
+		case 'image-styles':
+			survey.imageStyles = parseCount(stdout);
+			return;
+		case 'redis-keys':
+			survey.redis = parseRedisKeys(stdout);
+			return;
+		default:
+			return;
+	}
+}

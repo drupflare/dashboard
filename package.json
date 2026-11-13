@@ -14,6 +14,7 @@
 		"test:bindings": "vitest run -c vitest.node.config.ts tests/bindings --passWithNoTests",
 		"check:wrangler": "bun scripts/check-wrangler.ts",
 		"sync:corpus": "bun scripts/sync-corpus.ts",
+		"sync:drangler": "bun scripts/sync-drangler.ts",
 		"gen:permissions": "bun scripts/gen-permissions.ts",
 		"gen:catalogue": "bun scripts/gen-catalogue.ts",
 		"gen:contracts": "bun scripts/gen-contracts.ts",

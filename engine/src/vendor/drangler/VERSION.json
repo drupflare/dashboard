@@ -1,0 +1,17 @@
+{
+	"version": "1.0.0",
+	"files": {
+		"convert.ts": {
+			"source": "src/migrate/convert.ts",
+			"sha256": "bf612d4096355f09a329ebf6a29cfa1798f6a6d52cfb01caacf456ec44b074d4"
+		},
+		"survey.ts": {
+			"source": "src/migrate/survey.ts",
+			"sha256": "a95f080b93a5293616520cc2cd377a3e47e10eae2c12b33d422c365bba1f586d"
+		},
+		"errors.ts": {
+			"source": "src/errors.ts",
+			"sha256": "b2440acc13f095254248934c242c364c5ea168ea61acb24d1e164d3e8664436d"
+		}
+	}
+}
