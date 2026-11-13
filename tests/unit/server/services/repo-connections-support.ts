@@ -1,5 +1,6 @@
 import { toBase64Url } from '@contracts/common';
 import type { Operation } from '@contracts/operations';
+import { exportPKCS8, generateKeyPair } from 'jose';
 import type { StoredOperation } from '../../../../src/server/db/repos/operations';
 import type { ConnectionRow, RemoteRow } from '../../../../src/server/db/repos/repo-connections';
 import type { ProviderFetch } from '../../../../src/server/integrations/git-providers';
@@ -61,6 +62,7 @@ export function fakeStore() {
 	const connections = new Map<string, ConnectionRow>();
 	const remotes = new Map<string, RemoteRow>();
 	const deliveries = new Set<string>();
+	const pending = new Set<string>();
 	const store: RepoConnectionStore = {
 		async insertConnection(row) {
 			connections.set(row.id, { ...row });
@@ -123,6 +125,9 @@ export function fakeStore() {
 					lastPullReason: reason
 				});
 		},
+		async markPullPending(id) {
+			pending.add(id);
+		},
 		async hasDelivery(provider, id) {
 			return deliveries.has(`${provider}:${id}`);
 		},
@@ -130,7 +135,7 @@ export function fakeStore() {
 			deliveries.add(`${provider}:${id}`);
 		}
 	};
-	return { store, connections, remotes };
+	return { store, connections, remotes, pending };
 }
 
 export function fakeOnce(): OnceStore {
@@ -161,11 +166,29 @@ export const githubReply = (installations: number[]) => (url: string) => {
 	if (url.includes('/user/installations')) {
 		return Response.json({ installations: installations.map((id) => ({ id })) });
 	}
+	if (url.includes('/access_tokens')) {
+		return Response.json({ token: 'ghs_installation', expires_at: '2030-01-01T00:00:00Z' });
+	}
+	if (url.includes('/installation/repositories')) {
+		return Response.json({
+			repositories: [{ full_name: 'ops/site', default_branch: 'main' }]
+		});
+	}
 	return Response.json([]);
 };
 
+// the app JWT is signed for real, so the GitHub adapter needs a PKCS8 key that imports
+let githubKey: string | null = null;
+async function githubPrivateKey(): Promise<string> {
+	if (githubKey === null) {
+		const { privateKey } = await generateKeyPair('RS256', { extractable: true });
+		githubKey = await exportPKCS8(privateKey);
+	}
+	return githubKey;
+}
+
 export async function harness(reply: (url: string) => Response = () => Response.json([])) {
-	const { store, connections, remotes } = fakeStore();
+	const { store, connections, remotes, pending } = fakeStore();
 	const calls: string[] = [];
 	const transport: ProviderFetch = async (url) => {
 		calls.push(url);
@@ -182,7 +205,7 @@ export async function harness(reply: (url: string) => Response = () => Response.
 		now: () => NOW,
 		github: {
 			appId: '1',
-			privateKey: '',
+			privateKey: await githubPrivateKey(),
 			slug: 'drupflare',
 			clientId: 'ghcid',
 			clientSecret: 'ghsecret',
@@ -200,7 +223,7 @@ export async function harness(reply: (url: string) => Response = () => Response.
 		},
 		audit: async () => {}
 	};
-	return { deps, connections, remotes, calls, pulls };
+	return { deps, connections, remotes, pending, calls, pulls };
 }
 
 export const pushBody = (installationId: number, ref = 'refs/heads/main') =>

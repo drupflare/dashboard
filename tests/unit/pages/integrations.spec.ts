@@ -374,6 +374,29 @@ describe('integrations page', () => {
 		expect(wrapper.text()).toContain('60 minutes');
 	});
 
+	it('shows the reason a pull failed under its remote, and no reason under a pull that worked', async () => {
+		const reason = 'The site did not answer. Check that it is online, then pull again.';
+		setup({
+			remotes: {
+				body: {
+					items: [
+						remote({ lastPullReason: reason }),
+						remote({
+							id: 'sr_2',
+							repo: 'acme/theme',
+							lastPullStatus: 'installed',
+							lastPullReason: null
+						})
+					]
+				}
+			}
+		});
+		await useOrgStore().ensure();
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(wrapper.text()).toContain('acme/theme'));
+		expect(wrapper.text().split(reason)).toHaveLength(2);
+	});
+
 	it('says nothing is attached yet for a site with no remotes', async () => {
 		setup({ remotes: { body: { items: [] } } });
 		await useOrgStore().ensure();

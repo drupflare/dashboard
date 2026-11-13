@@ -113,4 +113,19 @@ export class D1RemoteLedger implements RemoteLedger {
 			.bind(result.status, result.at, result.reason, id)
 			.run();
 	}
+
+	async clearPending(id: string): Promise<void> {
+		await this.db
+			.prepare('UPDATE site_remotes SET pull_pending = 0 WHERE id = ?')
+			.bind(id)
+			.run();
+	}
+
+	async takePending(id: string): Promise<boolean> {
+		const { meta } = await this.db
+			.prepare('UPDATE site_remotes SET pull_pending = 0 WHERE id = ? AND pull_pending = 1')
+			.bind(id)
+			.run();
+		return meta.changes === 1;
+	}
 }

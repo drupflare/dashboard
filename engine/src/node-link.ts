@@ -214,7 +214,7 @@ export class NodeLink {
 			socket.close(CLOSE.revoked, 'node_revoked');
 			return;
 		}
-		const map = siteMapOf(node.orgId, await this.deps.nodes.sites(node.orgId));
+		const map = siteMapOf(node.orgId, await this.deps.nodes.sites(node.orgId, node.id));
 		if (map.truncated) console.warn('site map cut at the contract limit', node.id);
 		const digest = await sitesDigest(map.sites);
 		if (digest === state.sitesDigest) return;

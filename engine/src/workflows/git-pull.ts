@@ -54,8 +54,14 @@ interface Found {
 	siteRemoteId: string | null;
 }
 
-async function findRemote(ctx: Ctx, deps: GitDeps, input: GitPullInput): Promise<Found> {
-	return runStep(ctx, 'find', 'find', async () => {
+// a follow-up round reuses the plan's step ids and gets its own workflow step names
+async function findRemote(
+	ctx: Ctx,
+	deps: GitDeps,
+	input: GitPullInput,
+	round: string
+): Promise<Found> {
+	return runStep(ctx, `find${round}`, 'find', async () => {
 		await fenced(ctx);
 		await assertOperationOrg(deps, ctx.operationId, input.orgId, 'site_not_ready');
 		const site = await openSite(
@@ -99,9 +105,10 @@ async function pullCommit(
 	ctx: Ctx,
 	deps: GitDeps,
 	input: GitPullInput,
-	found: Found
+	found: Found,
+	round: string
 ): Promise<GitPullResult> {
-	return runStep(ctx, 'pull', 'pull', async () => {
+	return runStep(ctx, `pull${round}`, 'pull', async () => {
 		await fenced(ctx);
 		const { hostname, siteRemoteId, spec } = found;
 		const result = await deps.custody.withOwnerToken(
@@ -122,8 +129,13 @@ async function pullCommit(
 	});
 }
 
-async function recordInstalled(ctx: Ctx, deps: GitDeps, input: GitPullInput): Promise<void> {
-	await runStep(ctx, 'record', 'record', async () => {
+async function recordInstalled(
+	ctx: Ctx,
+	deps: GitDeps,
+	input: GitPullInput,
+	round: string
+): Promise<void> {
+	await runStep(ctx, `record${round}`, 'record', async () => {
 		await fenced(ctx);
 		await deps.remotes.record(input.remoteId, {
 			status: 'installed',
@@ -188,9 +200,17 @@ export async function runGitPull(
 	try {
 		await startOperation(ctx);
 		await acquireLease(ctx, 'lease');
-		found = await findRemote(ctx, deps, input);
-		pulled = await pullCommit(ctx, deps, input, found);
-		await recordInstalled(ctx, deps, input);
+		// a mark set before this run is older than the head this pull reads
+		await plainStep(ctx, 'pending.clear', () => deps.remotes.clearPending(input.remoteId));
+		found = await findRemote(ctx, deps, input, '');
+		pulled = await pullCommit(ctx, deps, input, found, '');
+		await recordInstalled(ctx, deps, input, '');
+		// one follow-up round at most, for a push that landed while the pull above ran
+		if (await plainStep(ctx, 'pending.take', () => deps.remotes.takePending(input.remoteId))) {
+			found = await findRemote(ctx, deps, input, '-2');
+			pulled = await pullCommit(ctx, deps, input, found, '-2');
+			await recordInstalled(ctx, deps, input, '-2');
+		}
 	} catch (error) {
 		if (!(error instanceof StepFailed)) throw error;
 		return fail(ctx, deps, input, error);

@@ -38,6 +38,12 @@ const lastPull = computed(() =>
 				>{{ status.label }}</UBadge
 			>
 		</div>
+		<p
+			v-if="remote.lastPullStatus === 'failed' && remote.lastPullReason"
+			class="text-sm text-error"
+		>
+			{{ remote.lastPullReason }}
+		</p>
 		<dl class="grid grid-cols-1 gap-x-6 gap-y-1 text-sm sm:grid-cols-3">
 			<div class="flex gap-2">
 				<dt class="text-muted">Mount Path</dt>

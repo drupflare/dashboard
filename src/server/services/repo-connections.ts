@@ -79,6 +79,7 @@ export interface RepoConnectionStore {
 	listRemotes(orgId: string, siteId: string): Promise<RemoteRow[]>;
 	remotesForPush(provider: ProviderId, repo: string, branch: string): Promise<RemoteRow[]>;
 	setPull(id: string, status: PullStatus, at: number, reason: string | null): Promise<void>;
+	markPullPending(id: string): Promise<void>;
 	hasDelivery(provider: ProviderId, deliveryId: string): Promise<boolean>;
 	recordDelivery(provider: ProviderId, deliveryId: string, now: number): Promise<void>;
 }
@@ -114,6 +115,9 @@ export function collegeRepoStore(getDb: () => Promise<CollegeDBClient>): RepoCon
 		},
 		async setPull(id, status, at, reason) {
 			await repo.setRemotePull(await getDb(), id, status, at, reason);
+		},
+		async markPullPending(id) {
+			await repo.markRemotePullPending(await getDb(), id);
 		},
 		async hasDelivery(provider, deliveryId) {
 			return repo.hasDelivery(await getDb(), provider, deliveryId);
@@ -531,12 +535,23 @@ export async function attachRemote(
 			`The interval must be from ${SYNC_FLOOR_MINUTES} to ${SYNC_CEILING_MINUTES} minutes`
 		);
 	}
+	// pushes match the stored name exactly, so the provider's spelling is kept
+	const listed = (await listRepositories(deps, input.orgId, input.connectionId)).find(
+		(repo) => repo.fullName.toLowerCase() === name.toLowerCase()
+	);
+	if (listed === undefined) {
+		throw new ApiError(
+			'validation',
+			'This connection cannot read that repository. Check the name, then try again.',
+			{ reason: 'repository_not_on_connection' }
+		);
+	}
 	const row: RemoteRow = {
 		id: crypto.randomUUID(),
 		siteId: input.siteId,
 		organizationId: input.orgId,
 		connectionId: input.connectionId,
-		repoFullName: name,
+		repoFullName: listed.fullName,
 		branch: input.branch,
 		mountPath: input.mountPath,
 		intervalMinutes: interval,
@@ -621,6 +636,37 @@ export async function pullNow(
 	return deps.pullRemote(remote, { key: input.idempotencyKey });
 }
 
+// the engine refuses a start behind a running pull and names that pull's remote in the details
+function behindOwnPull(error: unknown, remoteId: string): boolean {
+	if (!(error instanceof ApiError)) return false;
+	const details = error.details as {
+		reason?: unknown;
+		operation?: unknown;
+		remoteId?: unknown;
+	} | null;
+	return (
+		details?.reason === 'site_busy' &&
+		details.operation === 'git.pull' &&
+		details.remoteId === remoteId
+	);
+}
+
+// a push that lands behind a pull of its own repository is marked pending; that pull starts one more
+// when it ends, and this second start covers a pull that ended before the mark was written
+async function queuePull(deps: RepoConnectionDeps, remote: RemoteRow, key: string): Promise<void> {
+	try {
+		await deps.pullRemote(remote, { key });
+	} catch (error) {
+		if (!behindOwnPull(error, remote.id)) throw error;
+		await deps.store.markPullPending(remote.id);
+		try {
+			await deps.pullRemote(remote, { key });
+		} catch (retry) {
+			if (!behindOwnPull(retry, remote.id)) throw retry;
+		}
+	}
+}
+
 // one git.pull operation per matching remote; the workflow writes the result on the remote, and a
 // pull that cannot start is stored there as failed without failing the delivery
 export async function handlePush(
@@ -642,7 +688,7 @@ export async function handlePush(
 		// the delivery id and the remote make the key, so a redelivery returns the same operation
 		const key = `git-pull:${await sha256Hex(`${provider}:${event.deliveryId}:${remote.id}`)}`;
 		try {
-			await deps.pullRemote(remote, { key });
+			await queuePull(deps, remote, key);
 		} catch (error) {
 			const reason =
 				error instanceof ApiError

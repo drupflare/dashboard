@@ -46,10 +46,18 @@ export async function startGitPull(
 	}
 	const busy = await findOpenSiteOperation(db, orgId, site.id);
 	if (busy) {
+		const busyInputs = (await getOperationInputs(db, orgId, busy.id)) as {
+			remoteId?: unknown;
+		} | null;
 		throw new ApiError(
 			'conflict',
 			'Another change to this site is still running. Wait for it to finish.',
-			{ reason: 'site_busy', operationId: busy.id, operation: busy.type }
+			{
+				reason: 'site_busy',
+				operationId: busy.id,
+				operation: busy.type,
+				remoteId: busyInputs?.remoteId ?? null
+			}
 		);
 	}
 	const params: GitPullInput = {

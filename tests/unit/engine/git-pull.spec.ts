@@ -35,6 +35,7 @@ import {
 } from './fakes';
 
 const OP = `op_${'g'.repeat(26)}`;
+const OP_TWO = `op_${'h'.repeat(26)}`;
 const SITE_HOST = 'git.drupflare.app';
 const CONNECTION = 'conn_1';
 const REMOTE = 'rem_1';
@@ -64,7 +65,9 @@ function fakeGitSite() {
 		] as (GitSiteRemote & { mount?: string })[],
 		behavior: 'ok' as Behavior,
 		blips: 1,
-		pulls: 0
+		pulls: 0,
+		// runs while a pull is being answered, so a test can make a push land mid-pull
+		onPull: undefined as (() => void) | undefined
 	};
 	const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
 		const url = new URL(String(input));
@@ -79,6 +82,7 @@ function fakeGitSite() {
 		if (action !== 'pull')
 			return Response.json({ ok: false, error: 'unknown action' }, { status: 404 });
 		state.pulls++;
+		state.onPull?.();
 		if (state.behavior === 'blip' && state.blips-- > 0) {
 			return new Response('busy', { status: 503 });
 		}
@@ -541,6 +545,69 @@ describe('git.pull', () => {
 		expect((await operationOf(gw)).status).toBe('failed');
 	});
 
+	// the dashboard writes the mark when a push is refused behind a running pull
+	const markPending = (gw: Gw) =>
+		gw.world.sqlite
+			.prepare('UPDATE site_remotes SET pull_pending = 1 WHERE id = ?')
+			.run(REMOTE);
+	const pendingOf = (gw: Gw) =>
+		(
+			gw.world.sqlite
+				.prepare('SELECT pull_pending AS p FROM site_remotes WHERE id = ?')
+				.get(REMOTE) as {
+				p: number;
+			}
+		).p;
+
+	it('runs one follow-up pull for a push that lands during the pull, and clears the mark', async () => {
+		const gw = await gitWorld();
+		gw.site.state.onPull = () => {
+			if (gw.site.state.pulls === 1) markPending(gw);
+		};
+		const { outcome } = await run(gw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(gw.site.state.pulls).toBe(2);
+		expect(gw.rows()).toMatchObject({ status: 'installed', reason: null });
+		expect(pendingOf(gw)).toBe(0);
+		expect((await operationOf(gw)).status).toBe('succeeded');
+	});
+
+	it('runs at most one follow-up pull, and leaves a mark that arrives during it for the next pull', async () => {
+		const gw = await gitWorld();
+		gw.site.state.onPull = () => markPending(gw);
+		const { outcome } = await run(gw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(gw.site.state.pulls).toBe(2);
+		expect(pendingOf(gw)).toBe(1);
+	});
+
+	it('clears a mark that was set before the run, so it does not add a pull', async () => {
+		const gw = await gitWorld();
+		markPending(gw);
+		const { outcome } = await run(gw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(gw.site.state.pulls).toBe(1);
+		expect(pendingOf(gw)).toBe(0);
+	});
+
+	it('keeps the mark when the first pull fails, and the next pull clears it', async () => {
+		const gw = await gitWorld();
+		gw.site.state.behavior = 'rolled-back';
+		gw.site.state.onPull = () => markPending(gw);
+		const failed = await run(gw);
+		expect(failed.outcome.status).toBe('failed');
+		expect(gw.rows()?.status).toBe('failed');
+		expect(gw.site.state.pulls).toBe(1);
+		expect(pendingOf(gw)).toBe(1);
+
+		gw.site.state.behavior = 'ok';
+		gw.site.state.onPull = undefined;
+		const next = await run(gw, { patch: { operationId: OP_TWO } });
+		expect(next.outcome).toEqual({ status: 'succeeded' });
+		expect(gw.site.state.pulls).toBe(2);
+		expect(pendingOf(gw)).toBe(0);
+	});
+
 	it('reads a site that never answers as unreachable after the retries', async () => {
 		const gw = await gitWorld();
 		gw.site.state.behavior = 'down';
@@ -577,7 +644,8 @@ describe('git.pull', () => {
 	it('pulls again when the instance dies before the pull result was saved, and still ends installed', async () => {
 		const gw = await gitWorld();
 		const memo: Memo = new Map();
-		await expect(run(gw, { memo, script: { killDuring: 4 } })).rejects.toBeInstanceOf(Killed);
+		// start, lease, pending.clear and find run first, so the fifth step is the pull
+		await expect(run(gw, { memo, script: { killDuring: 5 } })).rejects.toBeInstanceOf(Killed);
 		const { outcome } = await run(gw, { memo, fresh: false });
 		expect(outcome).toEqual({ status: 'succeeded' });
 		expect(gw.site.state.pulls).toBe(2);

@@ -15,6 +15,7 @@ import {
 	NOW,
 	ORG,
 	TOKEN,
+	fakePullOperation,
 	githubConnection,
 	githubReply,
 	harness,
@@ -247,7 +248,9 @@ describe('revokeConnection', () => {
 
 describe('attachRemote', () => {
 	async function connected() {
-		const h = await harness(() => Response.json([]));
+		let answer = (): Response =>
+			Response.json([{ full_name: 'ops/site', default_branch: 'main' }]);
+		const h = await harness(() => answer());
 		const result = await startConnect(h.deps, {
 			orgId: ORG,
 			provider: 'gitea',
@@ -255,8 +258,59 @@ describe('attachRemote', () => {
 			baseUrl: 'https://git.example.org'
 		});
 		if (result.kind !== 'connected') throw new Error('expected a connection');
-		return { ...h, connectionId: result.connection.id };
+		const failListing = () => {
+			answer = () => new Response('down', { status: 500 });
+		};
+		return { ...h, connectionId: result.connection.id, failListing };
 	}
+
+	it('refuses a repository the connection does not list, and stores nothing', async () => {
+		const { deps, connectionId, remotes } = await connected();
+		const error = await refusedWith(() =>
+			attachRemote(deps, {
+				orgId: ORG,
+				siteId: 'site_1',
+				connectionId,
+				repo: 'ops/other',
+				branch: 'main',
+				mountPath: 'modules/custom/site'
+			})
+		);
+		expect(error.code).toBe('validation');
+		expect(error.details).toMatchObject({ reason: 'repository_not_on_connection' });
+		expect(remotes.size).toBe(0);
+	});
+
+	it('refuses the attach when the provider cannot list the repositories', async () => {
+		const { deps, connectionId, remotes, failListing } = await connected();
+		failListing();
+		const error = await refusedWith(() =>
+			attachRemote(deps, {
+				orgId: ORG,
+				siteId: 'site_1',
+				connectionId,
+				repo: 'ops/site',
+				branch: 'main',
+				mountPath: 'modules/custom/site'
+			})
+		);
+		expect(error.code).toBe('unprocessable');
+		expect(remotes.size).toBe(0);
+	});
+
+	it('stores the repository under the name the provider lists', async () => {
+		const { deps, connectionId, remotes } = await connected();
+		const view = await attachRemote(deps, {
+			orgId: ORG,
+			siteId: 'site_1',
+			connectionId,
+			repo: 'Ops/Site',
+			branch: 'main',
+			mountPath: 'modules/custom/site'
+		});
+		expect(view.repo).toBe('ops/site');
+		expect(remotes.get(view.id)?.repoFullName).toBe('ops/site');
+	});
 
 	it('refuses a mount outside the three folders, a short interval and a bad branch', async () => {
 		const { deps, connectionId } = await connected();
@@ -449,6 +503,96 @@ describe('acceptDelivery', () => {
 		expect(remote?.lastPullReason).toBe(
 			'The pull could not be started. Press Pull to try again.'
 		);
+	});
+
+	// the second push finds the first pull still open, and the refusal names that pull
+	const behindPull = (remoteId: string, operation = 'git.pull') =>
+		new ApiError(
+			'conflict',
+			'Another change to this site is still running. Wait for it to finish.',
+			{ reason: 'site_busy', operationId: 'op_running', operation, remoteId }
+		);
+
+	it('marks a push that lands during a pull of its own repository as pending, and leaves the status alone', async () => {
+		const h = await githubRemote();
+		h.deps.pullRemote = async (remote) => {
+			throw behindPull(remote.id);
+		};
+		const body = pushBody(42);
+		const result = await acceptDelivery(h.deps, 'github', {
+			eventName: 'push',
+			deliveryId: 'd5',
+			rawBody: body,
+			signature: await sign(body)
+		});
+		expect(result).toEqual({ duplicate: false, matched: 1 });
+		const [remote] = [...h.remotes.values()];
+		expect(remote?.lastPullStatus).toBeNull();
+		expect(remote?.lastPullReason).toBeNull();
+		expect([...h.pending]).toEqual([remote?.id]);
+	});
+
+	it('starts one pull once the running pull has ended, when the first attempt was refused', async () => {
+		const h = await githubRemote();
+		let attempts = 0;
+		h.deps.pullRemote = async (remote, trigger) => {
+			attempts++;
+			if (attempts === 1) throw behindPull(remote.id);
+			h.pulls.push(`${remote.id}:${trigger.key}`);
+			return { operation: fakePullOperation(remote.siteId), version: 0 };
+		};
+		const body = pushBody(42);
+		await acceptDelivery(h.deps, 'github', {
+			eventName: 'push',
+			deliveryId: 'd6',
+			rawBody: body,
+			signature: await sign(body)
+		});
+		const [remote] = [...h.remotes.values()];
+		expect(attempts).toBe(2);
+		expect(h.pulls).toHaveLength(1);
+		expect(h.pulls[0]?.startsWith(`${remote?.id}:git-pull:`)).toBe(true);
+		expect(remote?.lastPullStatus).toBeNull();
+	});
+
+	it('stores a failed reason when the site is busy with another repository, and marks nothing', async () => {
+		const h = await githubRemote();
+		h.deps.pullRemote = async () => {
+			throw behindPull('rem_other_repo');
+		};
+		const body = pushBody(42);
+		await acceptDelivery(h.deps, 'github', {
+			eventName: 'push',
+			deliveryId: 'd8',
+			rawBody: body,
+			signature: await sign(body)
+		});
+		const [remote] = [...h.remotes.values()];
+		expect(remote?.lastPullStatus).toBe('failed');
+		expect(remote?.lastPullReason).toBe(
+			'Another change to this site is still running. Wait for it to finish, then try again.'
+		);
+		expect(h.pending.size).toBe(0);
+	});
+
+	it('stores a failed reason when the site is busy with something other than a pull', async () => {
+		const h = await githubRemote();
+		h.deps.pullRemote = async (remote) => {
+			throw behindPull(remote.id, 'backup.create');
+		};
+		const body = pushBody(42);
+		await acceptDelivery(h.deps, 'github', {
+			eventName: 'push',
+			deliveryId: 'd7',
+			rawBody: body,
+			signature: await sign(body)
+		});
+		const [remote] = [...h.remotes.values()];
+		expect(remote?.lastPullStatus).toBe('failed');
+		expect(remote?.lastPullReason).toBe(
+			'Another change to this site is still running. Wait for it to finish, then try again.'
+		);
+		expect(h.pending.size).toBe(0);
 	});
 
 	it('accepts a GitLab push with the plain secret header and ignores a tag push', async () => {

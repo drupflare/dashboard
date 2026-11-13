@@ -276,7 +276,23 @@ describe('a signed push', () => {
 		expect(started).toEqual([]);
 	});
 
-	it('stores a plain failed reason on the remote when the site is busy, and still closes the delivery', async () => {
+	it('marks a second push to the same repository as pending while its pull runs', async () => {
+		await deliver(pushBody('ops/site'), 'delivery-3');
+		const result = await deliver(pushBody('ops/site'), 'delivery-4');
+		expect(result).toEqual({ duplicate: false, matched: 1 });
+		expect(started).toHaveLength(1);
+		expect(await remoteRow()).toMatchObject({
+			lastPullStatus: null,
+			lastPullReason: null
+		});
+		const mark = await db()
+			.prepare('SELECT pull_pending AS pending FROM site_remotes WHERE id = ?')
+			.bind(REMOTE)
+			.first<{ pending: number }>();
+		expect(mark?.pending).toBe(1);
+	});
+
+	it('stores a plain failed reason on another repository the running pull does not cover', async () => {
 		await deliver(pushBody('ops/site'), 'delivery-3');
 		const result = await deliver(pushBody('ops/other'), 'delivery-4');
 		expect(result).toEqual({ duplicate: false, matched: 1 });
@@ -286,6 +302,11 @@ describe('a signed push', () => {
 			lastPullReason:
 				'Another change to this site is still running. Wait for it to finish, then try again.'
 		});
+		const mark = await db()
+			.prepare('SELECT pull_pending AS pending FROM site_remotes WHERE id = ?')
+			.bind(OTHER_REMOTE)
+			.first<{ pending: number }>();
+		expect(mark?.pending).toBe(0);
 		const delivery = await db()
 			.prepare('SELECT delivery_id FROM repo_deliveries WHERE delivery_id = ?')
 			.bind('delivery-4')

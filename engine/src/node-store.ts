@@ -59,8 +59,9 @@ export interface NodeStore {
 	get(id: string): Promise<NodeRecord | null>;
 	// records a message the link accepted; a revoked node's row is left alone
 	touch(id: string, update: NodeUpdate): Promise<void>;
-	// one organization's self-hosted sites that hold a hostname
-	sites(orgId: string): Promise<SiteMapRow[]>;
+	// the self-hosted sites with a hostname that are bound to this node; the organization's unbound
+	// ones stand in only when none is bound
+	sites(orgId: string, nodeId: string): Promise<SiteMapRow[]>;
 }
 
 // a site that is gone no longer reports usage; a suspended one still serves, so it stays
@@ -77,15 +78,20 @@ export class D1NodeStore implements NodeStore {
 		return row ? toNodeRecord(row) : null;
 	}
 
-	async sites(orgId: string): Promise<SiteMapRow[]> {
+	async sites(orgId: string, nodeId: string): Promise<SiteMapRow[]> {
+		const bound = await this.siteRows('node_id = ?', [orgId, nodeId]);
+		return bound.length > 0 ? bound : this.siteRows('node_id IS NULL', [orgId]);
+	}
+
+	private async siteRows(binding: string, binds: string[]): Promise<SiteMapRow[]> {
 		const { results } = await this.db
 			.prepare(
 				`SELECT organization_id, id, primary_hostname FROM sites
 				 WHERE organization_id = ? AND plane = 'self-hosted' AND primary_hostname IS NOT NULL
-					AND state IN (${LIVE_SITE_STATES})
+					AND state IN (${LIVE_SITE_STATES}) AND ${binding}
 				 ORDER BY id LIMIT ?`
 			)
-			.bind(orgId, MAX_SITE_MAP + 1)
+			.bind(...binds, MAX_SITE_MAP + 1)
 			.all<{ organization_id: string; id: string; primary_hostname: string }>();
 		return results.map((row) => ({
 			orgId: row.organization_id,

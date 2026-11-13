@@ -267,6 +267,10 @@ export async function setRemotePull(
 	);
 }
 
+export async function markRemotePullPending(db: CollegeDBClient, id: string): Promise<void> {
+	await db.run(DIRECTORY_KEY, 'UPDATE site_remotes SET pull_pending = 1 WHERE id = ?', [id]);
+}
+
 // #endregion
 
 // #region deliveries

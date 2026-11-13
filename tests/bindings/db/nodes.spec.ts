@@ -35,6 +35,7 @@ afterAll(() => harness.close());
 
 const ORG = 'org_nodesbind01';
 const OTHER = 'org_nodesbind02';
+const NODE_ID = 'nod_bind_map0001';
 const NOW = 1_790_000_000_000;
 const facts = {
 	hostname: 'box-1',
@@ -202,15 +203,38 @@ describe('the engine node store', () => {
 		await add('site_nodemap0006', ORG, 'self-hosted', 'deleted', 'gone.example.org');
 		await add('site_nodemap0007', ORG, 'self-hosted', 'tombstoned', 'tomb.example.org');
 		await add('site_nodemap0008', OTHER, 'self-hosted', 'active', 'other.example.org');
-		expect(await store().sites(ORG)).toEqual([
+		expect(await store().sites(ORG, NODE_ID)).toEqual([
 			{ orgId: ORG, siteId: 'site_nodemap0001', host: 'one.example.org' },
 			{ orgId: ORG, siteId: 'site_nodemap0002', host: 'two.example.org' },
 			{ orgId: ORG, siteId: 'site_nodemap0003', host: 'three.example.org' }
 		]);
-		expect(await store().sites(OTHER)).toEqual([
+		expect(await store().sites(OTHER, NODE_ID)).toEqual([
 			{ orgId: OTHER, siteId: 'site_nodemap0008', host: 'other.example.org' }
 		]);
-		expect(await store().sites('org_nobody0001')).toEqual([]);
+		expect(await store().sites('org_nobody0001', NODE_ID)).toEqual([]);
+	});
+
+	it('sends a node the sites bound to it, and the unbound sites only when it has none bound', async () => {
+		const org = 'org_nodebind0001';
+		const insert = (id: string, host: string, nodeId: string | null) =>
+			env.DB.prepare(
+				`INSERT INTO sites (id, organization_id, name, plane, state, primary_hostname, node_id, created_at, updated_at)
+				 VALUES (?, ?, ?, 'self-hosted', 'active', ?, ?, ?, ?)`
+			)
+				.bind(id, org, id, host, nodeId, NOW, NOW)
+				.run();
+		await insert('site_bindone0001', 'bound-a.example.org', NODE_ID);
+		await insert('site_bindone0002', 'bound-b.example.org', 'nod_nodebind0002');
+		await insert('site_bindone0003', 'unbound.example.org', null);
+		expect(await store().sites(org, NODE_ID)).toEqual([
+			{ orgId: org, siteId: 'site_bindone0001', host: 'bound-a.example.org' }
+		]);
+		expect(await store().sites(org, 'nod_nodebind0002')).toEqual([
+			{ orgId: org, siteId: 'site_bindone0002', host: 'bound-b.example.org' }
+		]);
+		expect(await store().sites(org, 'nod_nodebind0003')).toEqual([
+			{ orgId: org, siteId: 'site_bindone0003', host: 'unbound.example.org' }
+		]);
 	});
 
 	it('reads a row whose json columns are damaged as empty facts and no head', async () => {

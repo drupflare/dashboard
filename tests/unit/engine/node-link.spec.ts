@@ -57,6 +57,7 @@ class FakeStore implements NodeStore {
 	// every organization's rows, whatever organization is asked for, so the link's own filter is tested
 	siteRows: SiteMapRow[] = [];
 	siteReads: string[] = [];
+	siteNodeReads: string[] = [];
 	failSites = false;
 
 	constructor(public node: NodeRecord | null) {}
@@ -70,8 +71,9 @@ class FakeStore implements NodeStore {
 		this.touches.push({ id, update });
 	}
 
-	async sites(orgId: string) {
+	async sites(orgId: string, nodeId: string) {
 		this.siteReads.push(orgId);
+		this.siteNodeReads.push(nodeId);
 		if (this.failSites) throw new Error('d1 is down');
 		return this.siteRows;
 	}
@@ -513,6 +515,7 @@ describe('the site map frame', () => {
 		});
 		expect(frame.seq).toBe(1);
 		expect(w.store.siteReads).toEqual([ORG_A]);
+		expect(w.store.siteNodeReads).toEqual([NODE_ID]);
 	});
 
 	it('sends an empty map when the organization has no self-hosted site yet', async () => {
