@@ -56,9 +56,10 @@ afterEach(() => {
 });
 
 const BASE = '/api/v1/orgs/:orgId/sites/:id/cutover';
+const SOURCE_REF = `imc_${'c'.repeat(26)}/var/www/html`;
 const ACCOUNT = 'c'.repeat(32);
 const AT = '2026-11-12T10:00:00.000Z';
-const BODY = { policy: 'freeze', source: { ref: 'source-1' }, hostname: 'www.example.test' };
+const BODY = { policy: 'freeze', source: { ref: SOURCE_REF }, hostname: 'www.example.test' };
 
 function asRole(
 	role: 'owner' | 'admin' | 'developer' | 'viewer',
@@ -314,7 +315,7 @@ describe('POST a cutover', () => {
 			operationId: operation.id,
 			orgId: ORG,
 			site: { id: siteId, accountId: ACCOUNT },
-			source: { ref: 'source-1' },
+			source: { ref: SOURCE_REF },
 			hostname: 'www.example.test',
 			policy: 'freeze',
 			ttlSeconds: 60,
@@ -381,7 +382,7 @@ describe('POST a cutover', () => {
 				orgId: ORG,
 				siteId: two,
 				policy: 'freeze',
-				source: { ref: 'source-1' },
+				source: { ref: SOURCE_REF },
 				hostname: 'www.example.test',
 				idempotencyKey: shared
 			}
@@ -453,6 +454,8 @@ describe('POST a cutover', () => {
 			{ ...BODY, policy: 'pause' },
 			{ ...BODY, hostname: 'not a host' },
 			{ ...BODY, source: { ref: '' } },
+			{ ...BODY, source: { ref: 'source-1' } },
+			{ ...BODY, source: { ref: `imc_${'c'.repeat(26)}` } },
 			{ ...BODY, extra: true },
 			{ policy: 'freeze' }
 		]) {
@@ -499,6 +502,7 @@ describe('GET the plan and state', () => {
 				{ policy: 'delta', expectedWindowSeconds: 120 }
 			],
 			observationOffsetsMs: [300_000, 1_800_000, 21_600_000, 86_400_000],
+			ttlSeconds: 60,
 			cutover: null
 		});
 	});

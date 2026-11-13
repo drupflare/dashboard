@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { POLICY_COPY, type CutoverPolicyName } from '~/shared/cutover-copy';
+import { cutoverHandSteps } from '~/shared/operation-copy';
 import type { CutoverPayload } from '~/stores/cutover';
 
 const props = defineProps<{ plan: CutoverPayload; busy: boolean; error: string | null }>();
@@ -22,6 +23,9 @@ const seconds = computed(
 	() =>
 		props.plan.policies.find((entry) => entry.policy === policy.value)?.expectedWindowSeconds ??
 		null
+);
+const handSteps = computed(() =>
+	cutoverHandSteps(hostname.value.trim() || 'your address', props.plan.ttlSeconds, policy.value)
 );
 const complete = computed(() => sourceRef.value.trim() !== '' && hostname.value.trim() !== '');
 
@@ -51,7 +55,7 @@ function submit(): void {
 		/>
 		<UFormField
 			label="Old Site Reference"
-			description="The reference of the site you are moving from."
+			description="The key you made for the old server, then the folder of the site, such as imc_abc.../var/www/html."
 		>
 			<UInput
 				v-model="sourceRef"
@@ -69,6 +73,21 @@ function submit(): void {
 				class="w-full"
 			/>
 		</UFormField>
+		<div class="flex flex-col gap-2 rounded-lg border border-default p-4">
+			<h2 class="text-sm font-semibold text-highlighted">What You Do by Hand</h2>
+			<p class="text-sm text-default">
+				Your address lives in your own DNS, so Drupflare cannot change it for you.
+			</p>
+			<ul class="flex flex-col gap-2 text-sm text-default">
+				<li
+					v-for="step in handSteps"
+					:key="step.id"
+				>
+					<span class="font-medium text-highlighted">{{ step.when }}.</span>
+					{{ step.text }}
+				</li>
+			</ul>
+		</div>
 		<p
 			v-if="error"
 			role="alert"

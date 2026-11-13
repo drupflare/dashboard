@@ -140,7 +140,7 @@ class Run {
 	}
 
 	get source() {
-		return this.deps.cutover.source(this.input.source.ref);
+		return this.deps.cutover.source(this.input.source.ref, this.input.orgId);
 	}
 
 	get destination() {
@@ -304,7 +304,7 @@ class Run {
 			}
 			case 'route': {
 				const { at } = await this.effect('route', 'route', (key) =>
-					this.destination.route(key, 'destination')
+					this.destination.route(key, 'destination', input.hostname)
 				);
 				this.routedAt = Date.parse(at);
 				await this.release();
@@ -484,7 +484,10 @@ class Run {
 	async reverse(): Promise<CutoverAction> {
 		await this.hold('reverse');
 		const leaked = await this.undo([
-			['route', () => this.destination.route(this.key('route-back'), 'source')],
+			[
+				'route',
+				() => this.destination.route(this.key('route-back'), 'source', this.input.hostname)
+			],
 			['writes', () => this.source.restoreWrites(this.key('restore-writes'))],
 			...this.restoreTtl()
 		]);

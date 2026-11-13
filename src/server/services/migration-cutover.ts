@@ -2,6 +2,7 @@ import { newId } from '@contracts/common';
 import { DEFAULT_CHANGE_BUDGET, computePlanDigest } from '@contracts/operations';
 import { z } from 'zod';
 import { OBSERVATION_OFFSETS_MS } from '../../../contracts/src/migration-cutover';
+import { parseSourceRef } from '../../../engine/src/adapters/cutover-store';
 import {
 	planMigrationCutover,
 	type MigrationCutoverInput
@@ -79,7 +80,15 @@ export function cutoverServices(): CutoverServices {
 
 export const cutoverPolicyBody = z.strictObject({
 	policy: z.enum(['freeze', 'read-only', 'delta']),
-	source: z.strictObject({ ref: z.string().min(1).max(200) }),
+	source: z.strictObject({
+		ref: z
+			.string()
+			.min(1)
+			.max(200)
+			.refine((ref) => parseSourceRef(ref) !== null, {
+				message: 'Enter the key you made for the old server, then the folder of the site'
+			})
+	}),
 	hostname: z
 		.string()
 		.min(3)
@@ -102,6 +111,8 @@ export const cutoverPlanSchema = z.object({
 		})
 	),
 	observationOffsetsMs: z.array(z.int().positive()),
+	// the cache time the owner sets on the address while the move runs
+	ttlSeconds: z.int().positive(),
 	cutover: cutoverViewSchema.nullable()
 });
 
@@ -158,6 +169,7 @@ export async function readCutover(
 			expectedWindowSeconds: expectedWindowSeconds(policy, cutover.estimate)
 		})),
 		observationOffsetsMs: [...OBSERVATION_OFFSETS_MS],
+		ttlSeconds: cutover.ttlSeconds,
 		cutover: latest === null ? null : viewOfOperation(latest, input.siteId)
 	};
 }

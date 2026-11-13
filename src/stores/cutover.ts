@@ -41,6 +41,7 @@ export interface CutoverPayload {
 	available: boolean;
 	policies: { policy: CutoverPolicyName; expectedWindowSeconds: number }[];
 	observationOffsetsMs: number[];
+	ttlSeconds: number;
 	cutover: CutoverView | null;
 }
 

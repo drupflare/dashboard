@@ -1,36 +1,12 @@
-import type { CutoverDestination, CutoverPorts, CutoverSource } from '../ports';
-import { PermanentError } from '../step';
+import type { CutoverPorts } from '../ports';
+import { createCutoverDestination, type CutoverDestinationDeps } from './cutover-destination';
+import { createCutoverSource, type CutoverSourceDeps } from './cutover-source';
 
-const unavailable = () =>
-	new PermanentError(
-		'cutover_unavailable',
-		'the source and destination adapters for a cutover are not built yet'
-	);
+export { CUTOVER_MISSING_CONTRACTS } from './cutover-destination';
 
-// every call fails closed until the real adapters exist, so a started cutover stops before it changes anything
-const refuse = async (): Promise<never> => {
-	throw unavailable();
-};
-
-const source: CutoverSource = {
-	lowerTtl: refuse,
-	restoreTtl: refuse,
-	snapshot: refuse,
-	delta: refuse,
-	applyWritePolicy: refuse,
-	restoreWrites: refuse
-};
-
-const destination: CutoverDestination = {
-	validate: refuse,
-	promote: refuse,
-	route: refuse,
-	acceptedWrites: refuse,
-	observe: refuse,
-	exportChanges: refuse
-};
-
-export const unavailableCutoverPorts: CutoverPorts = {
-	source: () => source,
-	destination: () => destination
-};
+export function cutoverPortsOf(deps: CutoverSourceDeps & CutoverDestinationDeps): CutoverPorts {
+	return {
+		source: (ref, orgId) => createCutoverSource(deps, ref, orgId),
+		destination: (siteId) => createCutoverDestination(deps, siteId)
+	};
+}

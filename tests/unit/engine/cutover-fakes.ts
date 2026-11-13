@@ -39,6 +39,8 @@ export function fakeCutover(options: CutoverOptions = {}) {
 		sourceWrites: [] as string[],
 		refused: [] as string[],
 		routedTo: 'source' as 'source' | 'destination',
+		sourceOf: [] as { ref: string; orgId: string }[],
+		routeHostnames: [] as string[],
 		destinationWrites: 0,
 		promoted: null as { snapshot: string; delta: string } | null,
 		snapshotLength: -1,
@@ -103,9 +105,10 @@ export function fakeCutover(options: CutoverOptions = {}) {
 			once('promote', key, () => {
 				world.promoted = { snapshot, delta };
 			}),
-		route: (key, to) =>
+		route: (key, to, hostname) =>
 			once('route', key, () => {
 				world.routedTo = to;
+				world.routeHostnames.push(hostname);
 			}),
 		acceptedWrites: () => once('acceptedWrites', null, () => world.destinationWrites),
 		observe: () =>
@@ -123,7 +126,13 @@ export function fakeCutover(options: CutoverOptions = {}) {
 				};
 			})
 	};
-	const ports: CutoverPorts = { source: () => source, destination: () => destination };
+	const ports: CutoverPorts = {
+		source: (ref, orgId) => {
+			world.sourceOf.push({ ref, orgId });
+			return source;
+		},
+		destination: () => destination
+	};
 	return {
 		world: world as CutoverWorld,
 		ports,
@@ -149,6 +158,8 @@ export type CutoverWorld = {
 	sourceWrites: string[];
 	refused: string[];
 	routedTo: 'source' | 'destination';
+	sourceOf: { ref: string; orgId: string }[];
+	routeHostnames: string[];
 	destinationWrites: number;
 	promoted: { snapshot: string; delta: string } | null;
 	snapshotLength: number;

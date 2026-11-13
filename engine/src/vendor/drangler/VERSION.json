@@ -9,6 +9,10 @@
 			"source": "src/migrate/survey.ts",
 			"sha256": "74ead76ac8e509437a33cbd5f247cbe16288175a479c95a3d782ad2bc55b21c9"
 		},
+		"delta.ts": {
+			"source": "src/migrate/delta.ts",
+			"sha256": "bc549f294a49903fcd56a0ac6d528306349e99d9eb004574df744aa995fd62d8"
+		},
 		"errors.ts": {
 			"source": "src/errors.ts",
 			"sha256": "b2440acc13f095254248934c242c364c5ea168ea61acb24d1e164d3e8664436d"

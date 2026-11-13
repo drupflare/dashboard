@@ -127,6 +127,11 @@ describe('a cutover that goes through', () => {
 		expect(outcome).toEqual({ status: 'succeeded' });
 		const { world } = aw.fake;
 		expect(world.routedTo).toBe('destination');
+		expect(world.routeHostnames).toEqual(['www.example.test']);
+		expect(world.sourceOf.length).toBeGreaterThan(0);
+		for (const asked of world.sourceOf) {
+			expect(asked).toEqual({ ref: 'source-1', orgId: aw.input.orgId });
+		}
 		expect(world.ttl).toBe(3600);
 		expect(world.policy).toBe('freeze');
 		expect(world.promoted).not.toBeNull();

@@ -1,5 +1,6 @@
 import type { R2Bucket } from '@cloudflare/workers-types';
 import type { CollegeDBClient } from '@earth-app/collegedb';
+import { CUTOVER_MISSING_CONTRACTS } from '../../../engine/src/adapters/cutover-destination';
 import { CryptoError, loadKeyRing, type KeyRing } from '../../shared/custody/envelope';
 import { ApiError } from '../../shared/errors';
 import { PLATFORM_ROLE_PERMISSIONS } from '../../shared/permissions';
@@ -437,7 +438,8 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 		backups: backupServicesOf({ BLOB: env.BLOB }, { getDb, startOperation }, heads),
 		cutover: {
 			sendEvent: engineEventSender({ ...engineConfigOf(env), now: Date.now }),
-			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads))
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			adaptersBuilt: CUTOVER_MISSING_CONTRACTS.length === 0
 		},
 		fleet: {
 			getDb,

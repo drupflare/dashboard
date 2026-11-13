@@ -86,6 +86,7 @@ function plan(over: Partial<CutoverPayload> = {}): CutoverPayload {
 			{ policy: 'delta', expectedWindowSeconds: 120 }
 		],
 		observationOffsetsMs: [300_000, 1_800_000, 21_600_000, 86_400_000],
+		ttlSeconds: 60,
 		cutover: null,
 		...over
 	};
@@ -188,6 +189,20 @@ describe('plan component', () => {
 		expect(wrapper.emitted('start')).toEqual([
 			[{ policy: 'freeze', source: { ref: 'source-1' }, hostname: 'www.example.edu' }]
 		]);
+	});
+
+	it('lists what the owner does by hand and names the address once it is typed', async () => {
+		const wrapper = await mountSuspended(SiteCutoverPlan, {
+			props: { plan: plan(), busy: false, error: null }
+		});
+		mounted.push(wrapper);
+		expect(wrapper.text()).toContain('What You Do by Hand');
+		expect(wrapper.text()).toContain('Point your address at the new site');
+		await wrapper.get('input[name="hostname"]').setValue('www.example.edu');
+		expect(wrapper.text()).toContain(
+			'Set the cache time (TTL) of www.example.edu to 60 seconds'
+		);
+		expect(wrapper.findAll('li')).toHaveLength(4);
 	});
 
 	it('shows the refusal it is given', async () => {

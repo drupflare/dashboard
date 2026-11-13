@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CUTOVER_MISSING_CONTRACTS } from '../../../../engine/src/adapters/cutover-destination';
 import { backupServices } from '../../../../src/server/services/backups';
 import {
 	BootError,
@@ -18,6 +19,7 @@ import { capacityServices } from '../../../../src/server/services/capacity';
 import { consoleMailSender } from '../../../../src/server/services/email-codes';
 import { factsLoader } from '../../../../src/server/services/facts';
 import { fleetServices } from '../../../../src/server/services/fleet';
+import { cutoverServices } from '../../../../src/server/services/migration-cutover';
 import { repoConnectionDeps } from '../../../../src/server/services/repo-connections';
 import { importServices } from '../../../../src/server/services/site-import';
 import { siteServices } from '../../../../src/server/services/sites';
@@ -170,6 +172,14 @@ describe('bootOnce', () => {
 		await expect(backupServices().startOperation({} as never)).rejects.toMatchObject({
 			code: 'not_built'
 		});
+	});
+});
+
+describe('cutover services', () => {
+	it('stay closed while the new site lacks a worker route the move needs', () => {
+		bootOnce(envWith({}));
+		expect(CUTOVER_MISSING_CONTRACTS.length).toBeGreaterThan(0);
+		expect(cutoverServices().adaptersBuilt).toBe(false);
 	});
 });
 
