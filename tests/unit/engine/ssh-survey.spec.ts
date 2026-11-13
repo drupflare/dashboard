@@ -49,6 +49,7 @@ interface Record {
 function fakeConnector(failExec: string | null = null) {
 	const sessions: Record[] = [];
 	const connector: SshConnector = {
+		resolve: async () => ['93.184.216.34'],
 		async fingerprint(key) {
 			return `SHA256:${new TextDecoder().decode(key)}`;
 		},
@@ -89,7 +90,7 @@ describe('createSshSurvey', () => {
 		expect(sessions[0]!.commands.length).toBeGreaterThan(0);
 		expect(sessions[0]!.closed).toBe(true);
 		expect(sessions[0]!.options).toMatchObject({
-			hostname: 'host.example',
+			hostname: '93.184.216.34',
 			username: 'deploy',
 			privateKey: { pem: PEM },
 			timeoutMs: 15_000
@@ -109,6 +110,7 @@ describe('createSshSurvey', () => {
 
 	it('reports an unreachable host with a plain refusal', async () => {
 		const connector: SshConnector = {
+			resolve: async () => ['93.184.216.34'],
 			fingerprint: async () => 'SHA256:x',
 			connect: async () => {
 				throw new Error(`connect ECONNREFUSED ${PEM}`);
@@ -130,4 +132,40 @@ describe('createSshSurvey', () => {
 		expect(survey.drupal.version).toBe('11.4.8');
 		expect(sessions[0]!.closed).toBe(true);
 	});
+});
+
+describe('the address that is dialled', () => {
+	const answering = (...lookups: string[][]) => {
+		const { connector, sessions } = fakeConnector();
+		let calls = 0;
+		connector.resolve = async () => lookups[Math.min(calls++, lookups.length - 1)] ?? [];
+		return { connector, sessions, calls: () => calls };
+	};
+
+	it('dials the address that passed and not the name', async () => {
+		const { connector, sessions } = answering(['93.184.216.34']);
+		await createSshSurvey(connector).run(target());
+		expect(sessions[0]!.options.hostname).toBe('93.184.216.34');
+	});
+
+	it('refuses a name that was public on one survey and is private on the next, before it connects', async () => {
+		const { connector, sessions } = answering(['93.184.216.34'], ['10.0.0.7']);
+		const survey = createSshSurvey(connector);
+		await survey.run(target());
+		const error = await failureOf(survey.run(target()));
+		expect(error).toMatchObject({ code: 'source_host_private' });
+		expect(sessions).toHaveLength(1);
+		expect(error.message).not.toContain(PEM);
+	});
+
+	it.each(['10.0.0.7', '127.0.0.1', '169.254.169.254', '::1'])(
+		'refuses the private literal %s without a lookup or a connection',
+		async (host) => {
+			const { connector, sessions, calls } = answering(['93.184.216.34']);
+			const error = await failureOf(createSshSurvey(connector).run({ ...target(), host }));
+			expect(error).toMatchObject({ code: 'source_host_private' });
+			expect(calls()).toBe(0);
+			expect(sessions).toEqual([]);
+		}
+	);
 });

@@ -4,24 +4,31 @@ import { authorityOf, type SiteAuthStub } from './adapters/authority';
 import { D1BackupLedger, r2BackupBlobs } from './adapters/backups';
 import { custodyOf } from './adapters/custody';
 import { unavailableCutoverPorts } from './adapters/cutover';
+import { createDumpStream } from './adapters/dump-stream';
 import { hostsOf } from './adapters/hosts';
+import { createImportLander } from './adapters/import-lander';
+import { importStoreOf } from './adapters/import-store';
 import { namespaceKvOf } from './adapters/kv';
 import { leasesOf, type LeaseStub } from './adapters/leases';
 import { namesOf, type NamesStub } from './adapters/names';
 import { releasesOf } from './adapters/releases';
 import { backupWorkerOf, siteOf } from './adapters/site';
+import { createSqlConverter } from './adapters/sql-converter';
+import { createSshSurvey } from './adapters/ssh-survey';
 import { workforceCloudflare } from './adapters/workforce';
 import { readConfig } from './config';
 import { D1OperationStore } from './operations/store';
 import { D1ResourceLedger } from './ownership';
-import type { BackupDeps, CutoverDeps, EngineDeps } from './ports';
+import type { BackupDeps, CutoverDeps, EngineDeps, ImportDeps } from './ports';
 import type { BackupCreateInput } from './workflows/backup-create';
 import type { BackupRestoreInput } from './workflows/backup-restore';
+import type { ImportSurveyInput } from './workflows/import-survey';
 import type { MigrationCutoverInput } from './workflows/migration-cutover';
 import type { SiteAdoptInput } from './workflows/site-adopt';
 import type { SiteCleanupInput } from './workflows/site-cleanup';
 import type { SiteCreateInput } from './workflows/site-create';
 import type { SiteDeleteInput, SitePurgeInput } from './workflows/site-delete';
+import type { SiteImportInput } from './workflows/site-import';
 import type { SiteUpgradeInput } from './workflows/site-upgrade';
 
 export interface EngineEnv {
@@ -42,6 +49,8 @@ export interface EngineEnv {
 	BACKUP_CREATE: Workflow<BackupCreateInput>;
 	BACKUP_RESTORE: Workflow<BackupRestoreInput>;
 	MIGRATION_CUTOVER: Workflow<MigrationCutoverInput>;
+	SITE_IMPORT: Workflow<SiteImportInput>;
+	IMPORT_SURVEY: Workflow<ImportSurveyInput>;
 	RELEASES_URL: string;
 	CF_ACCOUNT_ID: string;
 	CF_API_TOKEN: string;
@@ -77,6 +86,24 @@ export async function buildBackupDeps(env: EngineEnv): Promise<BackupDeps> {
 		blobs: r2BackupBlobs(env.BLOB),
 		backups: new D1BackupLedger(env.DB),
 		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+	};
+}
+
+// the connection library loads here and not at the top, so only an import pays for it
+export async function buildImportDeps(env: EngineEnv): Promise<ImportDeps> {
+	const base = await buildBackupDeps(env);
+	const { edgeportConnector, edgeportStreamConnector } = await import('./adapters/edgeport-ssh');
+	return {
+		...base,
+		imports: importStoreOf({
+			db: env.DB,
+			secrets: env as unknown as Record<string, string | undefined>,
+			now: Date.now
+		}),
+		survey: createSshSurvey(edgeportConnector),
+		dump: createDumpStream(edgeportStreamConnector, base.blobs),
+		converter: createSqlConverter(),
+		lander: createImportLander({ custody: base.custody, worker: base.worker })
 	};
 }
 

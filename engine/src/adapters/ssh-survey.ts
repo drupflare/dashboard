@@ -1,6 +1,9 @@
+import type { Resolver } from '../../../src/server/integrations/url-guard';
 import type { SshSurvey, SshTarget } from '../ports';
-import { PermanentError } from '../step';
 import { runSurvey, type SiteSurvey } from '../vendor/drangler/survey';
+import { openSession, type SshConnectOptions } from './ssh-session';
+
+export type { SshConnectOptions } from './ssh-session';
 
 export interface SshCommandResult {
 	code: number;
@@ -13,23 +16,12 @@ export interface SshSessionLike {
 	close(): Promise<void>;
 }
 
-export interface SshConnectOptions {
-	hostname: string;
-	port: number;
-	username: string;
-	privateKey: { pem: string };
-	timeoutMs: number;
-	// returns whether the server key is the one the owner confirmed
-	hostKey: { verify(keyType: string, key: Uint8Array): Promise<boolean> };
-}
-
 // the edgeport binding, injected so the survey runs under test without a socket
 export interface SshConnector {
 	connect(options: SshConnectOptions): Promise<SshSessionLike>;
 	fingerprint(key: Uint8Array): Promise<string>;
+	resolve: Resolver;
 }
-
-const CONNECT_TIMEOUT_MS = 15_000;
 
 export function createSshSurvey(
 	connector: SshConnector,
@@ -37,35 +29,7 @@ export function createSshSurvey(
 ): SshSurvey {
 	return {
 		async run(target: SshTarget): Promise<SiteSurvey> {
-			// the fingerprint the server presented, kept so a refusal can say whether the key differed
-			let presented: string | null = null;
-			let session: SshSessionLike;
-			try {
-				session = await connector.connect({
-					hostname: target.host,
-					port: target.port,
-					username: target.user,
-					privateKey: { pem: target.privateKey },
-					timeoutMs: CONNECT_TIMEOUT_MS,
-					hostKey: {
-						async verify(_keyType, key) {
-							presented = await connector.fingerprint(key);
-							return presented === target.expectedFingerprint;
-						}
-					}
-				});
-			} catch {
-				if (presented !== null && presented !== target.expectedFingerprint) {
-					throw new PermanentError(
-						'host_key_mismatch',
-						'the server host key is not the one confirmed, so nothing was run'
-					);
-				}
-				throw new PermanentError(
-					'source_unreachable',
-					'the server did not accept the connection'
-				);
-			}
+			const session = await openSession(connector, target);
 			try {
 				return await runSurvey(
 					{

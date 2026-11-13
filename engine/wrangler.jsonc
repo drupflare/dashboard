@@ -30,7 +30,9 @@
 			"name": "migration-cutover",
 			"binding": "MIGRATION_CUTOVER",
 			"class_name": "MigrationCutover"
-		}
+		},
+		{ "name": "site-import", "binding": "SITE_IMPORT", "class_name": "SiteImport" },
+		{ "name": "import-survey", "binding": "IMPORT_SURVEY", "class_name": "ImportSurvey" }
 	],
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },
@@ -112,6 +114,16 @@
 					"name": "migration-cutover-stage",
 					"binding": "MIGRATION_CUTOVER",
 					"class_name": "MigrationCutover"
+				},
+				{
+					"name": "site-import-stage",
+					"binding": "SITE_IMPORT",
+					"class_name": "SiteImport"
+				},
+				{
+					"name": "import-survey-stage",
+					"binding": "IMPORT_SURVEY",
+					"class_name": "ImportSurvey"
 				}
 			],
 			"migrations": [

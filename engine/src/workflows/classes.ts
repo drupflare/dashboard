@@ -1,10 +1,17 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
-import { buildBackupDeps, buildCutoverDeps, buildDeps, type EngineEnv } from '../env';
+import {
+	buildBackupDeps,
+	buildCutoverDeps,
+	buildDeps,
+	buildImportDeps,
+	type EngineEnv
+} from '../env';
 import { PermanentError, StepFailed, type StepRunner } from '../step';
 import { runBackupCreate, type BackupCreateInput } from './backup-create';
 import { runBackupRestore, type BackupRestoreInput } from './backup-restore';
 import type { Outcome } from './common';
+import { runImportSurvey, type ImportSurveyInput } from './import-survey';
 import {
 	runMigrationCutover,
 	type CutoverRunner,
@@ -19,6 +26,7 @@ import {
 	type SiteDeleteInput,
 	type SitePurgeInput
 } from './site-delete';
+import { runSiteImport, type SiteImportInput } from './site-import';
 import { runSiteUpgrade, type SiteUpgradeInput } from './site-upgrade';
 
 // retry counts and timeouts are unmeasured starting points
@@ -30,10 +38,17 @@ const STEP_CONFIG = {
 // a restore waits on the site inside one step, so its steps may run longer; also unmeasured
 const BACKUP_STEP_CONFIG = { ...STEP_CONFIG, timeout: '10 minutes' } as const;
 
+// the dump streams over one channel inside one step, which Cloudflare advises keeping to 30 minutes
+// at most; one retry, since each retry streams the whole dump again from the owner's server
+const IMPORT_STEP_CONFIG = {
+	retries: { limit: 1, delay: '10 seconds', backoff: 'exponential' },
+	timeout: '30 minutes'
+} as const;
+
 // a permanent refusal skips the retries; whatever escapes after the retries reaches the body as StepFailed
 function runnerOf(
 	step: WorkflowStep,
-	config: typeof STEP_CONFIG | typeof BACKUP_STEP_CONFIG = STEP_CONFIG
+	config: typeof STEP_CONFIG | typeof BACKUP_STEP_CONFIG | typeof IMPORT_STEP_CONFIG = STEP_CONFIG
 ): StepRunner {
 	return {
 		async do<T>(name: string, fn: () => Promise<T>): Promise<T> {
@@ -117,6 +132,28 @@ export class SiteAdopt extends WorkflowEntrypoint<EngineEnv, SiteAdoptInput> {
 			await buildBackupDeps(this.env),
 			event.payload
 		);
+	}
+}
+
+export class SiteImport extends WorkflowEntrypoint<EngineEnv, SiteImportInput> {
+	async run(
+		event: Readonly<WorkflowEvent<SiteImportInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runSiteImport(
+			runnerOf(step, IMPORT_STEP_CONFIG),
+			await buildImportDeps(this.env),
+			event.payload
+		);
+	}
+}
+
+export class ImportSurvey extends WorkflowEntrypoint<EngineEnv, ImportSurveyInput> {
+	async run(
+		event: Readonly<WorkflowEvent<ImportSurveyInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runImportSurvey(runnerOf(step), await buildImportDeps(this.env), event.payload);
 	}
 }
 

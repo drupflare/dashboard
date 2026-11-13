@@ -304,6 +304,68 @@ export interface SqlConverter {
 	convertChunk(bytes: Uint8Array, last: boolean): Promise<ConvertedChunk>;
 }
 
+export interface DumpJob {
+	kind: 'database' | 'files';
+	// every part of a job lives under this prefix and is keyed by its index
+	prefix: string;
+	partBytes: number;
+	// the stream stops with a refusal once it has carried this much
+	maxBytes: number;
+}
+
+// streams one read-only command's stdout over a single channel into R2 parts; a repeat clears the
+// prefix and writes the same keys again, and nothing is written on the source
+export interface DumpStream {
+	// onPart runs after each part is written; a throw from it stops the stream
+	run(
+		target: SshTarget,
+		job: DumpJob,
+		onPart?: () => Promise<void>
+	): Promise<{ parts: number; bytes: number }>;
+}
+
+export interface LandTarget {
+	siteId: string;
+	hostname: string;
+	ownerTokenId: string;
+}
+
+// the new site's own routes: its restore for the database, and a route for the files archive
+export interface ImportLander {
+	// sends the body unless the site already holds an import under this label
+	database(site: LandTarget, label: string, body: Uint8Array): Promise<void>;
+	state(site: LandTarget, label: string): Promise<ImportState>;
+	reason(site: LandTarget, label: string): Promise<string>;
+	files(site: LandTarget, archive: { prefix: string; parts: number }): Promise<void>;
+}
+
+// the sealed key of one import, opened only inside a call; a refusal names the credential problem
+export interface ImportStore {
+	withTarget<T>(
+		credentialId: string,
+		orgId: string,
+		root: string,
+		use: (target: SshTarget) => Promise<T>
+	): Promise<T>;
+	// a repeat is harmless
+	discard(credentialId: string): Promise<void>;
+	// records the server the site came from and gives the new site its account, which the restore reads
+	markImported(
+		siteId: string,
+		credentialId: string,
+		accountId: string,
+		now: number
+	): Promise<void>;
+}
+
+export interface ImportDeps extends BackupDeps {
+	imports: ImportStore;
+	survey: SshSurvey;
+	dump: DumpStream;
+	converter: SqlConverter;
+	lander: ImportLander;
+}
+
 // #endregion
 
 export interface EngineConfig {

@@ -9,11 +9,13 @@ export { SiteLease } from './site-lease';
 export {
 	BackupCreate,
 	BackupRestore,
+	ImportSurvey,
 	MigrationCutover,
 	SiteAdopt,
 	SiteCleanup,
 	SiteCreate,
 	SiteDelete,
+	SiteImport,
 	SitePurge,
 	SiteUpgrade
 } from './workflows/classes';
@@ -39,7 +41,9 @@ export default {
 						'site-adopt': env.SITE_ADOPT,
 						'backup-create': env.BACKUP_CREATE,
 						'backup-restore': env.BACKUP_RESTORE,
-						'migration-cutover': env.MIGRATION_CUTOVER
+						'migration-cutover': env.MIGRATION_CUTOVER,
+						'site-import': env.SITE_IMPORT,
+						'import-survey': env.IMPORT_SURVEY
 					}
 				}),
 	scheduled: (_controller, env, ctx) => {

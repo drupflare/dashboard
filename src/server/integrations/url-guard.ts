@@ -298,6 +298,8 @@ function deadline(ms: number): Clock {
 	return {
 		signal: controller.signal,
 		race: (work) => Promise.race([work, expired]),
-		clear: () => clearTimeout(timer)
+		clear: () => {
+			if (timer !== undefined) clearTimeout(timer);
+		}
 	};
 }
