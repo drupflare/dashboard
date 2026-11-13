@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { POLICY_COPY, type CutoverPolicyName } from '~/shared/cutover-copy';
+import { POLICY_COPY, SIGN_IN_COUNTS, type CutoverPolicyName } from '~/shared/cutover-copy';
 import { cutoverHandSteps } from '~/shared/operation-copy';
 import type { CutoverPayload } from '~/stores/cutover';
 
@@ -88,6 +88,12 @@ function submit(): void {
 				</li>
 			</ul>
 		</div>
+		<p
+			class="text-sm text-default"
+			data-test="sign-in"
+		>
+			{{ SIGN_IN_COUNTS }}
+		</p>
 		<p
 			v-if="error"
 			role="alert"

@@ -44,8 +44,57 @@ export const cutoverKeys = {
 	sql: (copy: string) => `${copy}sql/`,
 	manifest: (copy: string) => `${copy}manifest.json`,
 	policy: (orgId: string, operationId: string) =>
-		`${cutoverKeys.prefix(orgId, operationId)}policy.json`
+		`${cutoverKeys.prefix(orgId, operationId)}policy.json`,
+	changes: (orgId: string, operationId: string) =>
+		`${cutoverKeys.prefix(orgId, operationId)}changes/`,
+	progress: (changes: string, read: 'first' | 'final') => `${changes}progress-${read}.json`
 };
+
+// what the new site took since the move, saved as SQL parts for the owner to download
+export const changesManifestSchema = z.strictObject({
+	parts: z.int().nonnegative(),
+	bytes: z.int().nonnegative(),
+	digest: z.string().regex(/^[0-9a-f]{64}$/),
+	statements: z.int().nonnegative(),
+	through: z.int().nonnegative(),
+	takenAt: z.int(),
+	// the read after the address moved back; the fields above then cover both reads and these
+	// the second one alone
+	final: z
+		.strictObject({
+			since: z.int().nonnegative(),
+			parts: z.int().nonnegative(),
+			bytes: z.int().nonnegative(),
+			statements: z.int().nonnegative(),
+			takenAt: z.int()
+		})
+		.optional()
+});
+
+export type ChangesManifest = z.infer<typeof changesManifestSchema>;
+
+// how far one read of the change list has got: the windows saved so far, so a replay carries on from
+// the cursor. The totals cover this read's own parts, and the hashes name them in order
+export const changesProgressSchema = z.strictObject({
+	since: z.int().nonnegative(),
+	target: z.int().nonnegative(),
+	cursor: z.int().nonnegative(),
+	bytes: z.int().nonnegative(),
+	statements: z.int().nonnegative(),
+	hashes: z.array(z.string().regex(/^[0-9a-f]{64}$/)),
+	incomplete: z.enum(['journal_full', 'capture_failed']).nullable()
+});
+
+export type ChangesProgress = z.infer<typeof changesProgressSchema>;
+
+// the mark the new site counts under, one per move; the worker accepts 64 characters
+export function markOf(operationId: string): string {
+	const mark = `cutover-${operationId}`;
+	if (mark.length > 64) {
+		throw new PermanentError('cutover_key', 'the operation id is too long to name a count');
+	}
+	return mark;
+}
 
 export const copyManifestSchema = z.strictObject({
 	label: z.enum(COPY_LABELS),

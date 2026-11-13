@@ -1,5 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { CUTOVER_MISSING_CONTRACTS } from '../../../engine/src/adapters/cutover-destination';
+import { cutoverKeys, digestOfParts, sha256Hex } from '../../../engine/src/adapters/cutover-store';
+import { partKey } from '../../../engine/src/import-parts';
 import cutoverApprove from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/cutover/approve.post';
+import cutoverChanges from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/cutover/changes.get';
 import cutoverChoice from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/cutover/choice.post';
 import cutoverRead from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/cutover/index.get';
 import cutoverStart from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/cutover/index.post';
@@ -662,5 +666,113 @@ describe('POST a choice', () => {
 		const reply: Reply = await choose(siteId, 'keep-new');
 		expect(reply.status).toBe(409);
 		expect(reply.json).toMatchObject({ details: { reason: 'not_waiting' } });
+	});
+});
+
+describe('GET the saved changes', () => {
+	const EXPORTED: CutoverEvent[] = [
+		...OBSERVING,
+		{ type: 'writes-counted', writes: 2 },
+		{ type: 'choice-made', value: 'export-changes' },
+		{ type: 'changes-exported', reference: 'saved', cannotCarry: ['Sign-in sessions'] }
+	];
+	const download = (siteId: string, headers = asUser) =>
+		send(cutoverChanges, `${BASE}/changes`, { path: path(siteId, '/changes'), headers });
+
+	// the engine's layout: parts under the move's prefix, a manifest naming their digest
+	async function saved(operationId: string, parts: string[], patch: { digest?: string } = {}) {
+		const objects = new Map<string, Uint8Array>();
+		const prefix = cutoverKeys.changes(ORG, operationId);
+		const bytes = parts.map((part) => new TextEncoder().encode(part));
+		for (const [seq, part] of bytes.entries()) objects.set(partKey(prefix, seq, 'sql'), part);
+		const digest = await digestOfParts(await Promise.all(bytes.map((part) => sha256Hex(part))));
+		objects.set(
+			cutoverKeys.manifest(prefix),
+			new TextEncoder().encode(
+				JSON.stringify({
+					parts: bytes.length,
+					bytes: bytes.reduce((sum, part) => sum + part.byteLength, 0),
+					digest: patch.digest ?? digest,
+					statements: 1,
+					through: 2,
+					takenAt: 0
+				})
+			)
+		);
+		setCutoverServices({ blobs: { get: async (name) => objects.get(name) ?? null } });
+	}
+
+	it('is a session only action for owners and admins', () => {
+		expect(isSessionOnly('site.cutover.export')).toBe(true);
+		expect(ACTION_DEFS['site.cutover.export'].org).toEqual(['owner', 'admin']);
+		expect(ACTION_DEFS['site.cutover.export'].site).toEqual(['site-admin']);
+		expect(ACTION_DEFS['site.cutover.export']).toMatchObject({ content: true });
+	});
+
+	it('streams the parts as one SQL file and writes the audit row first', async () => {
+		const { audits } = install();
+		const siteId = await site(ORG, 'cutover-export-site');
+		asRole('owner');
+		const operationId = await startedCutover(siteId, EXPORTED);
+		await saved(operationId, ['REPLACE INTO `t` VALUES (1);\n', '-- end, 1 statement\n']);
+		const reply = await download(siteId);
+		expect(reply.status).toBe(200);
+		expect(reply.text).toBe('REPLACE INTO `t` VALUES (1);\n-- end, 1 statement\n');
+		expect(reply.headers.get('content-type')).toContain('application/sql');
+		expect(reply.headers.get('content-disposition')).toContain('.sql');
+		expect(audits.map((audit) => audit.action)).toEqual(['site.cutover.export']);
+	});
+
+	it('answers 404 until a move has saved its changes', async () => {
+		install();
+		const siteId = await site(ORG, 'cutover-export-early');
+		asRole('owner');
+		expect((await download(siteId)).status).toBe(404);
+		await startedCutover(siteId, OBSERVING);
+		expect((await download(siteId)).status).toBe(404);
+	});
+
+	it('refuses a key, a viewer and a developer', async () => {
+		install();
+		const siteId = await site(ORG, 'cutover-export-roles');
+		for (const role of ['viewer', 'developer'] as const) {
+			asRole(role);
+			expect((await download(siteId)).status).toBe(403);
+		}
+		setup({
+			facts: () => ({
+				...facts({ ...member('owner'), ...fresh }),
+				key: { id: 'key-1', scopes: ['site.cutover.export'] }
+			})
+		});
+		expect((await download(siteId, asKey)).status).toBe(403);
+	});
+
+	it('ends the download as a failure when the saved parts do not match their record', async () => {
+		install();
+		const siteId = await site(ORG, 'cutover-export-damaged');
+		asRole('owner');
+		const operationId = await startedCutover(siteId, EXPORTED);
+		await saved(operationId, ['REPLACE INTO `t` VALUES (1);\n'], { digest: '0'.repeat(64) });
+		await expect(download(siteId).then((reply) => reply.text)).rejects.toThrow();
+	});
+
+	it('answers 500 when the manifest is gone', async () => {
+		install();
+		const siteId = await site(ORG, 'cutover-export-gone');
+		asRole('owner');
+		await startedCutover(siteId, EXPORTED);
+		setCutoverServices({ blobs: { get: async () => null } });
+		expect((await download(siteId)).status).toBe(500);
+	});
+});
+
+describe('the start route once the adapters exist', () => {
+	it('no longer answers not built when the destination has every worker route it needs', async () => {
+		install({ built: CUTOVER_MISSING_CONTRACTS.length === 0 });
+		const siteId = await site(ORG, 'cutover-open-site');
+		asRole('owner');
+		expect(CUTOVER_MISSING_CONTRACTS).toEqual([]);
+		expect((await start(siteId)).status).toBe(202);
 	});
 });

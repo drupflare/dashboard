@@ -39,11 +39,20 @@ export interface CutoverState {
 	needsChoice: boolean;
 	choice: Cutover['choice'];
 	exportReference: string | null;
+	// the new site's write number the first file was read to; the second read starts after it
+	exportThrough: number | null;
 	cannotCarry: string[];
+	// the read after the address moved back: waiting for old caches to expire, saved, found
+	// nothing new, or could not be read
+	finalChanges: FinalChanges | null;
+	finalStatements: number;
 	refusal: { code: RefusalCode; message: string } | null;
 	reason: string | null;
 	updatedAt: string | null;
 }
+
+export const FINAL_CHANGES = ['waiting', 'ready', 'none', 'unread'] as const;
+export type FinalChanges = (typeof FINAL_CHANGES)[number];
 
 export type CutoverEvent =
 	| { type: 'start' }
@@ -63,7 +72,13 @@ export type CutoverEvent =
 	| { type: 'rollback-requested' }
 	| { type: 'choice-made'; value: PostWriteChoice }
 	| { type: 'choice-timed-out' }
-	| { type: 'changes-exported'; reference: string; cannotCarry: string[] }
+	| { type: 'changes-exported'; reference: string; cannotCarry: string[]; through: number }
+	| {
+			type: 'final-changes-exported';
+			cannotCarry: string[];
+			statements: number;
+	  }
+	| { type: 'final-changes-unreadable' }
 	| { type: 'reversed' }
 	| { type: 'unwound' }
 	| { type: 'finished' }
@@ -83,6 +98,7 @@ export type CutoverAction =
 	| { do: 'wait-observation'; index: number; offsetMs: number }
 	| { do: 'await-choice' }
 	| { do: 'export-changes' }
+	| { do: 'final-changes'; since: number }
 	| { do: 'reverse' }
 	| { do: 'unwind' }
 	| { do: 'finish' }
@@ -135,7 +151,10 @@ export function initialState(
 		needsChoice: false,
 		choice: null,
 		exportReference: null,
+		exportThrough: null,
 		cannotCarry: [],
+		finalChanges: null,
+		finalStatements: 0,
 		refusal: null,
 		reason: null,
 		updatedAt: null
@@ -285,7 +304,7 @@ const handlers: Record<CutoverStep | 'start', Table> = {
 						}),
 						action: { do: 'await-approval' }
 					}
-				: stopRun(state, `The copy does not match the source: ${event.problem}`)
+				: stopRun(state, event.problem)
 	},
 	'owner-approval': {
 		approved: (state) => ({
@@ -404,9 +423,32 @@ const handlers: Record<CutoverStep | 'start', Table> = {
 		'changes-exported': (state, event) => ({
 			state: advance(state, {
 				exportReference: event.reference,
+				exportThrough: event.through,
 				cannotCarry: event.cannotCarry
 			}),
 			action: { do: 'reverse' }
+		}),
+		// an owner who exported has a first file; the address is back, so one more read after old
+		// caches expire catches what arrived between the first read and the move
+		reversed: (state) =>
+			state.exportThrough === null || state.finalChanges !== null
+				? { state: advance(state, { state: 'rolled-back' }), action: { do: 'stop' } }
+				: {
+						state: advance(state, { finalChanges: 'waiting' }),
+						action: { do: 'final-changes', since: state.exportThrough }
+					},
+		'final-changes-exported': (state, event) => ({
+			state: advance(state, {
+				state: 'rolled-back',
+				finalChanges: event.statements === 0 ? 'none' : 'ready',
+				finalStatements: event.statements,
+				cannotCarry: event.cannotCarry
+			}),
+			action: { do: 'stop' }
+		}),
+		'final-changes-unreadable': (state) => ({
+			state: advance(state, { state: 'rolled-back', finalChanges: 'unread' }),
+			action: { do: 'stop' }
 		}),
 		finished: (state) => ({
 			state: advance(state, { state: 'completed' }),
@@ -452,6 +494,8 @@ export const cutoverViewSchema = z.object({
 	observed: z.int().nonnegative(),
 	lastHealthy: z.boolean().nullable(),
 	exportReference: z.string().nullable(),
+	finalChanges: z.enum(FINAL_CHANGES).nullable(),
+	finalStatements: z.int().nonnegative(),
 	cannotCarry: z.array(z.string()),
 	refusal: z.object({ code: z.enum(REFUSAL_CODES), message: z.string() }).nullable(),
 	reason: z.string().nullable(),
@@ -490,6 +534,8 @@ export function viewOf(
 		observed: state.observed,
 		lastHealthy: state.lastHealthy,
 		exportReference: state.exportReference,
+		finalChanges: state.finalChanges,
+		finalStatements: state.finalStatements,
 		cannotCarry: state.cannotCarry,
 		refusal: state.refusal,
 		reason: state.reason,

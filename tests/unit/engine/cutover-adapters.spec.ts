@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
+import { ChangeScan } from '../../../engine/src/adapters/change-scan';
 import { cutoverPortsOf } from '../../../engine/src/adapters/cutover';
 import {
+	countFrom,
 	createCutoverDestination,
 	CUTOVER_MISSING_CONTRACTS,
 	DESTINATION_REFUSALS,
+	exportNotes,
 	tablesTouched
 } from '../../../engine/src/adapters/cutover-destination';
 import { dohReader, pointsAt, type DnsLookup } from '../../../engine/src/adapters/cutover-dns';
@@ -14,6 +17,7 @@ import {
 	keyParts,
 	manifestOfMarker,
 	markerOf,
+	markOf,
 	parseMarker,
 	parseSourceRef,
 	readCopy,
@@ -22,10 +26,12 @@ import {
 } from '../../../engine/src/adapters/cutover-store';
 import { createDumpStream, type StreamConnector } from '../../../engine/src/adapters/dump-stream';
 import type { SshConnector } from '../../../engine/src/adapters/ssh-survey';
+import { writeMarkWorkerOf } from '../../../engine/src/adapters/write-mark';
 import { partKey } from '../../../engine/src/import-parts';
 import type { BackupSite, ImportState, ImportStore, SqlConverter } from '../../../engine/src/ports';
 import { PermanentError } from '../../../engine/src/step';
 import { fakeBlobs } from './backup-fakes';
+import { changeBody, fakeMarks, type MarksOptions } from './cutover-fakes';
 import {
 	CREDENTIAL_ID,
 	KEY_MARKER,
@@ -193,6 +199,15 @@ const converter: SqlConverter = {
 			rows: 0,
 			statements: 0
 		};
+	},
+	async scanPg() {
+		throw new Error('the cutover source reads MySQL dumps only');
+	},
+	async schemaPg() {
+		throw new Error('the cutover source reads MySQL dumps only');
+	},
+	async dataPg() {
+		throw new Error('the cutover source reads MySQL dumps only');
 	}
 };
 
@@ -526,9 +541,17 @@ function destinationWorld(
 		ceiling?: number;
 		lookups?: (hostname: string) => DnsLookup | Error;
 		routeWaitMs?: number;
+		marks?: MarksOptions;
+		partBytes?: number;
+		changesLimitBytes?: number;
+		windowWrites?: number;
+		// what the site's restore does with a mark id: open it, say it will and lose it, or ignore it
+		restoreMark?: 'opens' | 'echoes' | 'ignores';
 	} = {}
 ) {
 	const store = fakeBlobs();
+	const asked: (string | undefined)[] = [];
+	const marks = fakeMarks(patch.marks);
 	const log: string[] = [];
 	const bodies: string[] = [];
 	let clock = 0;
@@ -561,10 +584,18 @@ function destinationWorld(
 				withOwnerToken: async (_site, _token, use) => use('owner-token-value')
 			},
 			worker: {
-				async restore(hostname, body, label) {
+				async restore(hostname, body, label, _auth, mark) {
 					log.push(`restore ${hostname} ${label}`);
 					bodies.push(new TextDecoder().decode(body));
-					return { chunks: 1, statements: 1 };
+					asked.push(mark);
+					const mode = patch.restoreMark ?? 'ignores';
+					if (mode === 'ignores' || mark === undefined)
+						return { chunks: 1, statements: 1 };
+					if (mode === 'opens') {
+						marks.state.mark = mark;
+						marks.state.writes = 0;
+					}
+					return { chunks: 1, statements: 1, mark };
 				},
 				async importState() {
 					last = states.length > 0 ? states.shift()! : last;
@@ -584,6 +615,10 @@ function destinationWorld(
 				}
 			},
 			blobs: store.blobs,
+			marks: marks.worker,
+			partBytes: patch.partBytes,
+			changesLimitBytes: patch.changesLimitBytes,
+			windowWrites: patch.windowWrites,
 			dns: {
 				async lookup(hostname) {
 					const answer = lookups(hostname);
@@ -604,7 +639,7 @@ function destinationWorld(
 		},
 		SITE
 	);
-	return { destination, store, log, bodies, setSite: () => site };
+	return { destination, store, log, bodies, marks, asked, setSite: () => site };
 }
 
 async function plantCopy(
@@ -726,6 +761,59 @@ describe('the destination adapter', () => {
 		expect(world.bodies[0]).toContain('UPDATE sequences SET value');
 	});
 
+	it('asks the site to open the count with the copy and reports it open', async () => {
+		const world = destinationWorld({ restoreMark: 'opens' });
+		const { snapshot, delta } = await copiesOf(world.store);
+		const out = await world.destination.promote(key('promote'), snapshot, delta);
+		expect(out).toEqual({ counting: true });
+		expect(world.asked).toEqual([markOf(OP)]);
+		expect(world.marks.state).toMatchObject({ mark: markOf(OP), writes: 0, starts: 0 });
+		expect(world.marks.state.calls).not.toContain('start');
+	});
+
+	it('reports the count closed when the site predates the field, so the caller starts it', async () => {
+		const world = destinationWorld({ restoreMark: 'ignores' });
+		const { snapshot, delta } = await copiesOf(world.store);
+		expect(await world.destination.promote(key('promote'), snapshot, delta)).toEqual({
+			counting: false
+		});
+		expect(world.asked).toEqual([markOf(OP)]);
+		expect(world.marks.state.calls).not.toContain('read');
+	});
+
+	it('reports the count closed when the site said it would open it and has none', async () => {
+		const world = destinationWorld({ restoreMark: 'echoes' });
+		const { snapshot, delta } = await copiesOf(world.store);
+		expect(await world.destination.promote(key('promote'), snapshot, delta)).toEqual({
+			counting: false
+		});
+		expect(world.marks.state.calls).toContain('read');
+	});
+
+	it('reports the count closed when another move holds the count', async () => {
+		const world = destinationWorld({
+			restoreMark: 'echoes',
+			marks: { mark: 'cutover-op_other' }
+		});
+		const { snapshot, delta } = await copiesOf(world.store);
+		expect(await world.destination.promote(key('promote'), snapshot, delta)).toEqual({
+			counting: false
+		});
+	});
+
+	it('finds the count open on a replay after the copy was applied, and keeps its tally', async () => {
+		const world = destinationWorld({
+			states: ['applied'],
+			marks: { mark: markOf(OP), writes: 4 }
+		});
+		const { snapshot, delta } = await copiesOf(world.store);
+		expect(await world.destination.promote(key('promote'), snapshot, delta)).toEqual({
+			counting: true
+		});
+		expect(world.asked).toEqual([]);
+		expect(world.marks.state.writes).toBe(4);
+	});
+
 	it('sends nothing again when a repeat finds the data already applied', async () => {
 		const world = destinationWorld({ states: ['applied'] });
 		const { snapshot, delta } = await copiesOf(world.store);
@@ -832,20 +920,924 @@ describe('the destination adapter', () => {
 		});
 	});
 
-	it('refuses the three calls the released worker cannot answer, naming the missing contract', async () => {
-		const world = destinationWorld();
-		for (const call of [
-			() => world.destination.acceptedWrites(),
-			() => world.destination.observe(),
-			() => world.destination.exportChanges(key('export-changes'))
-		]) {
-			expect(await failureOf(call())).toMatchObject({ code: 'worker_contract_missing' });
+	it('leaves no contract missing, so the start opens', () => {
+		expect(CUTOVER_MISSING_CONTRACTS).toEqual([]);
+	});
+
+	it('tells the owner a site without the count routes needs an update before the move', async () => {
+		const world = destinationWorld({ marks: { supported: false } });
+		const { snapshot, delta } = await copiesOf(world.store);
+		expect(await world.destination.validate(key('validate'), snapshot, delta)).toBe(
+			DESTINATION_REFUSALS.needsUpdate
+		);
+		expect(DESTINATION_REFUSALS.needsUpdate).not.toMatch(/contract|worker|route/i);
+	});
+});
+
+// #region counting writes
+
+describe('the mark of a move', () => {
+	it('is stable for one move and differs between moves', () => {
+		const other = `op_${'q'.repeat(26)}`;
+		expect(markOf(OP)).toBe(markOf(keyParts(key('promote')).operationId));
+		expect(markOf(OP)).not.toBe(markOf(other));
+		expect(markOf(OP)).toMatch(/^[A-Za-z0-9_.:-]{1,64}$/);
+	});
+
+	it('refuses an operation id the site would reject', () => {
+		expect(() => markOf('x'.repeat(80))).toThrow(PermanentError);
+	});
+});
+
+describe('judging a count', () => {
+	const mark = markOf(OP);
+
+	it('reads zero, one and many from a site that answered with our mark', () => {
+		for (const writes of [0, 1, 40]) {
+			expect(countFrom({ mark, writes, incomplete: null }, mark)).toEqual({ writes });
 		}
-		expect(CUTOVER_MISSING_CONTRACTS.length).toBeGreaterThan(0);
+	});
+
+	it('keeps a count a failed capture or a full journal left above zero', () => {
+		expect(countFrom({ mark, writes: 3, incomplete: 'journal_full' }, mark)).toEqual({
+			writes: 3
+		});
+		expect(countFrom({ mark, writes: 1, incomplete: 'capture_failed' }, mark)).toEqual({
+			writes: 1
+		});
+	});
+
+	it('never reads zero from a missing mark, a missing route, another mark or a failed capture', () => {
+		const lost = { problem: DESTINATION_REFUSALS.countLost };
+		expect(countFrom('none', mark)).toEqual(lost);
+		expect(countFrom('missing', mark)).toEqual(lost);
+		expect(countFrom({ mark: 'cutover-other', writes: 0, incomplete: null }, mark)).toEqual(
+			lost
+		);
+		expect(countFrom({ mark, writes: 0, incomplete: 'capture_failed' }, mark)).toEqual(lost);
+	});
+});
+
+describe('the destination count', () => {
+	it('starts once however often the promote step replays', async () => {
+		const world = destinationWorld();
+		await world.destination.startCounting(key('promote'));
+		world.marks.state.writes = 4;
+		await world.destination.startCounting(key('promote'));
+		expect(world.marks.state.starts).toBe(1);
+		expect(world.marks.state.writes).toBe(4);
+		expect(world.marks.state.mark).toBe(markOf(OP));
+	});
+
+	it('refuses to start over another move, or on a site without the routes', async () => {
+		const taken = destinationWorld({ marks: { mark: 'cutover-op_other' } });
+		expect(await failureOf(taken.destination.startCounting(key('promote')))).toMatchObject({
+			code: 'write_count_not_started'
+		});
+		const old = destinationWorld({ marks: { supported: false } });
+		expect(await failureOf(old.destination.startCounting(key('promote')))).toMatchObject({
+			code: 'write_count_not_started'
+		});
+		expect(taken.marks.state.mark).toBe('cutover-op_other');
+	});
+
+	it('retries a start the site answered with a failure', async () => {
+		const world = destinationWorld({ marks: { fail: { start: 1 } } });
+		expect(await failureOf(world.destination.startCounting(key('promote')))).not.toBeInstanceOf(
+			PermanentError
+		);
+		await world.destination.startCounting(key('promote'));
+		expect(world.marks.state.starts).toBe(1);
+	});
+
+	it('counts zero, then the writes that arrive', async () => {
+		const world = destinationWorld();
+		await world.destination.startCounting(key('promote'));
+		expect(await world.destination.acceptedWrites(key('write-mark'))).toBe(0);
+		world.marks.state.writes = 2;
+		expect(await world.destination.acceptedWrites(key('write-mark'))).toBe(2);
+		world.marks.state.writes = 9;
+		expect(await world.destination.observe(key('write-mark'))).toEqual({
+			healthy: true,
+			writes: 9
+		});
+	});
+
+	it('reports a site that fails its health check with the count it holds', async () => {
+		const world = destinationWorld({ status: 503, marks: { mark: markOf(OP), writes: 5 } });
+		expect(await world.destination.observe(key('write-mark'))).toEqual({
+			healthy: false,
+			writes: 5
+		});
+	});
+
+	it('never reads a failure as zero writes', async () => {
+		const flaky = destinationWorld({ marks: { fail: { read: 2 } } });
+		await flaky.destination.startCounting(key('promote'));
+		for (let attempt = 0; attempt < 2; attempt++) {
+			const failure = await failureOf(flaky.destination.acceptedWrites(key('write-mark')));
+			expect(failure).not.toBeInstanceOf(PermanentError);
+		}
+		expect(await flaky.destination.acceptedWrites(key('write-mark'))).toBe(0);
+	});
+
+	it('surfaces a count that disappeared after the start', async () => {
+		const world = destinationWorld();
+		await world.destination.startCounting(key('promote'));
+		world.marks.state.mark = null;
+		expect(await failureOf(world.destination.acceptedWrites(key('write-mark')))).toMatchObject({
+			code: 'write_count_lost'
+		});
+		expect(await failureOf(world.destination.observe(key('write-mark')))).toMatchObject({
+			code: 'write_count_lost'
+		});
+		world.marks.state.supported = false;
+		expect(await failureOf(world.destination.acceptedWrites(key('write-mark')))).toMatchObject({
+			code: 'write_count_lost'
+		});
+	});
+
+	it('ends the count, and a repeat ends nothing more', async () => {
+		const world = destinationWorld();
+		await world.destination.startCounting(key('promote'));
+		await world.destination.stopCounting(key('write-mark'));
+		await world.destination.stopCounting(key('write-mark'));
+		expect(world.marks.state.ends).toBe(1);
+		expect(world.marks.state.mark).toBeNull();
+	});
+});
+
+describe('the change list scan', () => {
+	const read = (...chunks: string[]) => {
+		const scan = new ChangeScan();
+		for (const chunk of chunks) scan.push(new TextEncoder().encode(chunk));
+		return scan.result();
+	};
+	const reseed = 'UPDATE sequences SET value = 1 WHERE value < 1;\n';
+
+	it('accepts a list whose closing line agrees with what it read', () => {
+		const result = read(
+			'-- changes through write 2, mysql\n',
+			'REPLACE INTO `node` (`nid`) VALUES (1);\nDELETE FROM `node` WHERE `nid` = 3;\n',
+			reseed,
+			'-- end, 2 statements\n'
+		);
+		expect(result).toEqual({ statements: 2, declared: 2, complete: true });
+	});
+
+	it('counts a statement whose text spans lines and holds semicolons', () => {
+		const text = "REPLACE INTO `node__body` (`body`) VALUES ('a;\nb''c\\' ;\nd');\n";
+		expect(read(text, '-- end, 1 statement\n').complete).toBe(true);
+	});
+
+	it('reads the same result however the stream is cut', () => {
+		const whole = `-- changes\nREPLACE INTO \`t\` (\`a\`) VALUES ('x;y');\n${reseed}-- end, 1 statement\n`;
+		for (let cut = 1; cut < whole.length; cut += 7) {
+			expect(read(whole.slice(0, cut), whole.slice(cut)).complete).toBe(true);
+		}
+	});
+
+	it('rejects a list with no closing line, and one that disagrees', () => {
+		expect(read('REPLACE INTO `t` (`a`) VALUES (1);\n').complete).toBe(false);
+		expect(
+			read('REPLACE INTO `t` (`a`) VALUES (1);\n', '-- end, 2 statements\n')
+		).toMatchObject({
+			statements: 1,
+			declared: 2,
+			complete: false
+		});
+	});
+
+	it('rejects a list cut inside a literal', () => {
+		expect(read("REPLACE INTO `t` (`a`) VALUES ('abc").complete).toBe(false);
+		expect(read("REPLACE INTO `t` (`a`) VALUES ('abc\n-- end, 0 statements\n").complete).toBe(
+			false
+		);
+	});
+});
+
+describe('what the export cannot carry', () => {
+	const manifest = (patch: Partial<Parameters<typeof exportNotes>[0]> = {}) => ({
+		mark: markOf(OP),
+		writes: 3,
+		incomplete: null,
+		through: 3,
+		cannotCarry: [],
+		...patch
+	});
+
+	it('says it in plain words, with no table name or error code', () => {
+		const notes = exportNotes(
+			manifest({
+				incomplete: 'journal_full',
+				cannotCarry: [
+					'sessions',
+					'settings and state kept in key-value storage',
+					'the bytes of 2 new, replaced or removed files',
+					'structure changes to webform_submission, node',
+					'rows in cache_foo, which has no key to export by',
+					'something the site invented for webform_x'
+				]
+			}),
+			0
+		);
+		const joined = notes.join(' ');
+		expect(joined).not.toMatch(/webform|cache_foo|journal_full|key-value storage"/);
+		expect(notes[0]).toContain('not a full account');
+		expect(notes).toContain('Sign-in sessions');
+		expect(notes).toContain(
+			'The files themselves (2 new, replaced or removed); only the records of them are saved'
+		);
+		expect(notes).toContain('Other changes the new site could not describe');
+	});
+
+	it('counts the changes that arrived after the file was saved', () => {
+		expect(exportNotes(manifest(), 2).at(-1)).toBe(
+			'2 changes the new site accepted after the file was saved'
+		);
+		expect(exportNotes(manifest(), 1).at(-1)).toBe(
+			'1 change the new site accepted after the file was saved'
+		);
+		expect(exportNotes(manifest(), 0).at(-1)).toContain('after the file is saved');
+	});
+});
+
+describe('exporting the new changes', () => {
+	const ONE = ['REPLACE INTO `node` (`nid`) VALUES (1);'];
+
+	async function ready(patch: Parameters<typeof destinationWorld>[0] = {}) {
+		const world = destinationWorld(patch);
+		await world.destination.startCounting(key('promote'));
+		world.marks.state.writes = world.marks.state.writes || 3;
+		return world;
+	}
+	const saved = (world: Awaited<ReturnType<typeof ready>>) =>
+		[...world.store.objects.keys()].filter((name) =>
+			name.startsWith(cutoverKeys.changes(ORG, OP))
+		);
+
+	it('saves a complete list as parts with a manifest and answers what it cannot carry', async () => {
+		const world = await ready({
+			marks: { bodies: [[changeBody([...ONE, 'DELETE FROM `node` WHERE `nid` = 2;'])]] }
+		});
+		const result = await world.destination.exportChanges(key('export-changes'), 'mysql');
+		expect(result.reference).toBe(cutoverKeys.changes(ORG, OP));
+		expect(result.cannotCarry).toContain('Sign-in sessions');
+		const prefix = cutoverKeys.changes(ORG, OP);
+		const part = world.store.objects.get(partKey(prefix, 0, 'sql'))!;
+		expect(new TextDecoder().decode(part)).toContain('-- end, 2 statements');
+		const manifest = JSON.parse(
+			new TextDecoder().decode(world.store.objects.get(cutoverKeys.manifest(prefix))!)
+		);
+		expect(manifest).toMatchObject({ parts: 1, statements: 2, through: 3 });
+	});
+
+	it('cuts a long list into parts that join back to the whole', async () => {
+		const world = await ready({
+			partBytes: 40,
+			marks: { bodies: [[changeBody([...ONE, ...ONE, ...ONE])]] }
+		});
+		await world.destination.exportChanges(key('export-changes'), 'mysql');
+		const prefix = cutoverKeys.changes(ORG, OP);
+		const manifest = JSON.parse(
+			new TextDecoder().decode(world.store.objects.get(cutoverKeys.manifest(prefix))!)
+		);
+		expect(manifest.parts).toBeGreaterThan(1);
+		const joined = [...Array(manifest.parts).keys()]
+			.map((seq) =>
+				new TextDecoder().decode(world.store.objects.get(partKey(prefix, seq, 'sql'))!)
+			)
+			.join('');
+		expect(joined).toBe(changeBody([...ONE, ...ONE, ...ONE]));
+		expect(manifest.digest).toBe(
+			await digestOfParts(
+				await Promise.all(
+					[...Array(manifest.parts).keys()].map((seq) =>
+						sha256Hex(world.store.objects.get(partKey(prefix, seq, 'sql'))!)
+					)
+				)
+			)
+		);
+	});
+
+	it('treats a list with no closing line as cut short and starts over on the retry', async () => {
+		const world = await ready({
+			marks: { bodies: [[changeBody(ONE, null)], [changeBody(ONE)]] }
+		});
+		const failure = await failureOf(
+			world.destination.exportChanges(key('export-changes'), 'mysql')
+		);
+		expect(failure).not.toBeInstanceOf(PermanentError);
+		expect(failure.message).toBe(DESTINATION_REFUSALS.exportCutShort);
+		await world.destination.exportChanges(key('export-changes'), 'mysql');
+		expect(world.marks.state.bodiesRead).toBe(2);
+		const text = [...world.store.objects.entries()]
+			.filter(([name]) => name.endsWith('.sql'))
+			.map(([, bytes]) => new TextDecoder().decode(bytes))
+			.join('');
+		expect(text).toBe(changeBody(ONE));
+	});
+
+	it('carries an incomplete flag and the limits the site named, in plain words', async () => {
+		const world = await ready({
+			marks: {
+				incomplete: 'journal_full',
+				cannotCarry: ['sessions', 'structure changes to webform_submission']
+			}
+		});
+		const { cannotCarry } = await world.destination.exportChanges(
+			key('export-changes'),
+			'mysql'
+		);
+		expect(cannotCarry[0]).toContain('not a full account');
+		expect(cannotCarry).toContain('Changes to the structure of the database');
+		expect(cannotCarry.join(' ')).not.toMatch(/webform|journal_full/);
+	});
+
+	it('names the writes that arrived after the list was read', async () => {
+		const world = await ready();
+		const marks = world.marks.worker;
+		const original = marks.body;
+		marks.body = async (host, through, auth) => {
+			const body = await original(host, through, auth);
+			world.marks.state.writes += 2;
+			return body;
+		};
+		const { cannotCarry } = await world.destination.exportChanges(
+			key('export-changes'),
+			'mysql'
+		);
+		expect(cannotCarry.at(-1)).toBe('2 changes the new site accepted after the file was saved');
+	});
+
+	it('refuses a database that is not MySQL or MariaDB before it calls the site', async () => {
+		const world = await ready();
+		const before = world.marks.state.calls.length;
+		expect(
+			await failureOf(world.destination.exportChanges(key('export-changes'), 'pgsql'))
+		).toMatchObject({
+			code: 'export_dialect'
+		});
+		expect(world.marks.state.calls.length).toBe(before);
+		expect(saved(world)).toEqual([]);
+	});
+
+	it('refuses an export when the count is gone or belongs to another move', async () => {
+		const gone = await ready();
+		gone.marks.state.mark = null;
+		expect(
+			await failureOf(gone.destination.exportChanges(key('export-changes'), 'mysql'))
+		).toMatchObject({
+			code: 'write_count_lost'
+		});
+		const other = await ready();
+		other.marks.state.mark = 'cutover-op_other';
+		expect(
+			await failureOf(other.destination.exportChanges(key('export-changes'), 'mysql'))
+		).toMatchObject({
+			code: 'write_count_lost'
+		});
+	});
+
+	it('stops a list that runs past the limit', async () => {
+		const world = await ready({ changesLimitBytes: 20 });
+		expect(
+			await failureOf(world.destination.exportChanges(key('export-changes'), 'mysql'))
+		).toMatchObject({
+			code: 'export_too_large'
+		});
+	});
+
+	it('retries a site that answered the manifest with a failure', async () => {
+		const world = await ready({ marks: { fail: { manifest: 1 } } });
+		expect(
+			await failureOf(world.destination.exportChanges(key('export-changes'), 'mysql'))
+		).not.toBeInstanceOf(PermanentError);
+		await world.destination.exportChanges(key('export-changes'), 'mysql');
+	});
+
+	describe('in windows', () => {
+		const prefix = cutoverKeys.changes(ORG, OP);
+		const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+		type World = Awaited<ReturnType<typeof ready>>;
+		// one statement per write number, so a window shows which writes it carried
+		const windows = (since: number, through: number) => [
+			changeBody(
+				Array.from(
+					{ length: through - since },
+					(_, at) => `REPLACE INTO \`node\` (\`nid\`) VALUES (${since + at + 1});`
+				)
+			)
+		];
+		const manifestOf = (world: World) =>
+			JSON.parse(decode(world.store.objects.get(cutoverKeys.manifest(prefix))!));
+		const progressOf = (world: World, read: 'first' | 'final' = 'first') =>
+			JSON.parse(decode(world.store.objects.get(cutoverKeys.progress(prefix, read))!));
+		const joined = (world: World) =>
+			[...Array(manifestOf(world).parts).keys()]
+				.map((seq) => decode(world.store.objects.get(partKey(prefix, seq, 'sql'))!))
+				.join('');
+		const whole = (...ranges: [number, number][]) =>
+			ranges.map(([since, through]) => windows(since, through)[0]).join('');
+
+		async function journal(writes: number, patch: Parameters<typeof ready>[0] = {}) {
+			const world = await ready({
+				windowWrites: 3,
+				...patch,
+				marks: { windows, ...patch.marks }
+			});
+			world.marks.state.writes = writes;
+			return world;
+		}
+
+		// the nth body request streams one chunk and then stops the way a timeout does
+		function stallAt(world: World, nth: number) {
+			const read = world.marks.worker.body;
+			let calls = 0;
+			world.marks.worker.body = async (host, through, auth, since) => {
+				const real = await read(host, through, auth, since);
+				if (++calls !== nth) return real;
+				const reader = real.stream.getReader();
+				let sent = false;
+				return {
+					...real,
+					stream: new ReadableStream<Uint8Array>({
+						async pull(controller) {
+							if (!sent) {
+								sent = true;
+								const chunk = await reader.read();
+								if (!chunk.done) return controller.enqueue(chunk.value);
+							}
+							controller.error(new DOMException('timed out', 'TimeoutError'));
+						}
+					})
+				};
+			};
+		}
+
+		it('reads a list longer than one window as several parts, complete and in order', async () => {
+			const world = await journal(7);
+			const out = await world.destination.exportChanges(key('export-changes'), 'mysql');
+			expect(out.through).toBe(7);
+			expect(world.marks.state.asked).toEqual([
+				[0, 3],
+				[3, 6],
+				[6, 7]
+			]);
+			expect(joined(world)).toBe(whole([0, 3], [3, 6], [6, 7]));
+			expect(manifestOf(world)).toMatchObject({ parts: 3, statements: 7, through: 7 });
+			expect(manifestOf(world).digest).toBe(
+				await digestOfParts(
+					await Promise.all(
+						[0, 1, 2].map((seq) =>
+							sha256Hex(world.store.objects.get(partKey(prefix, seq, 'sql'))!)
+						)
+					)
+				)
+			);
+			expect(progressOf(world)).toMatchObject({ cursor: 7, target: 7 });
+		});
+
+		it('reads a window that times out again from its own cursor', async () => {
+			const world = await journal(7);
+			stallAt(world, 2);
+			const failure = await failureOf(
+				world.destination.exportChanges(key('export-changes'), 'mysql')
+			);
+			expect(failure).not.toBeInstanceOf(PermanentError);
+			expect(progressOf(world)).toMatchObject({ cursor: 3, target: 7, statements: 3 });
+			await world.destination.exportChanges(key('export-changes'), 'mysql');
+			expect(world.marks.state.asked).toEqual([
+				[0, 3],
+				[3, 6],
+				[3, 6],
+				[6, 7]
+			]);
+			expect(joined(world)).toBe(whole([0, 3], [3, 6], [6, 7]));
+		});
+
+		it('gives the same file after a replay at every saved part', async () => {
+			for (const stalled of [1, 2, 3]) {
+				const world = await journal(7);
+				stallAt(world, stalled);
+				await failureOf(world.destination.exportChanges(key('export-changes'), 'mysql'));
+				await world.destination.exportChanges(key('export-changes'), 'mysql');
+				expect(joined(world)).toBe(whole([0, 3], [3, 6], [6, 7]));
+				expect(manifestOf(world)).toMatchObject({ parts: 3, statements: 7 });
+			}
+		});
+
+		it('keeps to the same list when more writes arrive before the replay', async () => {
+			const world = await journal(7);
+			stallAt(world, 2);
+			await failureOf(world.destination.exportChanges(key('export-changes'), 'mysql'));
+			world.marks.state.writes = 12;
+			const out = await world.destination.exportChanges(key('export-changes'), 'mysql');
+			expect(out.through).toBe(7);
+			expect(out.cannotCarry.at(-1)).toBe(
+				'5 changes the new site accepted after the file was saved'
+			);
+			expect(joined(world)).toBe(whole([0, 3], [3, 6], [6, 7]));
+		});
+
+		it('reads nothing again once every window is saved', async () => {
+			const world = await journal(7);
+			await world.destination.exportChanges(key('export-changes'), 'mysql');
+			const once = joined(world);
+			await world.destination.exportChanges(key('export-changes'), 'mysql');
+			expect(world.marks.state.bodiesRead).toBe(3);
+			expect(joined(world)).toBe(once);
+		});
+
+		it('starts over when a saved part is gone or changed', async () => {
+			const world = await journal(7);
+			stallAt(world, 3);
+			await failureOf(world.destination.exportChanges(key('export-changes'), 'mysql'));
+			world.store.objects.set(partKey(prefix, 0, 'sql'), new TextEncoder().encode('x'));
+			await world.destination.exportChanges(key('export-changes'), 'mysql');
+			expect(world.marks.state.asked.slice(-3)).toEqual([
+				[0, 3],
+				[3, 6],
+				[6, 7]
+			]);
+			expect(joined(world)).toBe(whole([0, 3], [3, 6], [6, 7]));
+		});
+
+		it('saves one window for a journal that fits in it, and one for an empty journal', async () => {
+			const small = await journal(2);
+			await small.destination.exportChanges(key('export-changes'), 'mysql');
+			expect(small.marks.state.asked).toEqual([[0, 2]]);
+			const empty = await ready({ marks: { windows } });
+			empty.marks.state.writes = 0;
+			await empty.destination.exportChanges(key('export-changes'), 'mysql');
+			expect(manifestOf(empty)).toMatchObject({ parts: 1, statements: 0, through: 0 });
+		});
+
+		it('reads a site that ignores since in one request from the start', async () => {
+			const world = await journal(7, { marks: { ignoresSince: true } });
+			await world.destination.exportChanges(key('export-changes'), 'mysql');
+			expect(world.marks.state.asked).toEqual([
+				[0, 3],
+				[0, 7]
+			]);
+			expect(joined(world)).toBe(whole([0, 7]));
+		});
+
+		it('adds the last read in windows after the first file, and carries on after a stall', async () => {
+			const world = await journal(4, { windowWrites: 2 });
+			await world.destination.exportChanges(key('export-changes'), 'mysql');
+			const first = joined(world);
+			world.marks.state.writes = 9;
+			world.marks.state.asked.length = 0;
+			stallAt(world, 3);
+			const failure = await failureOf(
+				world.destination.exportFinalChanges(key('export-final'), 'mysql', 4)
+			);
+			expect(failure).not.toBeInstanceOf(PermanentError);
+			expect(progressOf(world, 'final')).toMatchObject({ since: 4, cursor: 8, target: 9 });
+			const out = await world.destination.exportFinalChanges(key('export-final'), 'mysql', 4);
+			expect(out.statements).toBe(5);
+			expect(world.marks.state.asked).toEqual([
+				[4, 6],
+				[6, 8],
+				[8, 9],
+				[8, 9]
+			]);
+			expect(joined(world)).toBe(first + whole([4, 6], [6, 8], [8, 9]));
+			expect(manifestOf(world)).toMatchObject({
+				statements: 9,
+				through: 9,
+				final: { since: 4, parts: 3, statements: 5 }
+			});
+		});
+
+		it('refuses a final window from a site that ignores since', async () => {
+			const world = await journal(4, { windowWrites: 2 });
+			await world.destination.exportChanges(key('export-changes'), 'mysql');
+			world.marks.state.writes = 9;
+			const ignoring = world.marks.worker.body;
+			world.marks.worker.body = async (host, through, auth, since) => ({
+				...(await ignoring(host, through, auth, since)),
+				since: -1
+			});
+			expect(
+				await failureOf(
+					world.destination.exportFinalChanges(key('export-final'), 'mysql', 4)
+				)
+			).toMatchObject({ code: 'export_since' });
+		});
+	});
+
+	describe('the last read after the address moved back', () => {
+		const LATE = ['REPLACE INTO `node` (`nid`) VALUES (4);'];
+		const prefix = cutoverKeys.changes(ORG, OP);
+		const manifestOf = (world: Awaited<ReturnType<typeof ready>>) =>
+			JSON.parse(
+				new TextDecoder().decode(world.store.objects.get(cutoverKeys.manifest(prefix))!)
+			);
+		const joined = (world: Awaited<ReturnType<typeof ready>>) =>
+			[...Array(manifestOf(world).parts).keys()]
+				.map((seq) =>
+					new TextDecoder().decode(world.store.objects.get(partKey(prefix, seq, 'sql'))!)
+				)
+				.join('');
+
+		async function afterFirst(patch: Parameters<typeof destinationWorld>[0] = {}) {
+			const world = await ready({
+				marks: { bodies: [[changeBody(ONE)], [changeBody(LATE, 1)]], ...patch?.marks },
+				...patch
+			});
+			const first = await world.destination.exportChanges(key('export-changes'), 'mysql');
+			expect(first.through).toBe(3);
+			world.marks.state.writes = 5;
+			return world;
+		}
+
+		it('adds the new parts after the first ones and keeps one manifest and one digest', async () => {
+			const world = await afterFirst();
+			const firstPart = world.store.objects.get(partKey(prefix, 0, 'sql'))!;
+			const out = await world.destination.exportFinalChanges(key('export-final'), 'mysql', 3);
+			expect(out.statements).toBe(1);
+			expect(out.cannotCarry).toContain('Sign-in sessions');
+			expect(world.store.objects.get(partKey(prefix, 0, 'sql'))).toEqual(firstPart);
+			expect(joined(world)).toBe(changeBody(ONE) + changeBody(LATE, 1));
+			const manifest = manifestOf(world);
+			expect(manifest).toMatchObject({
+				parts: 2,
+				statements: 2,
+				through: 5,
+				final: { since: 3, parts: 1, statements: 1 }
+			});
+			expect(manifest.digest).toBe(
+				await digestOfParts(
+					await Promise.all(
+						[0, 1].map((seq) =>
+							sha256Hex(world.store.objects.get(partKey(prefix, seq, 'sql'))!)
+						)
+					)
+				)
+			);
+			expect(world.marks.state.calls.at(-1)).toBe('body');
+		});
+
+		it('says so, and reads no body, when nothing was written after the first read', async () => {
+			const world = await afterFirst();
+			world.marks.state.writes = 3;
+			const before = world.marks.state.bodiesRead;
+			const out = await world.destination.exportFinalChanges(key('export-final'), 'mysql', 3);
+			expect(out.statements).toBe(0);
+			expect(world.marks.state.bodiesRead).toBe(before);
+			expect(manifestOf(world)).toMatchObject({
+				parts: 1,
+				statements: 1,
+				final: { since: 3, parts: 0, statements: 0 }
+			});
+			expect(joined(world)).toBe(changeBody(ONE));
+		});
+
+		it('gives the same file when run again and leaves the first read alone', async () => {
+			const world = await afterFirst({
+				marks: { bodies: [[changeBody(ONE)], [changeBody(LATE, 1)], [changeBody(LATE, 1)]] }
+			});
+			await world.destination.exportFinalChanges(key('export-final'), 'mysql', 3);
+			const once = joined(world);
+			await world.destination.exportFinalChanges(key('export-final'), 'mysql', 3);
+			expect(joined(world)).toBe(once);
+			expect(manifestOf(world)).toMatchObject({ parts: 2, statements: 2 });
+		});
+
+		it('treats a list cut short as a failure to retry and keeps the first read', async () => {
+			const world = await afterFirst({
+				marks: {
+					bodies: [[changeBody(ONE)], [changeBody(LATE, null)], [changeBody(LATE, 1)]]
+				}
+			});
+			const failure = await failureOf(
+				world.destination.exportFinalChanges(key('export-final'), 'mysql', 3)
+			);
+			expect(failure).not.toBeInstanceOf(PermanentError);
+			expect(failure.message).toBe(DESTINATION_REFUSALS.exportCutShort);
+			expect(manifestOf(world)).toMatchObject({ parts: 1, statements: 1 });
+			expect(manifestOf(world).final).toBeUndefined();
+			await world.destination.exportFinalChanges(key('export-final'), 'mysql', 3);
+			expect(manifestOf(world)).toMatchObject({ parts: 2, statements: 2 });
+		});
+
+		it('refuses a list from a site that ignores since, rather than save the whole list twice', async () => {
+			const world = await afterFirst({
+				marks: { ignoresSince: true, bodies: [[changeBody(ONE)], [changeBody(ONE)]] }
+			});
+			expect(
+				await failureOf(
+					world.destination.exportFinalChanges(key('export-final'), 'mysql', 3)
+				)
+			).toMatchObject({ code: 'export_since', message: DESTINATION_REFUSALS.exportSince });
+			expect(manifestOf(world)).toMatchObject({ parts: 1, statements: 1 });
+		});
+
+		it('refuses with no first file, a lost count, and a database that is not MySQL', async () => {
+			const bare = await ready();
+			expect(
+				await failureOf(
+					bare.destination.exportFinalChanges(key('export-final'), 'mysql', 3)
+				)
+			).toMatchObject({ code: 'export_missing' });
+			const world = await afterFirst();
+			world.marks.state.mark = null;
+			expect(
+				await failureOf(
+					world.destination.exportFinalChanges(key('export-final'), 'mysql', 3)
+				)
+			).toMatchObject({ code: 'write_count_lost' });
+			expect(
+				await failureOf(
+					world.destination.exportFinalChanges(key('export-final'), 'pgsql', 3)
+				)
+			).toMatchObject({ code: 'export_dialect' });
+		});
+
+		it('finds a first part that went missing before it adds to the file', async () => {
+			const world = await afterFirst();
+			world.store.objects.delete(partKey(prefix, 0, 'sql'));
+			expect(
+				await failureOf(
+					world.destination.exportFinalChanges(key('export-final'), 'mysql', 3)
+				)
+			).toMatchObject({ code: 'export_missing' });
+		});
 	});
 });
 
 // #endregion
+
+// #endregion
+
+describe('the owner routes that count writes', () => {
+	const none = JSON.stringify({ ok: false, error: 'no mark is active' });
+	const AUTH = { bearer: 'owner-token-value' };
+
+	// answers by method and path; a path with no answer is a Drupal page
+	function site(answers: Record<string, () => Response>) {
+		const calls: { method: string; path: string; auth: string | null }[] = [];
+		const fetcher = (async (input: URL | string, init?: RequestInit) => {
+			const url = new URL(String(input));
+			const method = init?.method ?? 'GET';
+			const path = url.pathname + url.search;
+			calls.push({
+				method,
+				path,
+				auth: new Headers(init?.headers).get('authorization')
+			});
+			const answer = answers[`${method} ${path}`] ?? answers[`${method} ${url.pathname}`];
+			return answer === undefined
+				? new Response('<html>not found</html>', { status: 404 })
+				: answer();
+		}) as typeof fetch;
+		return { worker: writeMarkWorkerOf(fetcher, 1000), calls };
+	}
+	const json = (status: number, body: unknown) => () => Response.json(body, { status });
+
+	it('tells a site that has the routes from one that hands the request to Drupal', async () => {
+		expect(
+			await site({
+				'GET /writemark': () => new Response(none, { status: 404 })
+			}).worker.supported(NEW_ADDRESS, AUTH)
+		).toBe(true);
+		expect(await site({}).worker.supported(NEW_ADDRESS, AUTH)).toBe(false);
+		expect(
+			await site({ 'GET /writemark': json(501, {}) }).worker.supported(NEW_ADDRESS, AUTH)
+		).toBe(false);
+		expect(
+			await site({
+				'GET /writemark': json(200, { ok: true, mark: 'm', writes: 0, incomplete: false })
+			}).worker.supported(NEW_ADDRESS, AUTH)
+		).toBe(true);
+	});
+
+	it('sends the owner token and nothing else to the site named', async () => {
+		const world = site({ 'GET /writemark': json(404, { ok: false, error: 'x' }) });
+		await world.worker.read(NEW_ADDRESS, AUTH);
+		expect(world.calls[0]).toMatchObject({ auth: 'Bearer owner-token-value' });
+	});
+
+	it('maps the start answers', async () => {
+		const path = 'POST /writemark?mark=cutover-1';
+		const start = (answer: () => Response) =>
+			site({ [path]: answer }).worker.start(NEW_ADDRESS, 'cutover-1', AUTH);
+		expect(await start(json(201, { ok: true, status: 'started' }))).toBe('started');
+		expect(await start(json(200, { ok: true, status: 'existing' }))).toBe('existing');
+		expect(await start(json(409, { ok: false, error: 'x', active: { mark: 'o' } }))).toBe(
+			'taken'
+		);
+		expect(await site({}).worker.start(NEW_ADDRESS, 'cutover-1', AUTH)).toBe('missing');
+		// a replica lane refuses without naming a mark, and a failure is not an answer either
+		expect(
+			await failureOf(start(json(409, { ok: false, error: 'a replica' })))
+		).not.toBeInstanceOf(PermanentError);
+		expect(await failureOf(start(json(503, {})))).not.toBeInstanceOf(PermanentError);
+	});
+
+	it('maps the count answers and never reads a refusal as zero', async () => {
+		const read = (answer: () => Response) =>
+			site({ 'GET /writemark': answer }).worker.read(NEW_ADDRESS, AUTH);
+		expect(
+			await read(
+				json(200, {
+					ok: true,
+					mark: 'm',
+					writes: 7,
+					incomplete: true,
+					reason: 'journal_full'
+				})
+			)
+		).toEqual({ mark: 'm', writes: 7, incomplete: 'journal_full' });
+		expect(
+			await read(json(200, { ok: true, mark: 'm', writes: 0, incomplete: false }))
+		).toEqual({ mark: 'm', writes: 0, incomplete: null });
+		expect(await read(() => new Response(none, { status: 404 }))).toBe('none');
+		expect(await site({}).worker.read(NEW_ADDRESS, AUTH)).toBe('missing');
+		expect(await failureOf(read(json(503, {})))).not.toBeInstanceOf(PermanentError);
+		expect(
+			await failureOf(read(json(409, { ok: false, error: 'a replica' })))
+		).not.toBeInstanceOf(PermanentError);
+		expect(await failureOf(read(json(200, { ok: true })))).not.toBeInstanceOf(PermanentError);
+		expect(await failureOf(read(json(401, {})))).toMatchObject({
+			code: 'owner_token_rejected'
+		});
+	});
+
+	it('ends a count and ignores a mark that is not ours', async () => {
+		const path = 'DELETE /writemark?mark=cutover-1';
+		for (const status of [200, 409, 404]) {
+			await site({ [path]: json(status, { ok: true }) }).worker.end(
+				NEW_ADDRESS,
+				'cutover-1',
+				AUTH
+			);
+		}
+		expect(
+			await failureOf(
+				site({ [path]: json(503, {}) }).worker.end(NEW_ADDRESS, 'cutover-1', AUTH)
+			)
+		).not.toBeInstanceOf(PermanentError);
+	});
+
+	it('reads the manifest and asks for a point when given one', async () => {
+		const manifest = {
+			ok: true,
+			dialect: 'mysql',
+			mark: 'm',
+			through: 4,
+			writes: 6,
+			cap: 10,
+			incomplete: false,
+			cannotCarry: ['sessions']
+		};
+		const world = site({ 'GET /writechanges?dialect=mysql&through=4': json(200, manifest) });
+		expect(await world.worker.manifest(NEW_ADDRESS, AUTH, 4)).toEqual({
+			mark: 'm',
+			writes: 6,
+			incomplete: null,
+			through: 4,
+			cannotCarry: ['sessions']
+		});
+		expect(await site({}).worker.manifest(NEW_ADDRESS, AUTH)).toBe('missing');
+	});
+
+	it('streams the body with the point and the incomplete flag from its headers', async () => {
+		const world = site({
+			'GET /writechanges?body=1&through=4&dialect=mysql': () =>
+				new Response('-- end, 0 statements\n', {
+					headers: { 'x-cfw-through': '4', 'x-cfw-incomplete': 'journal_full' }
+				})
+		});
+		const body = await world.worker.body(NEW_ADDRESS, 4, AUTH);
+		expect(body).toMatchObject({ through: 4, incomplete: 'journal_full' });
+		expect(await new Response(body.stream).text()).toBe('-- end, 0 statements\n');
+		const gone = site({});
+		expect(await failureOf(gone.worker.body(NEW_ADDRESS, 4, AUTH))).toMatchObject({
+			code: 'write_count_lost'
+		});
+	});
+
+	it('asks for the writes after a point and reports where the site says the list starts', async () => {
+		const world = site({
+			'GET /writechanges?body=1&through=9&dialect=mysql&since=4': () =>
+				new Response('-- end, 0 statements\n', {
+					headers: { 'x-cfw-through': '9', 'x-cfw-since': '4' }
+				})
+		});
+		expect(await world.worker.body(NEW_ADDRESS, 9, AUTH, 4)).toMatchObject({
+			through: 9,
+			since: 4
+		});
+		const old = site({
+			'GET /writechanges?body=1&through=9&dialect=mysql&since=4': () =>
+				new Response('-- end, 0 statements\n', { headers: { 'x-cfw-through': '9' } })
+		});
+		expect(await old.worker.body(NEW_ADDRESS, 9, AUTH, 4)).toMatchObject({ since: -1 });
+	});
+});
 
 describe('the dns reader', () => {
 	const answer = (body: unknown, ok = true) =>
@@ -918,11 +1910,12 @@ describe('cutoverPortsOf', () => {
 				importState: async () => 'applied' as ImportState,
 				importReason: async () => ''
 			},
+			marks: fakeMarks().worker,
 			site: { probe: async () => ({ status: 200 }) },
 			sleep: async () => {}
 		});
 		await ports.source(REF, ORG).snapshot(key('snapshot'));
 		expect(world.opened[0]?.orgId).toBe(ORG);
-		await expect(ports.destination(SITE).acceptedWrites()).rejects.toThrow();
+		await expect(ports.destination(SITE).acceptedWrites(key('write-mark'))).rejects.toThrow();
 	});
 });

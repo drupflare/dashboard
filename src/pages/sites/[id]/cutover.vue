@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ApiClientError, toApiClientError, useApi } from '~/composables/useApi';
 import type { CutoverChoiceName, CutoverPolicyName } from '~/shared/cutover-copy';
-import { formatObservation } from '~/shared/cutover-copy';
+import { formatObservation, SIGN_IN_COUNTS } from '~/shared/cutover-copy';
 import { cutoverRefusalReason } from '~/shared/operation-copy';
 import { useCutoverStore } from '~/stores/cutover';
 import { useSessionStore } from '~/stores/session';
@@ -120,6 +120,11 @@ function stepUpDone(): void {
 }
 
 const siteMissing = computed(() => siteError.value?.status === 404);
+const downloadUrl = computed(() =>
+	orgId.value === null
+		? undefined
+		: `/api/v1/orgs/${encodeURIComponent(orgId.value)}/sites/${encodeURIComponent(siteId)}/cutover/changes`
+);
 const points = computed(() => (payload.value?.observationOffsetsMs ?? []).map(formatObservation));
 </script>
 
@@ -186,6 +191,12 @@ const points = computed(() => (payload.value?.observationOffsetsMs ?? []).map(fo
 						<p class="text-sm text-default">
 							The new site matches your old site. Approving starts the switch.
 						</p>
+						<p
+							class="text-sm text-default"
+							data-test="sign-in"
+						>
+							{{ SIGN_IN_COUNTS }}
+						</p>
 						<SiteCutoverWindow
 							:policy="view.policy"
 							:seconds="view.expectedWindowSeconds"
@@ -211,6 +222,7 @@ const points = computed(() => (payload.value?.observationOffsetsMs ?? []).map(fo
 					<SiteCutoverBoundary
 						:view="view"
 						:busy="busy"
+						:download-url="downloadUrl"
 						@choose="choose"
 					/>
 

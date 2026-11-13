@@ -210,13 +210,74 @@ describe('the rollback boundary', () => {
 		state = next(state, { type: 'choice-made', value: 'export-changes' }, AT).state;
 		const step = next(
 			state,
-			{ type: 'changes-exported', reference: 'export-1', cannotCarry: ['uploaded files'] },
+			{
+				type: 'changes-exported',
+				reference: 'export-1',
+				cannotCarry: ['uploaded files'],
+				through: 7
+			},
 			AT
 		);
 		expect(step.action).toEqual({ do: 'reverse' });
 		expect(step.state).toMatchObject({
 			exportReference: 'export-1',
+			exportThrough: 7,
 			cannotCarry: ['uploaded files']
+		});
+	});
+
+	describe('the read after the address moved back', () => {
+		const exported = () => {
+			let state = walk(toObserving).state;
+			state = next(state, { type: 'writes-counted', writes: 1 }, AT).state;
+			state = next(state, { type: 'choice-made', value: 'export-changes' }, AT).state;
+			return next(
+				state,
+				{ type: 'changes-exported', reference: 'r', cannotCarry: [], through: 7 },
+				AT
+			).state;
+		};
+
+		it('reads once more from the first read, instead of closing, once the address is back', () => {
+			const step = next(exported(), { type: 'reversed' }, AT);
+			expect(step.action).toEqual({ do: 'final-changes', since: 7 });
+			expect(step.state).toMatchObject({ state: 'observing', finalChanges: 'waiting' });
+		});
+
+		it.each([
+			[4, 'ready'],
+			[0, 'none']
+		] as const)('closes as rolled back with %i statements saved as %s', (statements, shown) => {
+			const waiting = next(exported(), { type: 'reversed' }, AT).state;
+			const step = next(
+				waiting,
+				{ type: 'final-changes-exported', cannotCarry: ['sessions'], statements },
+				AT
+			);
+			expect(step.action).toEqual({ do: 'stop' });
+			expect(step.state).toMatchObject({
+				state: 'rolled-back',
+				finalChanges: shown,
+				finalStatements: statements,
+				cannotCarry: ['sessions']
+			});
+		});
+
+		it('closes as rolled back, with the first file only, when the read cannot be made', () => {
+			const waiting = next(exported(), { type: 'reversed' }, AT).state;
+			const step = next(waiting, { type: 'final-changes-unreadable' }, AT);
+			expect(step.state).toMatchObject({
+				state: 'rolled-back',
+				finalChanges: 'unread',
+				exportReference: 'r'
+			});
+		});
+
+		it('does not read again for a reversal with no first file, or a second reversal', () => {
+			const plain = walk(toObserving).state;
+			expect(next(plain, { type: 'reversed' }, AT).action).toEqual({ do: 'stop' });
+			const waiting = next(exported(), { type: 'reversed' }, AT).state;
+			expect(next(waiting, { type: 'reversed' }, AT).action).toEqual({ do: 'stop' });
 		});
 	});
 });
@@ -346,6 +407,8 @@ describe('the table as a whole', () => {
 		'choice-made',
 		'choice-timed-out',
 		'changes-exported',
+		'final-changes-exported',
+		'final-changes-unreadable',
 		'reversed',
 		'unwound',
 		'finished',
@@ -363,6 +426,8 @@ describe('the table as a whole', () => {
 			value: 'keep-new',
 			reference: 'r',
 			cannotCarry: [],
+			through: 3,
+			statements: 2,
 			reason: 'x'
 		}) as unknown as CutoverEvent;
 

@@ -2,7 +2,14 @@ import { newId } from '@contracts/common';
 import { DEFAULT_CHANGE_BUDGET, computePlanDigest } from '@contracts/operations';
 import { z } from 'zod';
 import { OBSERVATION_OFFSETS_MS } from '../../../contracts/src/migration-cutover';
-import { parseSourceRef } from '../../../engine/src/adapters/cutover-store';
+import {
+	changesManifestSchema,
+	cutoverKeys,
+	digestOfParts,
+	parseSourceRef,
+	sha256Hex
+} from '../../../engine/src/adapters/cutover-store';
+import { partKey } from '../../../engine/src/import-parts';
 import {
 	planMigrationCutover,
 	type MigrationCutoverInput
@@ -37,6 +44,8 @@ export interface CutoverServices {
 	// hands an event to the running cutover; refused when nothing is waiting for it
 	sendEvent: (request: EngineEventRequest) => Promise<void>;
 	audit: (orgId: string, input: AuditInput) => Promise<unknown>;
+	// the saved copy of the changes the new site took, which the owner downloads
+	blobs: { get: (key: string) => Promise<Uint8Array | null> };
 	// false until the source and destination adapters exist, so no one starts a move that cannot run
 	adaptersBuilt: boolean;
 	// unreviewed starting points: the cache time while the move runs, and what each step is expected to take
@@ -56,6 +65,7 @@ function productionServices(): CutoverServices {
 	return {
 		sendEvent: notBuilt('Sending an event'),
 		audit: notBuilt('The audit log'),
+		blobs: { get: notBuilt('Reading the saved changes') },
 		adaptersBuilt: false,
 		ttlSeconds: 60,
 		estimate: { finalDeltaSeconds: 60, promoteSeconds: 30, routeSeconds: 30, ttlSeconds: 60 },
@@ -375,4 +385,69 @@ export async function decideCutover(
 		'This move is no longer running'
 	);
 	return viewOf(operation.id, input.siteId, state, stepsOf(operation));
+}
+
+// the audit row goes first, so a download that fails still leaves a trace. The file is the SQL the
+// engine saved; each part is checked on the way out and a bad one ends the download as a failure,
+// never as a short file
+export async function exportCutoverChanges(
+	services: SiteServices,
+	cutover: CutoverServices,
+	input: DecideInput
+): Promise<Response> {
+	if (input.principal.kind !== 'user') {
+		throw new ApiError('forbidden', 'This action needs a signed-in session', {
+			reason: 'session_only'
+		});
+	}
+	const { db } = await destinationOf(services, input.orgId, input.siteId);
+	const latest = await latestCutover(db, input.orgId, input.siteId);
+	const state = latest === null ? null : readState(latest.operation.cursor);
+	if (latest === null || state === null || state.exportReference === null) {
+		throw new ApiError('not_found', 'No changes have been saved for this site');
+	}
+	const prefix = cutoverKeys.changes(input.orgId, latest.operation.id);
+	await cutover.audit(input.orgId, {
+		actor: principalActor(input.principal),
+		action: 'site.cutover.export',
+		target: input.siteId,
+		detail: { operationId: latest.operation.id }
+	});
+	const stored = await cutover.blobs.get(cutoverKeys.manifest(prefix));
+	const parsed =
+		stored === null
+			? null
+			: changesManifestSchema.safeParse(JSON.parse(new TextDecoder().decode(stored)));
+	if (parsed === null || !parsed.success) {
+		throw new ApiError('internal', 'The saved changes are incomplete');
+	}
+	const manifest = parsed.data;
+	const hashes: string[] = [];
+	let next = 0;
+	const body = new ReadableStream<Uint8Array>({
+		async pull(controller) {
+			if (next >= manifest.parts) {
+				if ((await digestOfParts(hashes)) !== manifest.digest) {
+					return controller.error(
+						new Error('the saved changes do not match their record')
+					);
+				}
+				return controller.close();
+			}
+			const bytes = await cutover.blobs.get(partKey(prefix, next, 'sql'));
+			if (bytes === null) return controller.error(new Error('a saved part is missing'));
+			hashes.push(await sha256Hex(bytes));
+			next++;
+			controller.enqueue(bytes);
+		}
+	});
+	return new Response(body, {
+		status: 200,
+		headers: {
+			'Content-Type': 'application/sql; charset=utf-8',
+			'Content-Disposition': `attachment; filename="new-changes-${input.siteId}.sql"`,
+			'Content-Length': String(manifest.bytes),
+			'Cache-Control': 'no-store'
+		}
+	});
 }

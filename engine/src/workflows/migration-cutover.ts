@@ -19,7 +19,7 @@ import {
 	transition,
 	transitionStep
 } from '../operations/state';
-import type { CutoverDeps } from '../ports';
+import type { ChangeDialect, CutoverDeps } from '../ports';
 import { PermanentError, StepFailed, type StepRunner } from '../step';
 import {
 	acquireLease,
@@ -36,6 +36,8 @@ import {
 
 export const APPROVAL_EVENT = 'cutover-approval';
 export const DECISION_EVENT = 'cutover-decision';
+// nothing sends this; a wait on it is a sleep that survives a restart
+export const SETTLE_EVENT = 'cutover-settle';
 
 export interface MigrationCutoverInput {
 	operationId: string;
@@ -129,6 +131,9 @@ class Run {
 	private n = 0;
 	private routedAt = 0;
 	private leaked: string[] = [];
+	// set when the promote step is reached, so the count is ended at any exit that follows
+	private counting = false;
+	private countLeft = false;
 
 	constructor(
 		readonly ctx: Ctx,
@@ -297,9 +302,16 @@ class Run {
 				return this.advance({ type: 'final-delta', ...value }, at);
 			}
 			case 'promote': {
-				const { at } = await this.effect('promote', 'promote', (key) =>
-					this.destination.promote(key, action.snapshot, action.delta)
-				);
+				// the count starts in the same step, before the route step can switch the address
+				this.counting = true;
+				const { at } = await this.effect('promote', 'promote', async (key) => {
+					const { counting } = await this.destination.promote(
+						key,
+						action.snapshot,
+						action.delta
+					);
+					if (!counting) await this.destination.startCounting(key);
+				});
 				return this.advance({ type: 'promoted' }, at);
 			}
 			case 'route': {
@@ -316,6 +328,8 @@ class Run {
 				return this.choice();
 			case 'export-changes':
 				return this.exportChanges();
+			case 'final-changes':
+				return this.finalChanges(action.since);
 			case 'reverse':
 				return this.reverse();
 			case 'unwind':
@@ -363,7 +377,7 @@ class Run {
 		let event: CutoverEvent;
 		try {
 			const { value } = await this.effectless(`observe-${index}`, stepId, () =>
-				this.destination.observe()
+				this.destination.observe(this.key('write-mark'))
 			);
 			event = { type: 'observed', healthy: value.healthy, writes: value.writes };
 		} catch (error) {
@@ -403,7 +417,7 @@ class Run {
 		const decision = decisionOf(payload);
 		if (decision === null) return null;
 		const writes = await plainStep(this.ctx, this.id('count'), () =>
-			this.destination.acceptedWrites()
+			this.destination.acceptedWrites(this.key('write-mark'))
 		);
 		const at = iso(await this.clock());
 		await this.advance({ type: 'writes-counted', writes }, at);
@@ -421,9 +435,37 @@ class Run {
 		const key = this.key('export-changes');
 		const value = await plainStep(this.ctx, this.id('export-changes'), async () => {
 			await fenced(this.ctx);
-			return this.destination.exportChanges(key);
+			return this.destination.exportChanges(key, SOURCE_DIALECT);
 		});
 		return this.advance({ type: 'changes-exported', ...value }, iso(await this.clock()));
+	}
+
+	// the address is back at the old site, but a visitor whose resolver still holds the new
+	// address can reach the new site for one more cache time, so the second read waits that long
+	async finalChanges(since: number): Promise<CutoverAction> {
+		// the lease is let go while old caches expire, which can take hours
+		await this.release();
+		const settled = Date.parse(this.state.updatedAt ?? iso(await this.clock()));
+		const until = settled + this.input.ttlSeconds * 1000;
+		for (;;) {
+			const remaining = until - (await this.clock());
+			if (remaining <= 0) break;
+			await this.runner.wait(this.id('settle'), SETTLE_EVENT, remaining);
+		}
+		await this.hold('final-changes');
+		let event: CutoverEvent;
+		try {
+			const key = this.key('export-final');
+			const value = await plainStep(this.ctx, this.id('export-final'), async () => {
+				await fenced(this.ctx);
+				return this.destination.exportFinalChanges(key, SOURCE_DIALECT, since);
+			});
+			event = { type: 'final-changes-exported', ...value };
+		} catch (error) {
+			if (!(error instanceof StepFailed)) throw error;
+			event = { type: 'final-changes-unreadable' };
+		}
+		return this.advance(event, iso(await this.clock()));
 	}
 
 	// #endregion
@@ -509,6 +551,25 @@ class Run {
 
 	// #endregion
 
+	// every exit ends the count, since a live count costs the site extra rows on each write. Ending
+	// is safe to repeat and safe when no count started. A failure is kept for the closing summary
+	// and never changes how the move ends
+	async endCounting(): Promise<void> {
+		if (!this.counting) return;
+		try {
+			await plainStep(this.ctx, this.id('end-count'), () =>
+				this.destination.stopCounting(this.key('write-mark'))
+			);
+		} catch (error) {
+			if (!(error instanceof StepFailed)) throw error;
+			this.countLeft = true;
+		}
+	}
+
+	get stillCounting(): boolean {
+		return this.countLeft;
+	}
+
 	get leakedSteps(): string[] {
 		return this.leaked;
 	}
@@ -524,6 +585,9 @@ const UNDO_WORDS: Record<string, string> = {
 
 const stuckReason = (leaked: string[]) =>
 	`The move could not ${leaked.map((name) => UNDO_WORDS[name] ?? name).join(' or ')}. Check your old site and your DNS.`;
+
+// the snapshot converts a MySQL dump only, so every source that reaches an export is MySQL or MariaDB
+const SOURCE_DIALECT: ChangeDialect = 'mysql';
 
 // the steps at which the source may already refuse writes
 const POLICY_REACHED: readonly string[] = ['apply-write-policy', 'final-delta', 'promote'];
@@ -546,7 +610,7 @@ async function close(run: Run, outcomeState: CutoverState): Promise<Outcome> {
 		const writes = outcomeState.destinationWrites;
 		await finishSuccess(
 			ctx,
-			`${run.input.hostname} now runs on ${run.input.site.id}; ${writes} writes were accepted and the source was kept`
+			`${run.input.hostname} now runs on ${run.input.site.id}; ${writes} writes were accepted and the source was kept${run.stillCounting ? '; the new site is still counting its writes' : ''}`
 		);
 		return { status: 'succeeded' };
 	}
@@ -561,7 +625,11 @@ async function close(run: Run, outcomeState: CutoverState): Promise<Outcome> {
 				operation.status === 'rolled-back'
 					? operation
 					: transition(
-							observe(operation, `rolled back: ${reason}`, deps.now()),
+							observe(
+								operation,
+								`rolled back: ${reason}${run.stillCounting ? '; the new site is still counting its writes' : ''}`,
+								deps.now()
+							),
 							'rolled-back',
 							deps.now()
 						)
@@ -569,7 +637,11 @@ async function close(run: Run, outcomeState: CutoverState): Promise<Outcome> {
 		});
 		return { status: 'rolled-back', reason };
 	}
-	return { status: 'failed', reason, leaked: run.leakedSteps };
+	return {
+		status: 'failed',
+		reason,
+		leaked: run.stillCounting ? [...run.leakedSteps, 'count'] : run.leakedSteps
+	};
 }
 
 export async function runMigrationCutover(
@@ -610,9 +682,11 @@ export async function runMigrationCutover(
 	} catch (error) {
 		if (!(error instanceof StepFailed)) throw error;
 		await run.release();
+		await run.endCounting();
 		return close(run, { ...run.state, state: 'failed', reason: plainReason(run.state) });
 	}
 	await run.release();
+	await run.endCounting();
 	return close(run, run.state);
 }
 

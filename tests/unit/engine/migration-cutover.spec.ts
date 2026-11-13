@@ -407,6 +407,105 @@ describe('a rollback', () => {
 		});
 	});
 
+	describe('the read after the address moved back', () => {
+		const exporting = (aw: Aw): WaitScript => {
+			let wrote = false;
+			return (call) => {
+				if (call.type === 'cutover-approval') return { payload: {} };
+				if (call.type === 'cutover-decision' && !wrote) {
+					wrote = true;
+					aw.fake.destinationWrite(5);
+					return { payload: { kind: 'choice', value: 'export-changes' } };
+				}
+				return undefined;
+			};
+		};
+
+		it('reads from the first read after old caches expire, then ends the count', async () => {
+			const aw = await setup({ finalStatements: 3 }, { ttlSeconds: 600 });
+			const { outcome, waits } = await run(aw, { waits: exporting(aw) });
+			expect(outcome.status).toBe('rolled-back');
+			const { world } = aw.fake;
+			expect(world.finalSince).toEqual([5]);
+			const at = (name: string) => world.calls.indexOf(name);
+			expect(at('route')).toBeGreaterThan(-1);
+			expect(at('exportFinalChanges')).toBeGreaterThan(world.calls.lastIndexOf('route'));
+			expect(at('stopCounting')).toBeGreaterThan(at('exportFinalChanges'));
+			const settle = waits.filter((wait) => wait.type === 'cutover-settle');
+			expect(settle).toHaveLength(1);
+			expect(settle[0]!.timeoutMs).toBe(600_000);
+			expect(await stateOf(aw)).toMatchObject({
+				state: 'rolled-back',
+				finalChanges: 'ready',
+				finalStatements: 3
+			});
+			expectIntact(aw);
+		});
+
+		it('says there is nothing after the first file when the read finds nothing', async () => {
+			const aw = await setup();
+			await run(aw, { waits: exporting(aw) });
+			expect(await stateOf(aw)).toMatchObject({ finalChanges: 'none', finalStatements: 0 });
+		});
+
+		it('keeps the first file and still closes when the read cannot be made', async () => {
+			const aw = await setup({ fail: { exportFinalChanges: 99 } });
+			const { outcome } = await run(aw, { waits: exporting(aw) });
+			expect(outcome.status).toBe('rolled-back');
+			expect(await stateOf(aw)).toMatchObject({
+				finalChanges: 'unread',
+				exportReference: 'export-5'
+			});
+			expect(aw.fake.world.countEnds).toBe(1);
+			expect(aw.fake.world.routedTo).toBe('source');
+		});
+
+		it('is not made for a move that goes back without exporting', async () => {
+			const aw = await setup();
+			await run(aw, { waits: decisions({ kind: 'rollback' }) });
+			expect(aw.fake.world.calls).not.toContain('exportFinalChanges');
+			expect((await stateOf(aw)).finalChanges).toBeNull();
+		});
+
+		it('gives the same ending when it is killed after or during any step and run again', async () => {
+			const reference = await (async () => {
+				const aw = await setup({ finalStatements: 2 });
+				return (await run(aw, { waits: exporting(aw) })).executed;
+			})();
+			expect(reference.length).toBeGreaterThan(0);
+			for (let at = 0; at < reference.length; at++) {
+				for (const kind of ['killAfter', 'killDuring'] as const) {
+					const aw = await setup({ finalStatements: 2 });
+					const memo: Memo = new Map();
+					const script =
+						kind === 'killAfter' ? { killAfter: at + 1 } : { killDuring: at + 1 };
+					const waits = exporting(aw);
+					// a kill after the very last step lets the first run finish
+					const first = await run(aw, { memo, script, waits }).then(
+						() => null,
+						(error: unknown) => error
+					);
+					if (first !== null) expect(first).toBeInstanceOf(Killed);
+					const { outcome } = await run(aw, { memo, waits });
+					expect(outcome.status, `${kind} ${at}`).toBe('rolled-back');
+					expect(aw.fake.world.finalSince.length, `${kind} ${at}`).toBe(1);
+					expect(aw.fake.world.countEnds, `${kind} ${at}`).toBe(1);
+					expect(await stateOf(aw), `${kind} ${at}`).toMatchObject({
+						finalChanges: 'ready',
+						finalStatements: 2
+					});
+				}
+			}
+		});
+	});
+
+	it('records a count that would not end on a rolled-back move too', async () => {
+		const aw = await setup({ fail: { stopCounting: 99 } });
+		const { outcome } = await run(aw, { waits: decisions({ kind: 'rollback' }) });
+		expect(outcome.status).toBe('rolled-back');
+		expect((await operationOf(aw)).finalObservation?.summary).toContain('still counting');
+	});
+
 	it('refuses a choice before any write and a second choice after one', async () => {
 		const aw = await setup();
 		const seen: (string | undefined)[] = [];
@@ -617,5 +716,206 @@ describe('a step that keeps failing', () => {
 		expect((await operationOf(aw)).steps.find((step) => step.id === 'lease')?.state).toBe(
 			'failed'
 		);
+	});
+});
+
+describe('the count of accepted writes', () => {
+	const choice =
+		(value: string, writes: number) =>
+		(aw: Aw): WaitScript =>
+		(call) => {
+			if (call.type === 'cutover-approval') return { payload: {} };
+			if (call.nth === 1) {
+				aw.fake.destinationWrite(writes);
+				return { payload: { kind: 'choice', value } };
+			}
+			return undefined;
+		};
+	const ended = (aw: Aw) => {
+		const { world } = aw.fake;
+		expect(world.countStarts).toBe(1);
+		expect(world.countEnds).toBe(1);
+		expect(world.counting).toBe(false);
+	};
+
+	it('starts in the promote step, after the copy loads and before the address moves', async () => {
+		const aw = await setup();
+		await run(aw);
+		const { calls } = aw.fake.world;
+		const at = (name: string) => calls.indexOf(name);
+		expect(at('promote')).toBeGreaterThan(-1);
+		expect(at('startCounting')).toBe(at('promote') + 1);
+		expect(at('route')).toBeGreaterThan(at('startCounting'));
+		expect((await operationOf(aw)).steps.find((step) => step.id === 'promote')?.state).toBe(
+			'succeeded'
+		);
+	});
+
+	it('names one mark for the whole move', async () => {
+		const aw = await setup();
+		await run(aw, { waits: decisions({ kind: 'rollback' }) });
+		for (const key of aw.fake.world.countKeys) {
+			expect(key.startsWith(`${aw.input.operationId}:`)).toBe(true);
+		}
+		expect(new Set(aw.fake.world.countKeys).size).toBe(1);
+	});
+
+	it('starts once when the promote step dies and replays', async () => {
+		const reference = (await run(await setup())).executed;
+		const at = reference.findIndex((name) => name.startsWith('promote.'));
+		const aw = await setup();
+		const memo: Memo = new Map();
+		await expect(run(aw, { memo, script: { killDuring: at + 1 } })).rejects.toBeInstanceOf(
+			Killed
+		);
+		const { outcome } = await run(aw, { memo });
+		expect(outcome).toEqual({ status: 'succeeded' });
+		ended(aw);
+	});
+
+	it('skips the separate start when the new site opened the count with the copy', async () => {
+		const aw = await setup({ opensCount: true });
+		const { outcome } = await run(aw, { waits: decisions({ kind: 'rollback' }) });
+		expect(outcome.status).toBe('rolled-back');
+		const { world } = aw.fake;
+		expect(world.calls).not.toContain('startCounting');
+		expect(world.countStarts).toBe(0);
+		expect(world.countOpenedWithCopy).toBe(1);
+		expect(world.countEnds).toBe(1);
+		expect(world.counting).toBe(false);
+	});
+
+	it('starts it separately when the copy did not open it', async () => {
+		const aw = await setup({ opensCount: false });
+		await run(aw, { waits: decisions({ kind: 'rollback' }) });
+		const { world } = aw.fake;
+		expect(world.countStarts).toBe(1);
+		expect(world.countOpenedWithCopy).toBe(0);
+	});
+
+	it('opens the count once when the promote step dies and replays, with no second start', async () => {
+		const reference = (await run(await setup({ opensCount: true }))).executed;
+		const at = reference.findIndex((name) => name.startsWith('promote.'));
+		for (const script of [{ killDuring: at + 1 }, { killAfter: at + 1 }]) {
+			const aw = await setup({ opensCount: true });
+			const memo: Memo = new Map();
+			await expect(run(aw, { memo, script })).rejects.toBeInstanceOf(Killed);
+			const { outcome } = await run(aw, { memo });
+			expect(outcome).toEqual({ status: 'succeeded' });
+			expect(aw.fake.world.countOpenedWithCopy).toBe(1);
+			expect(aw.fake.world.countStarts).toBe(0);
+			expect(countOf(aw, 'promote')).toBe(1);
+		}
+	});
+
+	it('fails the promote step and does not route when the count cannot start', async () => {
+		const aw = await setup({ fail: { startCounting: 99 } });
+		const { outcome } = await run(aw);
+		expect(outcome.status).toBe('rolled-back');
+		const { world } = aw.fake;
+		expect(world.calls).not.toContain('route');
+		expect(world.routedTo).toBe('source');
+		expect(world.policy).toBeNull();
+		expect(world.counting).toBe(false);
+		expect((await operationOf(aw)).steps.find((step) => step.id === 'promote')?.state).toBe(
+			'failed'
+		);
+	});
+
+	it('is read at each observation and rises across them', async () => {
+		const aw = await setup({
+			observations: [
+				{ healthy: true, writes: 0 },
+				{ healthy: true, writes: 3 },
+				{ healthy: true, writes: 3 },
+				{ healthy: true, writes: 8 }
+			]
+		});
+		await run(aw);
+		const state = await stateOf(aw);
+		expect(state.destinationWrites).toBe(8);
+		expect(state.state).toBe('completed');
+	});
+
+	it('ends when the move completes', async () => {
+		const aw = await setup();
+		await run(aw);
+		ended(aw);
+	});
+
+	it('ends when the owner goes back before any write', async () => {
+		const aw = await setup();
+		await run(aw, { waits: decisions({ kind: 'rollback' }) });
+		ended(aw);
+	});
+
+	it('ends after the owner abandons the new data', async () => {
+		const aw = await setup();
+		await run(aw, { waits: choice('abandon-new-data', 4)(aw) });
+		ended(aw);
+	});
+
+	it('ends after the export, never before it', async () => {
+		const aw = await setup();
+		await run(aw, { waits: choice('export-changes', 5)(aw) });
+		ended(aw);
+		const { calls } = aw.fake.world;
+		expect(calls.indexOf('exportChanges')).toBeGreaterThan(-1);
+		expect(calls.indexOf('stopCounting')).toBeGreaterThan(calls.indexOf('exportChanges'));
+	});
+
+	it('ends when the owner keeps the new site and the observations finish', async () => {
+		const aw = await setup();
+		await run(aw, { waits: choice('keep-new', 2)(aw) });
+		ended(aw);
+	});
+
+	it('ends when the last check cannot be read', async () => {
+		const aw = await setup({
+			observations: [{ healthy: true }, { healthy: true }, { healthy: true }, 'throw']
+		});
+		const { outcome } = await run(aw);
+		expect(outcome.status).toBe('failed');
+		ended(aw);
+	});
+
+	it('ends when no choice is made in time', async () => {
+		const aw = await setup({
+			observations: [
+				{ healthy: true },
+				{ healthy: true },
+				{ healthy: true },
+				{ healthy: false, writes: 1 }
+			]
+		});
+		const { outcome } = await run(aw);
+		expect(outcome.status).toBe('failed');
+		ended(aw);
+	});
+
+	it('ends when the route step fails and the move goes back', async () => {
+		const aw = await setup({ fail: { route: 1 } });
+		const { outcome } = await run(aw, { script: { retries: 0 } });
+		expect(outcome.status).toBe('rolled-back');
+		ended(aw);
+	});
+
+	it('is never started or ended for a move that stops before the promote', async () => {
+		const aw = await setup({ fail: { snapshot: 99 } });
+		await run(aw);
+		expect(aw.fake.world.calls).not.toContain('startCounting');
+		expect(aw.fake.world.calls).not.toContain('stopCounting');
+	});
+
+	it('leaves the outcome as it was when the count will not end, and says so', async () => {
+		const aw = await setup({ fail: { stopCounting: 99 } });
+		const { outcome } = await run(aw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect((await operationOf(aw)).finalObservation?.summary).toContain('still counting');
+		const stuck = await setup({
+			fail: { stopCounting: 99 },
+			observations: [{ healthy: true }, { healthy: true }, { healthy: true }, 'throw']
+		});
+		expect((await run(stuck)).outcome).toMatchObject({ status: 'failed', leaked: ['count'] });
 	});
 });

@@ -24,6 +24,8 @@ export interface CutoverView {
 	observed: number;
 	lastHealthy: boolean | null;
 	exportReference: string | null;
+	finalChanges: 'waiting' | 'ready' | 'none' | 'unread' | null;
+	finalStatements: number;
 	cannotCarry: string[];
 	refusal: { code: string; message: string } | null;
 	reason: string | null;

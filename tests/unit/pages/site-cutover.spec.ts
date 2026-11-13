@@ -5,7 +5,7 @@ import SiteCutoverBoundary from '~/components/site/cutover/Boundary.vue';
 import SiteCutoverPlan from '~/components/site/cutover/Plan.vue';
 import SiteCutoverWindow from '~/components/site/cutover/Window.vue';
 import CutoverPage from '~/pages/sites/[id]/cutover.vue';
-import { CHOICE_COPY, POLICY_COPY } from '~/shared/cutover-copy';
+import { CHOICE_COPY, POLICY_COPY, SIGN_IN_COUNTS } from '~/shared/cutover-copy';
 import { ROLLBACK_BOUNDARY_COPY } from '~/shared/operation-copy';
 import { useCutoverStore, type CutoverPayload, type CutoverView } from '~/stores/cutover';
 import { useSessionStore } from '~/stores/session';
@@ -66,6 +66,8 @@ function view(over: Partial<CutoverView> = {}): CutoverView {
 		observed: 0,
 		lastHealthy: null,
 		exportReference: null,
+		finalChanges: null,
+		finalStatements: 0,
 		cannotCarry: [],
 		refusal: null,
 		reason: null,
@@ -205,6 +207,14 @@ describe('plan component', () => {
 		expect(wrapper.findAll('li')).toHaveLength(4);
 	});
 
+	it('tells the owner a signed-in visit counts before the move starts', async () => {
+		const wrapper = await mountSuspended(SiteCutoverPlan, {
+			props: { plan: plan(), busy: false, error: null }
+		});
+		mounted.push(wrapper);
+		expect(wrapper.get('[data-test="sign-in"]').text()).toBe(SIGN_IN_COUNTS);
+	});
+
 	it('shows the refusal it is given', async () => {
 		const wrapper = await mountSuspended(SiteCutoverPlan, {
 			props: { plan: plan(), busy: false, error: 'Another change is running.' }
@@ -277,21 +287,100 @@ describe('boundary component', () => {
 		expect(wrapper.find('[data-test="choices"]').exists()).toBe(false);
 	});
 
-	it('names the saved export and what it could not carry', async () => {
+	it.each([
+		['waiting', 0, 'waiting for old copies of the address to expire'],
+		['ready', 3, 'Final changes ready. The file now holds 3 more changes'],
+		['ready', 1, 'holds 1 more change that reached'],
+		['none', 0, 'No changes after the first file'],
+		['unread', 0, 'could not read the last changes']
+	] as const)('says what the last read found: %s with %i', async (finalChanges, count, said) => {
 		const wrapper = await mountSuspended(SiteCutoverBoundary, {
 			props: props(
 				view({
 					state: 'rolled-back',
 					boundary: 'post-write',
-					exportReference: 'export-9',
-					cannotCarry: ['uploaded files']
+					exportReference: 'cutover/org/op/changes/',
+					finalChanges,
+					finalStatements: count
 				})
 			)
 		});
 		mounted.push(wrapper);
+		expect(wrapper.get('[data-test="final-changes"]').text()).toContain(said);
+	});
+
+	it('names the saved export, links the file and lists what it could not carry', async () => {
+		const wrapper = await mountSuspended(SiteCutoverBoundary, {
+			props: {
+				...props(
+					view({
+						state: 'rolled-back',
+						boundary: 'post-write',
+						exportReference: 'cutover/org/op/changes/',
+						cannotCarry: ['Sign-in sessions']
+					})
+				),
+				downloadUrl: `${base}/changes`
+			}
+		});
+		mounted.push(wrapper);
 		const text = wrapper.get('[data-test="export"]').text();
-		expect(text).toContain('saved as export-9');
-		expect(text).toContain('uploaded files');
+		expect(text).toContain('saved as a SQL file');
+		expect(text).toContain('Sign-in sessions');
+		expect(text).not.toContain('cutover/org/op');
+		expect(wrapper.get('[data-test="export"] a').attributes('href')).toBe(`${base}/changes`);
+	});
+
+	it('says nothing about the count before the first check', async () => {
+		const wrapper = await mountSuspended(SiteCutoverBoundary, {
+			props: props(view({ state: 'observing', observed: 0 }))
+		});
+		mounted.push(wrapper);
+		expect(wrapper.find('[data-test="writes"]').exists()).toBe(false);
+	});
+
+	it('says going back is a DNS reversal when the last check found no change', async () => {
+		const wrapper = await mountSuspended(SiteCutoverBoundary, {
+			props: props(view({ state: 'observing', observed: 1, destinationWrites: 0 }))
+		});
+		mounted.push(wrapper);
+		const text = wrapper.get('[data-test="writes"]').text();
+		expect(text).toContain('accepted no changes');
+		expect(text).toContain('DNS reversal');
+		expect(wrapper.find('[data-test="choices"]').exists()).toBe(false);
+	});
+
+	it.each([
+		[1, '1 change,'],
+		[12, '12 changes,']
+	])(
+		'shows the count and the three choices after %i writes, even when the site is healthy',
+		async (writes, said) => {
+			const wrapper = await mountSuspended(SiteCutoverBoundary, {
+				props: props(
+					view({
+						state: 'observing',
+						boundary: 'post-write',
+						observed: 2,
+						destinationWrites: writes,
+						needsChoice: false,
+						lastHealthy: true
+					})
+				)
+			});
+			mounted.push(wrapper);
+			expect(wrapper.get('[data-test="writes"]').text()).toContain(said);
+			expect(wrapper.get('[data-test="writes"]').text()).toContain('no longer a reversal');
+			for (const copy of Object.values(CHOICE_COPY)) {
+				expect(button(wrapper, copy.label)).toBeDefined();
+			}
+			expect(button(wrapper, 'Go Back Now')).toBeUndefined();
+		}
+	);
+
+	it('names the SQL file and its limits in the export choice', () => {
+		expect(CHOICE_COPY['export-changes'].consequence).toContain('SQL file');
+		expect(CHOICE_COPY['export-changes'].consequence).toContain('lists what it leaves out');
 	});
 
 	it('writes each step in plain words, never the step id', async () => {
@@ -323,6 +412,16 @@ describe('cutover page', () => {
 		planReply = () => ({ body: plan({ available: false }) });
 		const wrapper = await mountPage();
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Moves Are Not Available Yet'));
+	});
+
+	it('tells the owner a signed-in visit counts before they approve', async () => {
+		planReply = () => ({
+			body: plan({ cutover: view({ state: 'awaiting-approval', step: 'owner-approval' }) })
+		});
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(button(wrapper, 'Approve the Move')).toBeDefined());
+		expect(wrapper.get('[data-test="sign-in"]').text()).toBe(SIGN_IN_COUNTS);
+		expect(SIGN_IN_COUNTS).toContain('signed out or through the preview');
 	});
 
 	it('shows the approval button when the move waits, and sends one approval', async () => {

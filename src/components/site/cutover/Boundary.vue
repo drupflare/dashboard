@@ -1,9 +1,15 @@
 <script setup lang="ts">
-import { CHOICE_COPY, ROLLBACK_LABEL, type CutoverChoiceName } from '~/shared/cutover-copy';
+import {
+	CHOICE_COPY,
+	ROLLBACK_LABEL,
+	finalChangesSentence,
+	writesSentence,
+	type CutoverChoiceName
+} from '~/shared/cutover-copy';
 import { ROLLBACK_BOUNDARY_COPY, stepLabel } from '~/shared/operation-copy';
 import type { CutoverView } from '~/stores/cutover';
 
-const props = defineProps<{ view: CutoverView; busy: boolean }>();
+const props = defineProps<{ view: CutoverView; busy: boolean; downloadUrl?: string }>();
 const emit = defineEmits<{ choose: [value: CutoverChoiceName | 'rollback'] }>();
 
 const phrase = (id: string) => {
@@ -16,8 +22,12 @@ const canGoBack = computed(
 	() => props.view.state === 'observing' && props.view.boundary === 'dns-reversal'
 );
 const mustChoose = computed(
-	() => props.view.state === 'observing' && props.view.needsChoice && props.view.choice === null
+	() =>
+		props.view.state === 'observing' &&
+		props.view.boundary === 'post-write' &&
+		props.view.choice === null
 );
+const sentence = computed(() => writesSentence(props.view.destinationWrites, props.view.observed));
 const stateOf = (state: string) =>
 	({
 		pending: 'Waiting',
@@ -56,6 +66,14 @@ const stateOf = (state: string) =>
 				</li>
 			</template>
 		</ol>
+
+		<p
+			v-if="sentence"
+			class="text-sm text-default"
+			data-test="writes"
+		>
+			{{ sentence }}
+		</p>
 
 		<p
 			v-if="view.refusal"
@@ -113,9 +131,27 @@ const stateOf = (state: string) =>
 			class="flex flex-col gap-1 text-sm text-default"
 			data-test="export"
 		>
-			<p>Your new changes were saved as {{ view.exportReference }}.</p>
+			<p>
+				Your new changes were saved as a SQL file. Run it against the database of your old
+				site.
+			</p>
+			<p
+				v-if="view.finalChanges"
+				data-test="final-changes"
+			>
+				{{ finalChangesSentence(view.finalChanges, view.finalStatements) }}
+			</p>
+			<div v-if="downloadUrl">
+				<UButton
+					color="neutral"
+					variant="outline"
+					:href="downloadUrl"
+					download
+					>Download the Changes</UButton
+				>
+			</div>
 			<template v-if="view.cannotCarry.length > 0">
-				<p>These kinds of change cannot be carried over to the old site:</p>
+				<p>The file does not carry these:</p>
 				<ul class="list-disc pl-5">
 					<li
 						v-for="kind in view.cannotCarry"
