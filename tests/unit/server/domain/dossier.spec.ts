@@ -4,6 +4,11 @@ import {
 	filesRestoreBytes,
 	type SurveyInput
 } from '../../../../src/server/domain/dossier';
+import {
+	FILES_BODY_BYTES,
+	MAX_RESTORE_PAGED_BYTES,
+	SINGLE_RESTORE_BYTES
+} from '../../../../src/shared/restore-limits';
 
 const CEILING = 10 * 1024 * 1024 * 1024;
 
@@ -65,28 +70,49 @@ describe('dossierFor', () => {
 
 	it('refuses a database type with no import path', () => {
 		const dossier = dossierFor(
-			{ ...healthy(), database: { driver: 'pgsql', bytes: 1 } },
+			{ ...healthy(), database: { driver: 'sqlite', bytes: 1 } },
 			CEILING
 		);
 
 		expect(dossier.importable).toBe(false);
-		expect(dossier.refusals).toContain('A pgsql database cannot be imported');
+		expect(dossier.refusals).toContain('A sqlite database cannot be imported');
 		expect(dossier.findings).toContainEqual(
 			expect.objectContaining({ status: 'unsupported', title: 'Database' })
 		);
 	});
 
-	it('refuses a PostgreSQL site for the driver only once its size is read', () => {
+	it('imports a PostgreSQL site and names what the conversion leaves behind', () => {
 		const dossier = dossierFor(
 			{ ...healthy(), database: { driver: 'pgsql', bytes: 107_191_319 } },
 			CEILING
 		);
 
-		expect(dossier.refusals).toEqual(['A pgsql database cannot be imported']);
+		expect(dossier.importable).toBe(true);
+		expect(dossier.refusals).toEqual([]);
+		expect(dossier.database).toBe('pgsql');
 		expect(dossier.estimate.bytes).toBe(107_191_319 + 28 * 1024);
+		expect(dossier.findings).toContainEqual(
+			expect.objectContaining({
+				status: 'automatic',
+				title: 'Database',
+				detail: 'PostgreSQL converts to SQLite on the import path'
+			})
+		);
+		expect(dossier.findings).toContainEqual(
+			expect.objectContaining({
+				status: 'information',
+				title: 'Not Carried From PostgreSQL',
+				detail: expect.stringMatching(/Functions, foreign keys and check constraints/)
+			})
+		);
+		expect(
+			dossierFor({ ...healthy(), database: { driver: 'postgres', bytes: 1 } }, CEILING)
+				.database
+		).toBe('pgsql');
+		expect(dossierFor(healthy(), CEILING).database).toBe('mysql');
 	});
 
-	it('still refuses a PostgreSQL site on size when the database is over the ceiling', () => {
+	it('refuses a PostgreSQL site on size when the database is over the ceiling', () => {
 		const ceiling = 16 * 1024 * 1024;
 		const dossier = dossierFor(
 			{ ...healthy(), database: { driver: 'pgsql', bytes: ceiling + 1 } },
@@ -94,8 +120,7 @@ describe('dossierFor', () => {
 		);
 
 		expect(dossier.refusals).toEqual([
-			'A pgsql database cannot be imported',
-			'The database is larger than the 16 MiB a new site accepts in one restore. A paged restore is needed for a larger database and is not available yet'
+			'The database is larger than the 16 MiB a new site accepts in one restore. Restoring a larger database in pieces is not switched on yet'
 		]);
 	});
 
@@ -145,7 +170,7 @@ describe('dossierFor', () => {
 		);
 	});
 
-	it('refuses a database above the restore ceiling and names the paged restore', () => {
+	it('refuses a database above the single restore ceiling and says paging is off', () => {
 		const ceiling = 16 * 1024 * 1024;
 		const dossier = dossierFor(
 			{ ...healthy(), database: { driver: 'mysql', bytes: ceiling + 1 } },
@@ -154,7 +179,7 @@ describe('dossierFor', () => {
 
 		expect(dossier.importable).toBe(false);
 		expect(dossier.refusals).toEqual([
-			'The database is larger than the 16 MiB a new site accepts in one restore. A paged restore is needed for a larger database and is not available yet'
+			'The database is larger than the 16 MiB a new site accepts in one restore. Restoring a larger database in pieces is not switched on yet'
 		]);
 	});
 
@@ -196,7 +221,7 @@ describe('dossierFor', () => {
 		const over = dossierFor(survey(fits + 1, 1_000_000), ceiling);
 		expect(over.importable).toBe(false);
 		expect(over.refusals).toEqual([
-			'The database and the files together are larger than the 16 MiB a new site accepts in one restore. A paged restore is needed for a larger import and is not available yet'
+			'The database and the files together are larger than the 16 MiB a new site accepts in one restore. Restoring a larger import in pieces is not switched on yet'
 		]);
 		expect(over.findings).toContainEqual(
 			expect.objectContaining({ status: 'unsupported', title: 'Uploaded Files' })
@@ -235,18 +260,22 @@ describe('dossierFor', () => {
 		expect(dossier.importable).toBe(true);
 	});
 
-	it('refuses a site with a private files folder, since only the public files are carried', () => {
+	it('carries a private files folder and says where it is read from', () => {
 		const dossier = dossierFor(
 			{ ...healthy(), files: { kb: 28, count: 3, private: '../private' } },
 			CEILING
 		);
-		expect(dossier.importable).toBe(false);
-		expect(dossier.refusals).toEqual([
-			'The site keeps private files at ../private, and private files are not carried into a new site yet'
-		]);
+		expect(dossier.importable).toBe(true);
+		expect(dossier.refusals).toEqual([]);
+		expect(dossier.privateFiles).toBe('../private');
 		expect(dossier.findings).toContainEqual(
-			expect.objectContaining({ status: 'unsupported', title: 'Private Files' })
+			expect.objectContaining({
+				status: 'automatic',
+				title: 'Private Files',
+				detail: expect.stringContaining("copied into the new site's private files")
+			})
 		);
+		expect(dossierFor(healthy(), CEILING).privateFiles).toBeNull();
 	});
 
 	it('refuses when the database size is unknown', () => {
@@ -282,5 +311,53 @@ describe('dossierFor', () => {
 				);
 			}
 		}
+	});
+
+	describe('with the paged ceiling', () => {
+		const MIB = 1024 * 1024;
+		const survey = (bytes: number, kb = 0, count = 0): SurveyInput => ({
+			...healthy(),
+			database: { driver: 'mysql', bytes },
+			files: { kb, count, private: null },
+			fileRows: count
+		});
+
+		it('accepts a database above 16 MiB up to the paged ceiling', () => {
+			expect(dossierFor(survey(40 * MIB), MAX_RESTORE_PAGED_BYTES).importable).toBe(true);
+			expect(
+				dossierFor(survey(MAX_RESTORE_PAGED_BYTES), MAX_RESTORE_PAGED_BYTES).importable
+			).toBe(true);
+		});
+
+		it('refuses one byte over the paged ceiling and names the size and the limit', () => {
+			const dossier = dossierFor(
+				survey(MAX_RESTORE_PAGED_BYTES + 1),
+				MAX_RESTORE_PAGED_BYTES
+			);
+			expect(dossier.importable).toBe(false);
+			expect(dossier.refusals).toEqual([
+				'The database is 129 MiB, over the 128 MiB a new site accepts'
+			]);
+		});
+
+		it('still refuses 16 MiB plus one byte when paging is off', () => {
+			const dossier = dossierFor(survey(SINGLE_RESTORE_BYTES + 1), SINGLE_RESTORE_BYTES);
+			expect(dossier.importable).toBe(false);
+			expect(dossier.refusals[0]).toContain('in one restore');
+		});
+
+		it('counts the files against the paged ceiling and against their own room', () => {
+			const kb = Math.floor(FILES_BODY_BYTES / 2048);
+			const fits = dossierFor(survey(100 * MIB, kb - 10, 5), MAX_RESTORE_PAGED_BYTES);
+			expect(fits.importable).toBe(true);
+			const filesOver = dossierFor(survey(10 * MIB, kb + 100, 5), MAX_RESTORE_PAGED_BYTES);
+			expect(filesOver.refusals).toEqual([
+				'The files are larger than the 16 MiB of files one import carries'
+			]);
+			const together = dossierFor(survey(120 * MIB, kb - 10, 5), MAX_RESTORE_PAGED_BYTES);
+			expect(together.refusals).toEqual([
+				'The database and the files together are larger than the 128 MiB a new site accepts'
+			]);
+		});
 	});
 });

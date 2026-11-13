@@ -99,8 +99,9 @@ function stepUpDone(): void {
 							documents are not copied yet.
 						</p>
 						<p>
-							A database above 16 MiB cannot be copied yet. If yours is larger, the
-							adoption stops before it creates anything.
+							A database above 16 MiB needs a site that restores in parts, and one
+							above 128 MiB cannot be copied yet. If yours is larger, the adoption
+							stops before it creates anything.
 						</p>
 					</div>
 

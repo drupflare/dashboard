@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { createDumpStream, dumpCommand } from '../../../engine/src/adapters/dump-stream';
+import {
+	createDumpStream,
+	dumpCommand,
+	privateFilesCommand
+} from '../../../engine/src/adapters/dump-stream';
 import { importKeys, partKey, readWindow } from '../../../engine/src/import-parts';
 import type { DumpJob, SshTarget } from '../../../engine/src/ports';
 import { fakeBlobs } from './backup-fakes';
@@ -245,5 +249,58 @@ describe('readWindow', () => {
 			readWindow(blobs.blobs, (seq) => partKey(PREFIX, seq, 'sql'), 100, 250, 0, 50)
 		);
 		expect(error).toMatchObject({ code: 'part_missing' });
+	});
+});
+
+describe('the PostgreSQL and private files commands', () => {
+	it('dumps PostgreSQL without a flag that only mysqldump has', () => {
+		expect(dumpCommand('database', '/srv/site', undefined, undefined, 'pgsql')).toBe(
+			"cd '/srv/site' && drush sql:dump"
+		);
+		expect(dumpCommand('database', '/srv/site', undefined, ['cache*'], 'pgsql')).toBe(
+			"cd '/srv/site' && drush sql:dump --structure-tables-list='cache*'"
+		);
+	});
+
+	it('tars the private folder under its own name, resolving a path written relative to the root', () => {
+		expect(privateFilesCommand('/var/www/html', '../private')).toBe(
+			'tar -cf - -C /var/www private'
+		);
+		expect(privateFilesCommand('/var/www/html', '/srv/private-files')).toBe(
+			'tar -cf - -C /srv private-files'
+		);
+		expect(privateFilesCommand('/var/www/html', '/private')).toBe('tar -cf - -C / private');
+		expect(
+			dumpCommand('private', '/var/www/html', undefined, undefined, 'mysql', '../private')
+		).toBe('tar -cf - -C /var/www private');
+	});
+
+	it('refuses a path it cannot stream safely rather than quoting it into a command', () => {
+		expect(privateFilesCommand('/var/www/html', '/srv/my files')).toBeNull();
+		expect(privateFilesCommand('/var/www/html', '/srv/x;rm')).toBeNull();
+		expect(privateFilesCommand('/var/www/html', '/')).toBeNull();
+		expect(() =>
+			dumpCommand('private', '/var/www/html', undefined, undefined, 'mysql', '/a b')
+		).toThrow(expect.objectContaining({ code: 'files_bad_path' }));
+		expect(() => dumpCommand('private', '/var/www/html')).toThrow(
+			expect.objectContaining({ code: 'files_bad_path' })
+		);
+	});
+
+	it('streams the private folder into tar parts under its own prefix', async () => {
+		const tar = tarOf([{ name: 'private/a.txt', body: 'secret' }]);
+		const { connector, sessions } = fakeSource({ privateFiles: tar });
+		const blobs = fakeBlobs();
+		const prefix = importKeys.privatePrefix(`org_${'o'.repeat(26)}`, `op_${'p'.repeat(26)}`);
+		const result = await createDumpStream(connector, blobs.blobs).run(target(), {
+			kind: 'private',
+			path: '../private',
+			prefix,
+			partBytes: 1024,
+			maxBytes: 1_000_000
+		});
+		expect(result.bytes).toBe(tar.length);
+		expect(sessions[0]?.commands).toEqual(['tar -cf - -C /var/www private']);
+		expect(await blobs.blobs.get(partKey(prefix, 0, 'tar'))).toEqual(tar.subarray(0, 1024));
 	});
 });

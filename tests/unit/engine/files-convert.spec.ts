@@ -236,14 +236,12 @@ describe('a hostile or damaged archive', () => {
 		expect(site.db.prepare('SELECT COUNT(*) AS n FROM cfw_file').get()).toEqual({ n: 2 });
 	});
 
-	it('refuses a single file that cannot fit and names the limit, the paged restore and the Container path', () => {
+	it('refuses a single file that cannot fit and names the limit', () => {
 		const error = failureOf(() =>
 			convert(tarOf([{ name: './big.bin', body: new Uint8Array(3000) }]), 0, 4096)
 		);
 		expect(error).toMatchObject({ code: 'restore_too_large' });
 		expect(error.message).toContain('4096 bytes');
-		expect(error.message).toContain('worker request 8');
-		expect(error.message).toContain('Container');
 	});
 
 	it('counts the database and the files together against the one ceiling', () => {
@@ -300,5 +298,59 @@ describe('a hostile or damaged archive', () => {
 	it('keeps text from the archive out of every message', () => {
 		const error = failureOf(() => convert(tarOf([{ name: '../SECRETNAME', body: 'x' }])));
 		expect(error.message).not.toContain('SECRETNAME');
+	});
+});
+
+describe('private files', () => {
+	const items: TarItem[] = [
+		{ name: 'private/', type: 'directory' },
+		{ name: 'private/report.pdf', body: 'pdf bytes' },
+		{ name: 'private/nested/id card.txt', body: "it's; private" },
+		{ name: 'private/.htaccess', body: 'Deny from all' }
+	];
+
+	it('drops the folder name and lands the files as private rows the worker keeps', () => {
+		const converted = convertFiles(tarOf(items), {
+			nowMs: NOW,
+			ceilingBytes: CEILING,
+			databaseBytes: 0,
+			scheme: 'private'
+		});
+		expect(converted.files).toBe(3);
+		const site = replay(converted.sql);
+		expect(new TextDecoder().decode(site.read('private://nested/id card.txt'))).toBe(
+			"it's; private"
+		);
+		expect(site.stat('private://report.pdf')).toMatchObject({
+			size: 9,
+			mime: 'application/pdf',
+			evicted: 0,
+			hash: null,
+			r2site: null
+		});
+		expect(site.stat('public://report.pdf')).toBeUndefined();
+		const queued = site.db.prepare('SELECT uri FROM cfw_file_mirror_queue ORDER BY uri').all();
+		expect(queued.map((row) => (row as { uri: string }).uri)).toEqual([
+			'private://.htaccess',
+			'private://nested/id card.txt',
+			'private://report.pdf'
+		]);
+	});
+
+	it('counts the private files against what the database and the public files left', () => {
+		const archive = tarOf([{ name: 'private/big.bin', body: random(4000, 9) }]);
+		expect(() =>
+			convertFiles(archive, {
+				nowMs: NOW,
+				ceilingBytes: 6000,
+				databaseBytes: 1000,
+				scheme: 'private'
+			})
+		).toThrow(expect.objectContaining({ code: 'restore_too_large' }));
+	});
+
+	it('keeps public paths as they were when no scheme is given', () => {
+		const converted = convert(tarOf([{ name: './a.txt', body: 'x' }]));
+		expect(replay(converted.sql).stat('public://a.txt')).toBeDefined();
 	});
 });

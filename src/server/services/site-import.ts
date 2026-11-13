@@ -493,7 +493,10 @@ export async function startSiteImport(
 		dossier: {
 			importable: dossier.importable,
 			estimateBytes: dossier.estimate.bytes,
-			fileCount: dossier.estimate.fileCount
+			fileCount: dossier.estimate.fileCount,
+			// a survey kept before these fields existed read as MySQL with no private folder
+			dialect: dossier.database === 'pgsql' ? 'pgsql' : 'mysql',
+			privatePath: dossier.privateFiles ?? null
 		},
 		create: {
 			...engineInput,

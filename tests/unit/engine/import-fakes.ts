@@ -67,6 +67,7 @@ export interface StreamSession {
 export interface FakeSource {
 	dump: string;
 	files: string | Uint8Array;
+	privateFiles: string | Uint8Array;
 	// bytes per stdout chunk
 	chunk: number;
 	exitCode: number;
@@ -81,6 +82,7 @@ export function fakeSource(patch: Partial<FakeSource> = {}) {
 	const source: FakeSource = {
 		dump: mysqlDumpOf(40),
 		files: '',
+		privateFiles: '',
 		chunk: 37,
 		exitCode: 0,
 		dropAfter: null,
@@ -125,7 +127,11 @@ export function fakeSource(patch: Partial<FakeSource> = {}) {
 			return {
 				async stream(command): Promise<StreamChannel> {
 					record.commands.push(command);
-					const body = command.includes('drush sql:dump') ? source.dump : source.files;
+					const body = command.includes('drush sql:dump')
+						? source.dump
+						: command.includes('sites/default/files')
+							? source.files
+							: source.privateFiles;
 					return {
 						stdout: streamOf(encode(body)),
 						stderr: new ReadableStream({

@@ -1,9 +1,10 @@
 import { canonicalJson, sha256Hex, utf8 } from '@contracts/common';
 import { z } from 'zod';
+import { SINGLE_RESTORE_BYTES } from '../../src/shared/restore-limits';
 import { PermanentError } from './step';
 
-// the worker's own default for MAX_RESTORE_BYTES; a dump above it is stored and never restorable
-export const DEFAULT_RESTORE_CEILING_BYTES = 16 * 1024 * 1024;
+// the worker's own default for MAX_RESTORE_BYTES; a dump above it goes through the paged restore
+export const DEFAULT_RESTORE_CEILING_BYTES = SINGLE_RESTORE_BYTES;
 
 // unreviewed: a dump that needs more pages than this is stopped instead of filling the bucket
 export const MAX_EXPORT_PAGES = 1024;
@@ -27,6 +28,13 @@ export const BACKUP_ERROR_CODES = [
 	'owner_token_rejected',
 	'restore_too_large',
 	'restore_rejected',
+	'restore_unsupported',
+	'restore_busy',
+	'restore_unaligned',
+	'restore_stalled',
+	'files_copy_failed',
+	'files_unsupported',
+	'files_too_many',
 	'import_failed',
 	'import_timeout',
 	'adopting_timeout',

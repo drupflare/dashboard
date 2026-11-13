@@ -77,11 +77,12 @@ describe('a survey', () => {
 		expect(record!.dossier.importable).toBe(true);
 	});
 
-	it('reads the size of a PostgreSQL site, so the refusal is for the driver alone', async () => {
+	it('reads the size of a PostgreSQL site and finds it importable', async () => {
 		const sw = await surveyWorld({ driver: 'pgsql' });
 		expect(await run(sw)).toEqual({ status: 'succeeded' });
 		const record = readSurveyCursor((await operationOf(sw)).cursor);
-		expect(record!.dossier.refusals).toEqual(['A pgsql database cannot be imported']);
+		expect(record!.dossier.refusals).toEqual([]);
+		expect(record!.dossier.database).toBe('pgsql');
 		expect(record!.dossier.estimate.bytes).toBe(1048576 + 2048 * 1024);
 	});
 

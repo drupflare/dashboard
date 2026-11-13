@@ -15,7 +15,7 @@ import { authorityOf, AuthorityStale } from '../../../engine/src/adapters/author
 import { hostsOf, hostValue } from '../../../engine/src/adapters/hosts';
 import { leasesOf } from '../../../engine/src/adapters/leases';
 import { namesOf } from '../../../engine/src/adapters/names';
-import { releasesOf } from '../../../engine/src/adapters/releases';
+import { releasesInBucket, releasesOf } from '../../../engine/src/adapters/releases';
 import { siteOf, SiteUnreachable } from '../../../engine/src/adapters/site';
 import { steppedMigrations, workforceCloudflare } from '../../../engine/src/adapters/workforce';
 import { bundleKeys } from '../../../engine/src/bundle';
@@ -564,6 +564,36 @@ describe('the other binding adapters', () => {
 		expect(await releases.manifest('v1.0.4')).toEqual({ releaseId: 'v1.0.4' });
 		expect(calls).toEqual([`${CDN_BASE}releases/v1.0.4/manifest.json`]);
 		expect(await releases.part(bundleKeys.module('v1.0.4', 'site.js'))).toEqual(
+			new Uint8Array([1, 2, 3])
+		);
+		await expect(releases.manifest('v9')).rejects.toMatchObject({ code: 'release_not_found' });
+		await expect(releases.manifest('broken')).rejects.toMatchObject({
+			code: 'release_manifest_unreadable'
+		});
+		await expect(releases.part('releases/v9/modules/x')).rejects.toMatchObject({
+			code: 'release_part_missing'
+		});
+	});
+
+	it('reads a release from a bucket binding and names what is missing or unreadable', async () => {
+		const objects = new Map<string, Uint8Array>([
+			[bundleKeys.manifest('snap-1'), new TextEncoder().encode('{"releaseId":"snap-1"}')],
+			[bundleKeys.manifest('broken'), new TextEncoder().encode('not json')],
+			[bundleKeys.module('snap-1', 'site.js'), new Uint8Array([1, 2, 3])]
+		]);
+		const bucket = {
+			get: async (key: string) => {
+				const bytes = objects.get(key);
+				if (bytes === undefined) return null;
+				return {
+					json: async () => JSON.parse(new TextDecoder().decode(bytes)),
+					arrayBuffer: async () => bytes.slice().buffer
+				};
+			}
+		} as unknown as Parameters<typeof releasesInBucket>[0];
+		const releases = releasesInBucket(bucket);
+		expect(await releases.manifest('snap-1')).toEqual({ releaseId: 'snap-1' });
+		expect(await releases.part(bundleKeys.module('snap-1', 'site.js'))).toEqual(
 			new Uint8Array([1, 2, 3])
 		);
 		await expect(releases.manifest('v9')).rejects.toMatchObject({ code: 'release_not_found' });

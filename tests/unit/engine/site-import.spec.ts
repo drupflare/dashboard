@@ -1,3 +1,4 @@
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { importKeys } from '../../../engine/src/import-parts';
 import { freezePlan, newOperation } from '../../../engine/src/operations/state';
@@ -7,6 +8,7 @@ import {
 	runSiteImport,
 	type SiteImportInput
 } from '../../../engine/src/workflows/site-import';
+import { MAX_RESTORE_PAGED_BYTES, SINGLE_RESTORE_BYTES } from '../../../src/shared/restore-limits';
 import { MARKER } from './backup-fakes';
 import { Killed, makeRunner, makeWorld, type Memo, type RunnerScript } from './fakes';
 import {
@@ -15,6 +17,7 @@ import {
 	fakeSource,
 	importDepsOf,
 	KEY_MARKER,
+	mysqlDumpOf,
 	ROOT,
 	sealCredential,
 	SOURCE_HOST,
@@ -553,5 +556,262 @@ describe('the dump of a failed run', () => {
 		const iw = await importWorld({ source: { dump: '' } });
 		const { outcome } = await run(iw);
 		expect(outcome.status === 'rolled-back' ? codeOf(outcome.reason) : null).toBe('dump_empty');
+	});
+});
+
+describe('a database above one restore body', () => {
+	const MIB = 1024 * 1024;
+	const CREATE = mysqlDumpOf(0);
+	const bigDump = (bytes: number) => {
+		const pad = 'x'.repeat(1_000);
+		const rows = Math.ceil(bytes / 1_040);
+		return `${CREATE}${Array.from({ length: rows }, (_, n) => `INSERT INTO \`node\` VALUES (${n},'${pad}');\n`).join('')}`;
+	};
+	const bigWorld = (options: Options = {}) =>
+		importWorld({
+			source: { dump: bigDump(SINGLE_RESTORE_BYTES + 300_000), chunk: MIB },
+			...options
+		});
+	const paged = { restoreCeilingBytes: MAX_RESTORE_PAGED_BYTES, partBytes: 8 * MIB };
+
+	it('lands through the paged routes in parts of at most 1 MiB', async () => {
+		const iw = await bigWorld();
+		const { outcome, executed } = await run(iw, { patch: paged });
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(iw.worker.calls.restores).toEqual([]);
+		expect(iw.worker.calls.begins).toHaveLength(1);
+		const begun = iw.worker.calls.begins[0]!;
+		expect(begun.label).toBe(iw.world.operationId);
+		expect(begun.bytes).toBeGreaterThan(SINGLE_RESTORE_BYTES);
+		expect(iw.worker.calls.puts).toHaveLength(begun.parts);
+		expect(Math.max(...iw.worker.calls.puts.map((put) => put.bytes))).toBeLessThanOrEqual(MIB);
+		expect(executed).toEqual(
+			expect.arrayContaining([
+				'restore.plan',
+				'restore.begin',
+				'restore.put.0',
+				'restore.commit.0'
+			])
+		);
+		const landed = iw.worker.sites.get(iw.world.input.hostname)!.sql;
+		expect(landed.length).toBe(begun.bytes);
+		expect(landed).not.toContain('ENGINE=InnoDB');
+		expect(targetRow(iw)).toMatchObject({ state: 'active' });
+		expect(credentialRows(iw.world)).toEqual([]);
+		expect(bucketKeys(iw)).toEqual([]);
+		const operation = await operationOf(iw);
+		expect(operation.steps.every((step) => step.state === 'succeeded')).toBe(true);
+	}, 60_000);
+
+	it('refuses a new site without the paged routes, rolls back and leaves nothing', async () => {
+		const iw = await bigWorld();
+		iw.worker.sites.get(iw.world.input.hostname)!.paged = false;
+		const { outcome } = await run(iw, { patch: paged });
+		expect(outcome.status).toBe('rolled-back');
+		expect(outcome.status === 'succeeded' ? '' : codeOf(outcome.reason)).toBe(
+			'restore_unsupported'
+		);
+		expect(iw.worker.calls.begins).toEqual([]);
+		expect(iw.worker.calls.restores).toEqual([]);
+		expect(credentialRows(iw.world)).toEqual([]);
+		expect(bucketKeys(iw)).toEqual([]);
+	}, 60_000);
+
+	it('keeps the old refusal for the same dump when the ceiling is one body', async () => {
+		const iw = await bigWorld();
+		const { outcome } = await run(iw, { patch: { partBytes: 8 * MIB } });
+		expect(outcome.status).toBe('rolled-back');
+		expect(outcome.status === 'succeeded' ? '' : codeOf(outcome.reason)).toBe(
+			'restore_too_large'
+		);
+		expect(iw.worker.calls.begins).toEqual([]);
+	}, 60_000);
+});
+
+describe('a PostgreSQL source', () => {
+	const PG = { importable: true, estimateBytes: 1, fileCount: 0, dialect: 'pgsql' as const };
+	const pgDump = (trigger = false) =>
+		[
+			'--\n-- PostgreSQL database dump\n--\nSET statement_timeout = 0;',
+			'CREATE FUNCTION public.greatest(numeric, numeric) RETURNS numeric',
+			'    LANGUAGE sql AS $$SELECT CASE WHEN $1 > $2 THEN $1 ELSE $2 END;',
+			'$$;',
+			'CREATE TABLE public.node (\n    nid integer NOT NULL,\n    title text,\n    status boolean\n);',
+			...(trigger
+				? ['CREATE TRIGGER t BEFORE INSERT ON node FOR EACH ROW EXECUTE FUNCTION f();']
+				: []),
+			'COPY public.node (nid, title, status) FROM stdin;',
+			`1\t${MARKER}-1; ends here;\tt`,
+			`2\ttwo\\nlines ${MARKER}-2\tf`,
+			'\\.',
+			'ALTER TABLE ONLY public.node\n    ADD CONSTRAINT node_pkey PRIMARY KEY (nid);',
+			'CREATE INDEX node_title_idx ON public.node USING btree (title);',
+			''
+		].join('\n');
+
+	it('lands tables, then rows, then indexes, and says what it left behind', async () => {
+		const iw = await importWorld({ source: { dump: pgDump() } });
+		const { outcome } = await run(iw, { patch: { partBytes: 150, dossier: PG } });
+		expect(outcome).toEqual({ status: 'succeeded' });
+
+		const landed = iw.worker.sites.get(iw.world.input.hostname)!.sql;
+		expect(landed.indexOf('CREATE TABLE "node"')).toBeLessThan(landed.indexOf('INSERT INTO'));
+		expect(landed.indexOf('INSERT INTO')).toBeLessThan(landed.indexOf('CREATE INDEX'));
+		expect(landed).not.toContain('FUNCTION');
+		const db = new DatabaseSync(':memory:');
+		try {
+			db.exec(landed);
+			expect(db.prepare('SELECT nid, status FROM node ORDER BY nid').all()).toEqual([
+				{ nid: 1, status: 1 },
+				{ nid: 2, status: 0 }
+			]);
+			expect(
+				(db.prepare('SELECT title FROM node WHERE nid = 1').get() as { title: string })
+					.title
+			).toBe(`${MARKER}-1; ends here;`);
+		} finally {
+			db.close();
+		}
+		const operation = await operationOf(iw);
+		expect(operation.finalObservation?.summary).toContain(
+			'1 PostgreSQL functions or constraints were left behind'
+		);
+		expect(operation.steps.every((step) => step.state === 'succeeded')).toBe(true);
+		expect(bucketKeys(iw)).toEqual([]);
+		expect(credentialRows(iw.world)).toEqual([]);
+	});
+
+	it('asks the server for a plain dump with no flag only mysqldump has', async () => {
+		const iw = await importWorld({ source: { dump: pgDump() } });
+		await run(iw, { patch: { partBytes: 150, dossier: PG } });
+		expect(iw.source.sessions[0]!.commands).toEqual([
+			`cd '${ROOT}' && drush sql:dump --structure-tables-list='cache*','key_value_expire'`
+		]);
+	});
+
+	it('lands the same database whatever the window, and converts after a kill without a second dump', async () => {
+		const bodies: string[] = [];
+		for (const partBytes of [150, 400, 4000]) {
+			const iw = await importWorld({ source: { dump: pgDump() } });
+			const memo: Memo = new Map();
+			await run(iw, {
+				memo,
+				patch: { partBytes, dossier: PG },
+				script: { killAfter: 12 }
+			}).catch((error) => expect(error).toBeInstanceOf(Killed));
+			const { outcome } = await run(iw, { memo, patch: { partBytes, dossier: PG } });
+			expect(outcome).toEqual({ status: 'succeeded' });
+			expect(iw.source.sessions).toHaveLength(1);
+			bodies.push(iw.worker.sites.get(iw.world.input.hostname)!.sql);
+		}
+		expect(bodies[1]).toBe(bodies[0]);
+		expect(bodies[2]).toBe(bodies[0]);
+	});
+
+	it('refuses a trigger at conversion, before anything is made on the new side', async () => {
+		const iw = await importWorld({ source: { dump: pgDump(true) } });
+		const { outcome } = await run(iw, { patch: { partBytes: 150, dossier: PG } });
+		expect(outcome.status).toBe('rolled-back');
+		expect(outcome.status === 'rolled-back' ? codeOf(outcome.reason) : null).toBe(
+			'unsupported_statement'
+		);
+		expect(iw.worker.calls.restores).toEqual([]);
+		expect(bucketKeys(iw)).toEqual([]);
+		expect(credentialRows(iw.world)).toEqual([]);
+	});
+
+	it('fails a COPY block wider than the window and applies nothing', async () => {
+		const iw = await importWorld({ source: { dump: pgDump() } });
+		const { outcome } = await run(iw, { patch: { partBytes: 100, dossier: PG } });
+		expect(outcome.status).toBe('rolled-back');
+		expect(outcome.status === 'rolled-back' ? codeOf(outcome.reason) : null).toBe(
+			'no_statement_boundary'
+		);
+		expect(iw.worker.calls.restores).toEqual([]);
+	});
+});
+
+describe('private files', () => {
+	const WITH_PRIVATE = {
+		importable: true,
+		estimateBytes: 1,
+		fileCount: 1,
+		privatePath: '../private'
+	};
+	const publicTar = () => tarOf([{ name: './logo.png', body: new Uint8Array([1, 2, 3]) }]);
+	const privateTar = () =>
+		tarOf([
+			{ name: 'private/', type: 'directory' },
+			{ name: 'private/report.pdf', body: 'PRIVATE-77' },
+			{ name: "private/it's a secret.txt", body: 'hidden' }
+		]);
+
+	it('plans the private steps after the public ones', async () => {
+		const iw = await importWorld();
+		const ids = planSiteImport(inputOf(iw, { dossier: WITH_PRIVATE })).steps.map((s) => s.id);
+		expect(ids.indexOf('files-archive')).toBeLessThan(ids.indexOf('private-archive'));
+		expect(ids.indexOf('private-archive')).toBeLessThan(ids.indexOf('convert'));
+		expect(ids.indexOf('files-convert')).toBeLessThan(ids.indexOf('private-convert'));
+		expect(ids.indexOf('private-convert')).toBeLessThan(ids.indexOf('reserve-name'));
+	});
+
+	it('streams the folder and lands it as private rows beside the public ones in one restore', async () => {
+		const iw = await importWorld({
+			source: { files: publicTar(), privateFiles: privateTar() }
+		});
+		const { outcome } = await run(iw, { patch: { dossier: WITH_PRIVATE } });
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(iw.worker.calls.restores).toHaveLength(1);
+		const body = iw.worker.calls.restores[0]!.body;
+		expect(body).toContain("'public://logo.png'");
+		expect(body).toContain("'private://report.pdf'");
+		expect(body).toContain("'private://it''s a secret.txt'");
+		expect(body).not.toContain('private://private');
+		const commands = iw.source.sessions.flatMap((session) => session.commands);
+		expect(commands.filter((command) => command.startsWith('tar '))).toEqual([
+			`tar -C '${ROOT}/sites/default/files' -cf - .`,
+			'tar -cf - -C /var/www private'
+		]);
+		const operation = await operationOf(iw);
+		expect(operation.steps.find((s) => s.id === 'private-convert')?.state).toBe('succeeded');
+		expect(operation.steps.every((step) => step.state === 'succeeded')).toBe(true);
+		expect(bucketKeys(iw)).toEqual([]);
+	});
+
+	it('carries a private folder from a site with no public files', async () => {
+		const iw = await importWorld({ source: { privateFiles: privateTar() } });
+		const { outcome } = await run(iw, {
+			patch: { dossier: { ...WITH_PRIVATE, fileCount: 0 } }
+		});
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(iw.worker.calls.restores[0]!.body).toContain("'private://report.pdf'");
+	});
+
+	it('counts the private files with the database and refuses before anything is made', async () => {
+		const iw = await importWorld({
+			source: {
+				privateFiles: tarOf([{ name: 'private/big.bin', body: new Uint8Array(4000) }])
+			}
+		});
+		const { outcome } = await run(iw, {
+			patch: { dossier: { ...WITH_PRIVATE, fileCount: 0 }, restoreCeilingBytes: 5000 }
+		});
+		expect(outcome.status).toBe('rolled-back');
+		expect(outcome.status === 'rolled-back' ? codeOf(outcome.reason) : null).toMatch(
+			/^(files_too_large|restore_too_large)$/
+		);
+		expect(iw.worker.calls.restores).toEqual([]);
+	});
+
+	it('refuses a folder path it cannot stream, with nothing on the new side', async () => {
+		const iw = await importWorld({ source: { privateFiles: privateTar() } });
+		const { outcome } = await run(iw, {
+			patch: { dossier: { ...WITH_PRIVATE, fileCount: 0, privatePath: '/srv/my files' } }
+		});
+		expect(outcome.status).toBe('rolled-back');
+		expect(outcome.status === 'rolled-back' ? codeOf(outcome.reason) : null).toBe(
+			'files_bad_path'
+		);
+		expect(iw.worker.calls.restores).toEqual([]);
 	});
 });

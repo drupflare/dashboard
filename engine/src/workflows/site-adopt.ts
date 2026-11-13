@@ -33,6 +33,7 @@ import {
 	type Ctx,
 	type Outcome
 } from './common';
+import { copiedFilesPrefix, copyOffloaded, NO_COPIED_FILES } from './offloaded-files';
 import { cleanTarget } from './site-cleanup';
 import {
 	activate,
@@ -101,6 +102,7 @@ export function planSiteAdopt(input: SiteAdoptInput): Plan {
 			{ id: 'export', name: 'Page the source database into the bucket' },
 			{ id: DUMP_IDS.verify, name: 'Check every part against its hash' },
 			{ id: DUMP_IDS.record, name: 'Record the copy' },
+			{ id: 'files-copy', name: 'Copy the files held only in object storage' },
 			{ id: 'reserve-name', name: `Reserve ${create.subdomain}` },
 			...resources.create.map((resource) => ({
 				id: `resource.${resource.binding}`,
@@ -139,9 +141,10 @@ const ceilingOf = (input: SiteAdoptInput) =>
 
 // #region the source
 
-async function preflight(ctx: Ctx, deps: BackupDeps, input: SiteAdoptInput): Promise<void> {
+// returns how many files live only in R2, which the copy then reads through the site
+async function preflight(ctx: Ctx, deps: BackupDeps, input: SiteAdoptInput): Promise<number> {
 	const { source, create } = input;
-	await runStep(ctx, 'preflight', 'preflight', async () => {
+	return runStep(ctx, 'preflight', 'preflight', async () => {
 		await fenced(ctx);
 		if (create.firstRun.reads?.ownerToken === undefined) {
 			throw new AdoptError('unsupported_kind', `${create.site.kind} sites are not adopted`);
@@ -168,18 +171,25 @@ async function preflight(ctx: Ctx, deps: BackupDeps, input: SiteAdoptInput): Pro
 		if (status >= 500) {
 			throw new AdoptError('source_unreachable', `${source.id} answered ${status}`);
 		}
-		// an export carries file rows and no bytes held only in R2, so the copy would point at nothing
+		// an export carries file rows and no bytes held only in R2, so those files are read through
+		// the site's own list; a site without that route keeps the refusal
 		const offloaded = await deps.custody.withOwnerToken(
 			source.id,
 			opened.ownerTokenId,
-			(bearer) => deps.worker.offloadedFiles(opened.hostname, { bearer })
+			async (bearer) => {
+				const count = await deps.worker.offloadedFiles(opened.hostname, { bearer });
+				if (count === 0) return 0;
+				const page = await deps.worker.offloadedPage(opened.hostname, null, 1, { bearer });
+				if (page === null) {
+					throw new AdoptError(
+						'files_outside_database',
+						`${source.id} holds ${count} files only in R2 and cannot list them`
+					);
+				}
+				return count;
+			}
 		);
-		if (offloaded > 0) {
-			throw new AdoptError(
-				'files_outside_database',
-				`${source.id} holds ${offloaded} files only in R2`
-			);
-		}
+		return offloaded;
 	});
 }
 
@@ -266,6 +276,7 @@ async function rollback(
 				);
 			}
 		],
+		['files', () => deps.blobs.deletePrefix(copiedFilesPrefix(input.orgId, input.operationId))],
 		[
 			'target',
 			() =>
@@ -330,13 +341,23 @@ export async function runSiteAdopt(
 	try {
 		await startOperation(ctx);
 		await acquireLease(ctx, 'lease');
-		await preflight(ctx, deps, input);
+		const offloaded = await preflight(ctx, deps, input);
 
 		const dump = dumpInput(input);
 		const source = phase(ctx, 'source', DUMP_IDS);
 		const parts = await exportParts(source, deps, dump);
 		const manifest = await verifyParts(source, deps, dump, parts);
 		await recordBackup(source, deps, dump, manifest);
+		const copied =
+			offloaded === 0
+				? await runStep(ctx, 'files-copy', 'files-copy', async () => NO_COPIED_FILES)
+				: await copyOffloaded(ctx, deps, {
+						orgId: input.orgId,
+						operationId: input.operationId,
+						source: input.source,
+						dumpBytes: manifest.bytes,
+						ceilingBytes: ceilingOf(input)
+					});
 
 		const target = phase(ctx, 'target');
 		await reserveName(target, create);
@@ -354,11 +375,17 @@ export async function runSiteAdopt(
 		const restoring = restoreInput(input);
 		const checked = await checkRestore(restore, deps, restoring);
 		await grant(restore, deps, restoring, checked);
-		const sent = await sendDump(restore, deps, restoring, checked);
+		const sent = await sendDump(restore, deps, restoring, checked, {
+			keys: copied.keys,
+			bytes: copied.bytes
+		});
 		await apply(restore, deps, restoring, checked, sent);
 		await copyFiles(restore, deps, restoring, checked);
 		await verifyRestore(restore, deps, restoring, checked);
 		await activate(target, create, sealed);
+		await plainStep(ctx, 'files-forget', () =>
+			deps.blobs.deletePrefix(copiedFilesPrefix(input.orgId, input.operationId))
+		);
 	} catch (error) {
 		if (!(error instanceof StepFailed)) throw error;
 		return rollback(ctx, deps, input, error);

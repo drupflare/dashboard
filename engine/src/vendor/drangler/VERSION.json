@@ -3,7 +3,7 @@
 	"files": {
 		"convert.ts": {
 			"source": "src/migrate/convert.ts",
-			"sha256": "bf612d4096355f09a329ebf6a29cfa1798f6a6d52cfb01caacf456ec44b074d4"
+			"sha256": "6d93edaef08fefb8dba38ac7463af80f8194dc45b6334608f4c4cb04ba3f9b5b"
 		},
 		"survey.ts": {
 			"source": "src/migrate/survey.ts",

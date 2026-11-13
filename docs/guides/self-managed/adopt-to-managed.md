@@ -31,8 +31,10 @@ The adoption refuses before it creates anything, with a plain reason, in these c
 - Another change to the site is running.
 - Your plan has no room for another site. The original and the copy both count.
 - Drupflare has no owner access to the site, or the site does not answer.
-- The database is larger than one restore into a managed site accepts, 16 MiB by default. The activity shows "Needs a Larger Restore Path". A paged restore for larger databases is an open request to the worker project, so such a site cannot be adopted yet.
-- The site keeps some uploaded files only in object storage. The database export holds those files' rows and not their bytes, so the copy would point at files that do not exist. The adoption stops before it creates anything. Files the site holds in its own database are copied with it.
+- The database is larger than 128 MiB, or larger than 16 MiB while the managed side restores in one piece only. The activity shows "Needs a Larger Restore Path" or says the database is too large for the version the site runs. A database between 16 and 128 MiB is sent in parts of 1 MiB to a site that has the paged restore.
+- The site keeps some uploaded files only in object storage and runs a version that cannot list them. The database export holds those files' rows and not their bytes, so the copy would point at files that do not exist. The adoption stops before it creates anything. Update the original site, then adopt it again.
+- More than 10,000 files live only in object storage, or the files and the database together are larger than the paged restore takes.
+- A file could not be read twice. The reason gives the number of files, never their names.
 
 ## If it fails part way
 
@@ -44,7 +46,7 @@ Built: the checks, the database copy, the managed copy, the restore, the link be
 
 Not built:
 
-- Copying files that live only in object storage. A site with any is refused, as above, until the worker can export their bytes (request 17 in the worker requests).
+- A live run of the paged restore or of the file copy. Both are covered by tests with fakes.
 - Attaching your own hostname to the copy, and the DNS instructions for it. The copy answers on its Drupflare address only.
 - The first-month credit.
 - A live run against a real Cloudflare account. The workflow is covered by tests with fakes.

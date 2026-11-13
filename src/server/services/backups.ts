@@ -19,6 +19,7 @@ import {
 	type BackupRestoreInput
 } from '../../../engine/src/workflows/backup-restore';
 import { ApiError } from '../../shared/errors';
+import { restoreCeiling } from '../../shared/restore-limits';
 import { nowUtc } from '../../shared/utils/time';
 import { createOperationRecord, getBackup, listBackups } from '../db/repos/backups';
 import { getOperation, updateOperationStatus, type StoredOperation } from '../db/repos/operations';
@@ -54,7 +55,7 @@ function productionServices(): BackupServices {
 		startOperation: notBuilt('Starting an operation'),
 		blobs: { get: notBuilt('The backup bucket') },
 		audit: notBuilt('The audit log'),
-		restoreCeilingBytes: 16 * 1024 * 1024,
+		restoreCeilingBytes: restoreCeiling(false),
 		waitMs: DEFAULT_WAIT_MS,
 		pollMs: DEFAULT_POLL_MS
 	};
@@ -82,7 +83,10 @@ export function backupServicesOf(
 		startOperation: BackupServices['startOperation'];
 	},
 	heads: HeadStore,
-	options: Partial<Pick<BackupServices, 'restoreCeilingBytes' | 'waitMs' | 'pollMs'>> = {}
+	options: Partial<Pick<BackupServices, 'restoreCeilingBytes' | 'waitMs' | 'pollMs'>> & {
+		// true once the sites this platform makes and restores into answer the paged restore routes
+		pagedRestore?: boolean;
+	} = {}
 ): BackupServices {
 	const defaults = productionServices();
 	return {
@@ -95,7 +99,9 @@ export function backupServicesOf(
 			}
 		},
 		audit: async (orgId, input) => append(await base.getDb(), orgId, input, heads),
-		restoreCeilingBytes: options.restoreCeilingBytes ?? defaults.restoreCeilingBytes,
+		restoreCeilingBytes:
+			options.restoreCeilingBytes ??
+			(options.pagedRestore ? restoreCeiling(true) : defaults.restoreCeilingBytes),
 		waitMs: options.waitMs ?? defaults.waitMs,
 		pollMs: options.pollMs ?? defaults.pollMs
 	};

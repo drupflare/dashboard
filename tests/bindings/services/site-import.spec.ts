@@ -663,7 +663,9 @@ describe('POST the import', () => {
 		expect(params.dossier).toEqual({
 			importable: true,
 			estimateBytes: 4_000_000,
-			fileCount: 0
+			fileCount: 0,
+			dialect: 'mysql',
+			privatePath: null
 		});
 		expect(params.create.site).toMatchObject({ id: siteId, plane: 'managed', kind: 'drupal' });
 		expect(params.create.firstRun.reads).toEqual({ ownerToken: expect.any(String) });

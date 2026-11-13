@@ -1,6 +1,7 @@
 import { utf8 } from '@contracts/common';
 import type { Plan } from '@contracts/operations';
 import { HOUR_MS, type ImportCap } from '../../../src/shared/import-hours';
+import { FILES_BODY_BYTES } from '../../../src/shared/restore-limits';
 import { DEFAULT_RESTORE_CEILING_BYTES, joinParts, restorable } from '../backup-parts';
 import { convertFiles, filesArchiveLimit } from '../files-convert';
 import {
@@ -13,7 +14,7 @@ import {
 	readWindow
 } from '../import-parts';
 import { buildPlan, observe, setVerification, transition } from '../operations/state';
-import type { ImportDeps, LandTarget, SiteCall } from '../ports';
+import type { DumpDialect, ImportDeps, LandTarget, SiteCall } from '../ports';
 import { planResources } from '../provision-plan';
 import { StepFailed, type StepRunner } from '../step';
 import { openSite } from './backup-create';
@@ -30,6 +31,7 @@ import {
 	type Ctx,
 	type Outcome
 } from './common';
+import { chooseRoute, finishRestore, landPaged } from './restore-pages';
 import { cleanTarget } from './site-cleanup';
 import {
 	activate,
@@ -51,7 +53,15 @@ export interface SiteImportInput {
 	credentialId: string;
 	root: string;
 	// what the survey found, as far as the workflow needs it
-	dossier: { importable: boolean; estimateBytes: number | null; fileCount: number | null };
+	dossier: {
+		importable: boolean;
+		estimateBytes: number | null;
+		fileCount: number | null;
+		// the database the server runs; mysql when absent
+		dialect?: DumpDialect;
+		// the private files folder as the survey read it, or none
+		privatePath?: string | null;
+	};
 	// the managed site, built as a create builds it; its first run reads the owner token only
 	create: SiteCreateInput & { firstRun: SiteCall };
 	waitMs: number;
@@ -85,6 +95,7 @@ export function planSiteImport(input: SiteImportInput): Plan {
 	const { create } = input;
 	const resources = planResources(create.site, create.site.config, { database: create.database });
 	const files = (input.dossier.fileCount ?? 0) > 0;
+	const priv = hasPrivate(input);
 	return buildPlan({
 		type: 'site.import',
 		targetIds: [create.site.id, input.credentialId],
@@ -99,8 +110,14 @@ export function planSiteImport(input: SiteImportInput): Plan {
 			{ id: 'preflight', name: 'Check the import' },
 			{ id: 'dump', name: 'Stream the database dump into the bucket' },
 			...(files ? [{ id: 'files-archive', name: 'Stream the files into the bucket' }] : []),
+			...(priv
+				? [{ id: 'private-archive', name: 'Stream the private files into the bucket' }]
+				: []),
 			{ id: 'convert', name: 'Convert the dump for the new site' },
 			...(files ? [{ id: 'files-convert', name: 'Convert the files for the new site' }] : []),
+			...(priv
+				? [{ id: 'private-convert', name: 'Convert the private files for the new site' }]
+				: []),
 			{ id: 'reserve-name', name: `Reserve ${create.subdomain}` },
 			...resources.create.map((resource) => ({
 				id: `resource.${resource.binding}`,
@@ -127,6 +144,10 @@ export function planSiteImport(input: SiteImportInput): Plan {
 function phase(ctx: Ctx, prefix: string): Ctx {
 	return { ...ctx, step: { do: (name, fn) => ctx.step.do(`${prefix}.${name}`, fn) } };
 }
+
+const dialectOf = (input: SiteImportInput): DumpDialect => input.dossier.dialect ?? 'mysql';
+const privatePathOf = (input: SiteImportInput) => input.dossier.privatePath ?? null;
+const hasPrivate = (input: SiteImportInput) => (privatePathOf(input) ?? '') !== '';
 
 const ceilingOf = (input: SiteImportInput) =>
 	input.restoreCeilingBytes ?? DEFAULT_RESTORE_CEILING_BYTES;
@@ -166,44 +187,48 @@ async function stream(
 	ctx: Ctx,
 	deps: ImportDeps,
 	input: SiteImportInput,
-	kind: 'database' | 'files'
+	kind: 'database' | 'files' | 'private'
 ): Promise<Streamed> {
 	const database = kind === 'database';
-	return runStep(
-		ctx,
-		database ? 'dump' : 'files-archive',
-		database ? 'dump' : 'files-archive',
-		async () => {
-			await fenced(ctx);
-			const prefix = database
-				? importKeys.dumpPrefix(input.orgId, input.operationId)
-				: importKeys.filesPrefix(input.orgId, input.operationId);
-			// a heartbeat after each part keeps the lease alive for a step that outlasts one lease time
-			const streamed = await deps.imports.withTarget(
-				input.credentialId,
-				input.orgId,
-				input.root,
-				(target) =>
-					deps.dump.run(
-						target,
-						{
-							kind,
-							prefix,
-							partBytes: partBytesOf(input),
-							...(database ? { structureOnly: CACHE_STRUCTURE_ONLY } : {}),
-							maxBytes: database
-								? ceilingOf(input) * DUMP_LIMIT_FACTOR
-								: Math.min(FILES_LIMIT_BYTES, filesArchiveLimit(ceilingOf(input)))
-						},
-						() => fenced(ctx)
-					)
-			);
-			if (database && streamed.bytes === 0) {
-				throw new ImportError('dump_empty', 'the server returned an empty database dump');
-			}
-			return streamed;
+	const name = database ? 'dump' : kind === 'files' ? 'files-archive' : 'private-archive';
+	return runStep(ctx, name, name, async () => {
+		await fenced(ctx);
+		const prefix = database
+			? importKeys.dumpPrefix(input.orgId, input.operationId)
+			: kind === 'files'
+				? importKeys.filesPrefix(input.orgId, input.operationId)
+				: importKeys.privatePrefix(input.orgId, input.operationId);
+		// a heartbeat after each part keeps the lease alive for a step that outlasts one lease time
+		const streamed = await deps.imports.withTarget(
+			input.credentialId,
+			input.orgId,
+			input.root,
+			(target) =>
+				deps.dump.run(
+					target,
+					{
+						kind,
+						prefix,
+						partBytes: partBytesOf(input),
+						...(database
+							? { structureOnly: CACHE_STRUCTURE_ONLY, dialect: dialectOf(input) }
+							: {}),
+						...(kind === 'private' ? { path: privatePathOf(input) ?? '' } : {}),
+						maxBytes: database
+							? ceilingOf(input) * DUMP_LIMIT_FACTOR
+							: Math.min(
+									FILES_LIMIT_BYTES,
+									filesArchiveLimit(Math.min(ceilingOf(input), FILES_BODY_BYTES))
+								)
+					},
+					() => fenced(ctx)
+				)
+		);
+		if (database && streamed.bytes === 0) {
+			throw new ImportError('dump_empty', 'the server returned an empty database dump');
 		}
-	);
+		return streamed;
+	});
 }
 
 // #endregion
@@ -217,7 +242,8 @@ async function convertAll(
 	deps: ImportDeps,
 	input: SiteImportInput,
 	dump: Streamed
-): Promise<Streamed> {
+): Promise<Streamed & { lossy: number }> {
+	if (dialectOf(input) === 'pgsql') return convertPgAll(ctx, deps, input, dump);
 	const partBytes = partBytesOf(input);
 	let offset = 0;
 	let seq = 0;
@@ -265,7 +291,131 @@ async function convertAll(
 					`the converted database is larger than the ${ceilingOf(input)} bytes a site accepts in a restore`
 				);
 			}
-			return { parts: seq, bytes };
+			return { parts: seq, bytes, lossy: 0 };
+		},
+		{ begin: false }
+	);
+}
+
+// a pg_dump is read twice. The first pass finds every cut and keeps the statements that are not
+// data; the tables come from those, then each cut is converted with them, and the indexes replay
+// last. A part is written under its own key, so a replayed step writes the same one again.
+async function convertPgAll(
+	ctx: Ctx,
+	deps: ImportDeps,
+	input: SiteImportInput,
+	dump: Streamed
+): Promise<Streamed & { lossy: number }> {
+	const { orgId, operationId } = input;
+	const partBytes = partBytesOf(input);
+	const dumpKey = (part: number) => importKeys.dump(orgId, operationId, part);
+	const cuts: number[] = [];
+	let offset = 0;
+	while (offset < dump.bytes) {
+		const at = offset;
+		const n = cuts.length;
+		const { cut } = await runStep(
+			ctx,
+			`scan.${n}`,
+			'convert',
+			async () => {
+				await fenced(ctx);
+				const window = await readWindow(
+					deps.blobs,
+					dumpKey,
+					partBytes,
+					dump.bytes,
+					at,
+					partBytes
+				);
+				const last = at + window.byteLength >= dump.bytes;
+				const scanned = await deps.converter.scanPg(window, last);
+				if (scanned.cut <= 0) {
+					throw new ImportError('dump_failed', 'a conversion step made no progress');
+				}
+				await deps.blobs.put(importKeys.ddlPart(orgId, operationId, n), utf8(scanned.ddl));
+				return { cut: scanned.cut };
+			},
+			{ begin: n === 0, finish: false }
+		);
+		cuts.push(cut);
+		offset += cut;
+	}
+
+	const schema = await runStep(
+		ctx,
+		'convert.schema',
+		'convert',
+		async () => {
+			await fenced(ctx);
+			const texts: string[] = [];
+			for (let n = 0; n < cuts.length; n++) {
+				const part = await deps.blobs.get(importKeys.ddlPart(orgId, operationId, n));
+				if (part === null) throw new ImportError('part_missing', `part ${n} is missing`);
+				texts.push(new TextDecoder().decode(part));
+			}
+			const ddl = texts.join('\n');
+			const converted = await deps.converter.schemaPg(ddl);
+			const tables = utf8(converted.tables);
+			await deps.blobs.put(importKeys.ddl(orgId, operationId), utf8(ddl));
+			await deps.blobs.put(importKeys.sql(orgId, operationId, 0), tables);
+			await deps.blobs.put(importKeys.indexes(orgId, operationId), utf8(converted.indexes));
+			return { bytes: tables.byteLength, lossy: converted.lossy.length };
+		},
+		{ begin: false, finish: false }
+	);
+
+	let bytes = schema.bytes;
+	let at = 0;
+	for (const [index, cut] of cuts.entries()) {
+		const start = at;
+		const n = index + 1;
+		const done = await runStep(
+			ctx,
+			`convert.${n}`,
+			'convert',
+			async () => {
+				await fenced(ctx);
+				const stored = await deps.blobs.get(importKeys.ddl(orgId, operationId));
+				if (stored === null) throw new ImportError('part_missing', 'the schema is missing');
+				const window = await readWindow(
+					deps.blobs,
+					dumpKey,
+					partBytes,
+					dump.bytes,
+					start,
+					cut
+				);
+				const converted = await deps.converter.dataPg(
+					window,
+					new TextDecoder().decode(stored)
+				);
+				const sql = utf8(converted.sql);
+				await deps.blobs.put(importKeys.sql(orgId, operationId, n), sql);
+				return { bytes: sql.byteLength };
+			},
+			{ begin: false, finish: false }
+		);
+		bytes += done.bytes;
+		at += cut;
+	}
+
+	return runStep(
+		ctx,
+		'convert.complete',
+		'convert',
+		async () => {
+			const indexes = await deps.blobs.get(importKeys.indexes(orgId, operationId));
+			if (indexes === null) throw new ImportError('part_missing', 'the indexes are missing');
+			await deps.blobs.put(importKeys.sql(orgId, operationId, cuts.length + 1), indexes);
+			const total = bytes + indexes.byteLength;
+			if (!restorable(total, ceilingOf(input))) {
+				throw new ImportError(
+					'restore_too_large',
+					`the converted database is larger than the ${ceilingOf(input)} bytes a site accepts in a restore`
+				);
+			}
+			return { parts: cuts.length + 2, bytes: total, lossy: schema.lossy };
 		},
 		{ begin: false }
 	);
@@ -278,13 +428,16 @@ async function convertArchive(
 	deps: ImportDeps,
 	input: SiteImportInput,
 	sql: Streamed,
-	archive: Streamed
+	archive: Streamed,
+	scheme: 'public' | 'private' = 'public'
 ): Promise<Streamed & { links: number }> {
-	return runStep(ctx, 'files-convert', 'files-convert', async () => {
+	const name = scheme === 'public' ? 'files-convert' : 'private-convert';
+	return runStep(ctx, name, name, async () => {
 		await fenced(ctx);
+		const keyOf = scheme === 'public' ? importKeys.files : importKeys.private;
 		const tar = await readWindow(
 			deps.blobs,
-			(part) => importKeys.files(input.orgId, input.operationId, part),
+			(part) => keyOf(input.orgId, input.operationId, part),
 			partBytesOf(input),
 			archive.bytes,
 			0,
@@ -293,7 +446,8 @@ async function convertArchive(
 		const converted = convertFiles(tar, {
 			nowMs: deps.now(),
 			ceilingBytes: ceilingOf(input),
-			databaseBytes: sql.bytes
+			databaseBytes: sql.bytes,
+			scheme
 		});
 		if (converted.files === 0) return { ...sql, links: converted.links };
 		await deps.blobs.put(
@@ -336,34 +490,55 @@ async function sendDatabase(
 	sql: Streamed
 ): Promise<Sent> {
 	const { create } = input;
-	return runStep(ctx, 'restore', 'restore', async () => {
-		await fenced(ctx);
-		const site = await openSite(
-			deps,
-			{ id: create.site.id, orgId: input.orgId, accountId: create.site.accountId },
-			{ notReady: 'target_not_ready', foreign: 'target_other_organisation' }
-		);
-		const parts: Uint8Array[] = [];
-		for (let seq = 0; seq < sql.parts; seq++) {
-			const bytes = await deps.blobs.get(importKeys.sql(input.orgId, input.operationId, seq));
-			if (bytes === null) throw new ImportError('part_missing', `part ${seq} is missing`);
-			parts.push(bytes);
-		}
-		const body = joinParts(parts);
-		if (!restorable(body.byteLength, ceilingOf(input))) {
-			throw new ImportError(
-				'restore_too_large',
-				`the converted database is larger than the ${ceilingOf(input)} bytes a site accepts in a restore`
+	const keyOf = (seq: number) => importKeys.sql(input.orgId, input.operationId, seq);
+	const sent = await runStep(
+		ctx,
+		'restore',
+		'restore',
+		async () => {
+			await fenced(ctx);
+			const site = await openSite(
+				deps,
+				{ id: create.site.id, orgId: input.orgId, accountId: create.site.accountId },
+				{ notReady: 'target_not_ready', foreign: 'target_other_organisation' }
 			);
-		}
-		const target: LandTarget = {
-			siteId: create.site.id,
-			hostname: site.hostname,
-			ownerTokenId: site.ownerTokenId
-		};
-		await deps.lander.database(target, input.operationId, body);
-		return { target, startedAt: deps.now() };
-	});
+			const target: LandTarget = {
+				siteId: create.site.id,
+				hostname: site.hostname,
+				ownerTokenId: site.ownerTokenId
+			};
+			// a body above one request goes through the paged restore, when the new site has it
+			const route = await chooseRoute(deps, target, sql.bytes, ceilingOf(input));
+			if (route === 'paged') return { target, route };
+			const parts: Uint8Array[] = [];
+			for (let seq = 0; seq < sql.parts; seq++) {
+				const bytes = await deps.blobs.get(keyOf(seq));
+				if (bytes === null) throw new ImportError('part_missing', `part ${seq} is missing`);
+				parts.push(bytes);
+			}
+			const body = joinParts(parts);
+			if (!restorable(body.byteLength, ceilingOf(input))) {
+				throw new ImportError(
+					'restore_too_large',
+					`the converted database is larger than the ${ceilingOf(input)} bytes a site accepts in a restore`
+				);
+			}
+			await deps.lander.database(target, input.operationId, body);
+			return { target, route };
+		},
+		{ finish: false }
+	);
+	if (sent.route === 'single') {
+		return { target: sent.target, startedAt: await finishRestore(ctx) };
+	}
+	const startedAt = await landPaged(
+		ctx,
+		deps,
+		{ ...sent.target, label: input.operationId },
+		Array.from({ length: sql.parts }, (_, seq) => keyOf(seq)),
+		ceilingOf(input)
+	);
+	return { target: sent.target, startedAt };
 }
 
 async function applyDatabase(
@@ -526,6 +701,7 @@ export async function runSiteImport(
 	const resources = planResources(create.site, create.site.config, { database: create.database });
 	const carriesFiles = (input.dossier.fileCount ?? 0) > 0;
 	let left = 0;
+	let lossy = 0;
 	try {
 		await startOperation(ctx);
 		await acquireLease(ctx, 'lease');
@@ -534,13 +710,19 @@ export async function runSiteImport(
 
 		const dump = await stream(ctx, deps, input, 'database');
 		const archive = carriesFiles ? await stream(ctx, deps, input, 'files') : null;
+		const privateArchive = hasPrivate(input) ? await stream(ctx, deps, input, 'private') : null;
 		const converted = await convertAll(ctx, deps, input, dump);
-		const withFiles =
-			archive === null
-				? { ...converted, links: 0 }
-				: await convertArchive(ctx, deps, input, converted, archive);
-		const sql: Streamed = { parts: withFiles.parts, bytes: withFiles.bytes };
-		left = withFiles.links;
+		let sql: Streamed = { parts: converted.parts, bytes: converted.bytes };
+		for (const [tar, scheme] of [
+			[archive, 'public'],
+			[privateArchive, 'private']
+		] as const) {
+			if (tar === null) continue;
+			const withFiles = await convertArchive(ctx, deps, input, sql, tar, scheme);
+			sql = { parts: withFiles.parts, bytes: withFiles.bytes };
+			left += withFiles.links;
+		}
+		lossy = converted.lossy;
 
 		const target = phase(ctx, 'target');
 		await reserveName(target, create);
@@ -565,7 +747,7 @@ export async function runSiteImport(
 	}
 	await finishSuccess(
 		ctx,
-		`${create.site.id} was imported at ${create.hostname}${left > 0 ? `; ${left} links in the files folder were left behind` : ''}`
+		`${create.site.id} was imported at ${create.hostname}${left > 0 ? `; ${left} links in the files folder were left behind` : ''}${lossy > 0 ? `; ${lossy} PostgreSQL functions or constraints were left behind` : ''}`
 	);
 	await releaseLease(ctx);
 	return { status: 'succeeded' };

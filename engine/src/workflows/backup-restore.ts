@@ -30,6 +30,7 @@ import {
 	type Ctx,
 	type Outcome
 } from './common';
+import { chooseRoute, finishRestore, landPaged } from './restore-pages';
 
 export interface BackupRestoreInput {
 	operationId: string;
@@ -179,10 +180,13 @@ async function loadManifest(deps: BackupDeps, backup: BackupRecord): Promise<Bac
 	return manifest;
 }
 
+// every part is checked against the manifest; the bytes are kept only when the caller will send
+// them in one body, so a large dump is never held whole
 async function readParts(
 	deps: BackupDeps,
 	backup: BackupRecord,
-	manifest: BackupManifest
+	manifest: BackupManifest,
+	keep = true
 ): Promise<Uint8Array[]> {
 	const parts: Uint8Array[] = [];
 	for (const part of manifest.parts) {
@@ -190,7 +194,7 @@ async function readParts(
 			backupKeys.part(backup.organizationId, backup.siteId, backup.id, part.seq)
 		);
 		await checkPart(part, bytes);
-		parts.push(bytes as Uint8Array);
+		if (keep) parts.push(bytes as Uint8Array);
 	}
 	return parts;
 }
@@ -267,35 +271,85 @@ export async function grant(
 	});
 }
 
+// the stored statements that ride after a backup's own parts, such as files copied from the source
+export interface DumpExtra {
+	keys: readonly string[];
+	bytes: number;
+}
+
 // the import carries the operation id as its label, so a resumed step finds its own import and
-// does not send the dump twice
+// does not send the dump twice. A body that fits one request goes in one call; a larger one goes
+// through the paged restore, when the site has it
 export async function sendDump(
 	ctx: Ctx,
 	deps: BackupDeps,
 	input: BackupRestoreInput,
-	checked: Checked
+	checked: Checked,
+	extra: DumpExtra = { keys: [], bytes: 0 }
 ): Promise<{ startedAt: number; bytes: number }> {
-	return runStep(ctx, 'restore', 'restore', async () => {
-		await fenced(ctx);
-		const { backup, manifest } = await loadBackup(deps, input);
-		const body = joinParts(await readParts(deps, backup, manifest));
-		const ceiling = input.restoreCeilingBytes ?? DEFAULT_RESTORE_CEILING_BYTES;
-		if (!restorable(body.byteLength, ceiling)) {
-			throw new BackupError(
-				'not_restorable',
-				`${backup.id} is larger than the site accepts in a restore`
-			);
-		}
-		await deps.custody.withOwnerToken(input.siteId, checked.ownerTokenId, async (bearer) => {
-			const state = await deps.worker.importState(checked.hostname, checked.label, {
-				bearer
-			});
-			if (state === 'absent') {
-				await deps.worker.restore(checked.hostname, body, checked.label, { bearer });
+	const ceiling = input.restoreCeilingBytes ?? DEFAULT_RESTORE_CEILING_BYTES;
+	const target = {
+		siteId: input.siteId,
+		hostname: checked.hostname,
+		ownerTokenId: checked.ownerTokenId,
+		label: checked.label
+	};
+	const sent = await runStep(
+		ctx,
+		'restore',
+		'restore',
+		async () => {
+			await fenced(ctx);
+			const { backup, manifest } = await loadBackup(deps, input);
+			const total = backup.bytes + extra.bytes;
+			const route = await chooseRoute(deps, target, total, ceiling);
+			if (route === 'paged') {
+				await readParts(deps, backup, manifest, false);
+				return { route, bytes: total };
 			}
-		});
-		return { startedAt: deps.now(), bytes: body.byteLength };
-	});
+			const stored = await readParts(deps, backup, manifest);
+			for (const key of extra.keys) {
+				const bytes = await deps.blobs.get(key);
+				if (bytes === null)
+					throw new BackupError('part_missing', 'a part of the dump is missing');
+				stored.push(bytes);
+			}
+			const body = joinParts(stored);
+			if (!restorable(body.byteLength, ceiling)) {
+				throw new BackupError(
+					'not_restorable',
+					`${backup.id} is larger than the site accepts in a restore`
+				);
+			}
+			await deps.custody.withOwnerToken(
+				input.siteId,
+				checked.ownerTokenId,
+				async (bearer) => {
+					const state = await deps.worker.importState(checked.hostname, checked.label, {
+						bearer
+					});
+					if (state === 'absent') {
+						await deps.worker.restore(checked.hostname, body, checked.label, {
+							bearer
+						});
+					}
+				}
+			);
+			return { route, bytes: body.byteLength };
+		},
+		{ finish: false }
+	);
+	if (sent.route === 'single') {
+		return { startedAt: await finishRestore(ctx), bytes: sent.bytes };
+	}
+	const { backup } = await loadBackup(deps, input);
+	const keys = [
+		...Array.from({ length: backup.parts }, (_, seq) =>
+			backupKeys.part(backup.organizationId, backup.siteId, backup.id, seq)
+		),
+		...extra.keys
+	];
+	return { startedAt: await landPaged(ctx, deps, target, keys, ceiling), bytes: sent.bytes };
 }
 
 export async function apply(

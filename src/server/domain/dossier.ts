@@ -1,3 +1,5 @@
+import { FILES_BODY_BYTES, mebibytes, SINGLE_RESTORE_BYTES } from '../../shared/restore-limits';
+
 export type FindingStatus = 'automatic' | 'requires choice' | 'unsupported' | 'information';
 
 export interface Finding {
@@ -25,6 +27,9 @@ export interface Dossier {
 	refusals: string[];
 	estimate: { bytes: number | null; fileCount: number | null };
 	findings: Finding[];
+	// what the import reads from the server beyond the size: the database kind and the private folder
+	database: 'mysql' | 'pgsql';
+	privateFiles: string | null;
 }
 
 const majorOf = (version: string | null): number | null => {
@@ -32,8 +37,9 @@ const majorOf = (version: string | null): number | null => {
 	return match?.[1] === undefined ? null : Number(match[1]);
 };
 
-const DRUPAL_MAJOR = 11;
-const DATABASES = ['mysql', 'mariadb'];
+export const DRUPAL_MAJOR = 11;
+const MYSQL_DRIVERS = ['mysql', 'mariadb'];
+const PGSQL_DRIVERS = ['pgsql', 'postgres'];
 
 // the files travel in the restore body as hex, two characters a byte, plus a few statements a file
 const FILE_ROW_BYTES = 1024;
@@ -73,13 +79,26 @@ export function dossierFor(survey: SurveyInput, ceilingBytes: number): Dossier {
 	}
 
 	const driver = survey.database.driver;
+	let database: Dossier['database'] = 'mysql';
 	if (driver === null) {
 		refusals.push('The database type could not be read');
-	} else if (DATABASES.includes(driver)) {
+	} else if (MYSQL_DRIVERS.includes(driver)) {
 		findings.push({
 			status: 'automatic',
 			title: 'Database',
 			detail: 'MySQL or MariaDB converts to SQLite on the import path'
+		});
+	} else if (PGSQL_DRIVERS.includes(driver)) {
+		database = 'pgsql';
+		findings.push({
+			status: 'automatic',
+			title: 'Database',
+			detail: 'PostgreSQL converts to SQLite on the import path'
+		});
+		findings.push({
+			status: 'information',
+			title: 'Not Carried From PostgreSQL',
+			detail: 'Functions, foreign keys and check constraints in the database are left behind. The new site does not need the functions Drupal installs, and a sequence continues from the largest stored id. A trigger or a view stops the import, and the check cannot tell whether the database has one.'
 		});
 	} else {
 		refusals.push(`A ${driver} database cannot be imported`);
@@ -119,14 +138,12 @@ export function dossierFor(survey: SurveyInput, ceilingBytes: number): Dossier {
 			detail: `${count} files, ${kb} KB`
 		});
 	}
-	if (survey.files.private) {
-		refusals.push(
-			`The site keeps private files at ${survey.files.private}, and private files are not carried into a new site yet`
-		);
+	const privateFiles = survey.files.private ? survey.files.private : null;
+	if (privateFiles !== null) {
 		findings.push({
-			status: 'unsupported',
+			status: 'automatic',
 			title: 'Private Files',
-			detail: `The private files folder at ${survey.files.private} is not carried, and the check cannot tell whether it holds files`
+			detail: `The private files folder at ${privateFiles} is copied into the new site's private files. The check does not measure it, so the import stops before anything is made if it is too large to carry with the database and the public files.`
 		});
 	}
 
@@ -177,30 +194,43 @@ export function dossierFor(survey: SurveyInput, ceilingBytes: number): Dossier {
 	if (bytes === null) {
 		refusals.push('The size of the site could not be estimated');
 	} else if (survey.database.bytes !== null && survey.database.bytes > ceilingBytes) {
-		const mib = Math.floor(ceilingBytes / (1024 * 1024));
+		const mib = mebibytes(ceilingBytes);
 		refusals.push(
-			`The database is larger than the ${mib} MiB a new site accepts in one restore. A paged restore is needed for a larger database and is not available yet`
+			ceilingBytes > SINGLE_RESTORE_BYTES
+				? `The database is ${Math.ceil(survey.database.bytes / (1024 * 1024))} MiB, over the ${mib} MiB a new site accepts`
+				: `The database is larger than the ${mib} MiB a new site accepts in one restore. Restoring a larger database in pieces is not switched on yet`
 		);
 	}
+	// the files ride in the same restore as the database, and the engine turns them into statements
+	// in memory, so they have a room of their own on top of the shared ceiling
 	if (
 		survey.database.bytes !== null &&
 		survey.database.bytes <= ceilingBytes &&
 		kb !== null &&
 		count !== null &&
-		count > 0 &&
-		survey.database.bytes + filesRestoreBytes(kb, count) > ceilingBytes
+		count > 0
 	) {
-		const mib = Math.floor(ceilingBytes / (1024 * 1024));
-		refusals.push(
-			`The database and the files together are larger than the ${mib} MiB a new site accepts in one restore. A paged restore is needed for a larger import and is not available yet`
-		);
-		const found = findings.findIndex((finding) => finding.title === 'Uploaded Files');
-		if (found >= 0) {
-			findings[found] = {
-				status: 'unsupported',
-				title: 'Uploaded Files',
-				detail: `${count} files, ${kb} KB, which with the database is more than one restore takes`
-			};
+		const needed = filesRestoreBytes(kb, count);
+		const shared = ceilingBytes - survey.database.bytes;
+		const mib = mebibytes(ceilingBytes);
+		const tooLarge =
+			needed > shared
+				? ceilingBytes > SINGLE_RESTORE_BYTES
+					? `The database and the files together are larger than the ${mib} MiB a new site accepts`
+					: `The database and the files together are larger than the ${mib} MiB a new site accepts in one restore. Restoring a larger import in pieces is not switched on yet`
+				: needed > FILES_BODY_BYTES
+					? `The files are larger than the ${mebibytes(FILES_BODY_BYTES)} MiB of files one import carries`
+					: null;
+		if (tooLarge !== null) {
+			refusals.push(tooLarge);
+			const found = findings.findIndex((finding) => finding.title === 'Uploaded Files');
+			if (found >= 0) {
+				findings[found] = {
+					status: 'unsupported',
+					title: 'Uploaded Files',
+					detail: `${count} files, ${kb} KB, which with the database is more than one import takes`
+				};
+			}
 		}
 	}
 
@@ -210,6 +240,8 @@ export function dossierFor(survey: SurveyInput, ceilingBytes: number): Dossier {
 		importable: verdict === 'ready',
 		refusals,
 		estimate: { bytes, fileCount: count },
-		findings
+		findings,
+		database,
+		privateFiles
 	};
 }

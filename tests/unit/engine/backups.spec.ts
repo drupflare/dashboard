@@ -20,6 +20,7 @@ import {
 import { freezePlan, newOperation } from '../../../engine/src/operations/state';
 import { NotOwnedError } from '../../../engine/src/ownership';
 import type { BackupDeps } from '../../../engine/src/ports';
+import { cutParts } from '../../../engine/src/restore-paging';
 import { StepFailed } from '../../../engine/src/step';
 import {
 	planBackupCreate,
@@ -35,6 +36,7 @@ import {
 	type BackupRestoreInput
 } from '../../../engine/src/workflows/backup-restore';
 import type { Outcome } from '../../../engine/src/workflows/common';
+import { MAX_RESTORE_PAGED_BYTES, SINGLE_RESTORE_BYTES } from '../../../src/shared/restore-limits';
 import { dumpOf, fakeBlobs, fakeKv, fakeWorkers, MARKER } from './backup-fakes';
 import {
 	FAKE_OWNER_TOKEN,
@@ -69,6 +71,9 @@ function trip(outcome: Outcome, code: BackupErrorCode) {
 }
 
 interface WorldOptions {
+	dump?: string;
+	source?: Parameters<ReturnType<typeof fakeWorkers>['add']>[2];
+	target?: Parameters<ReturnType<typeof fakeWorkers>['add']>[2];
 	dumpRows?: number;
 	ceiling?: number;
 	files?: boolean;
@@ -137,11 +142,12 @@ async function backupWorld(options: WorldOptions = {}) {
 	};
 	if (options.config !== false) await claim(TARGET, 'kv', 'CONFIG_KV', TARGET_CONFIG_KV);
 	if (options.files !== false) await claim(sourceId, 'r2', 'FILES', 'bucket-source-files');
-	const dump = dumpOf(options.dumpRows ?? 40);
-	worker.add(SOURCE_HOST, sourceId, { sql: dump });
+	const dump = options.dump ?? dumpOf(options.dumpRows ?? 40);
+	worker.add(SOURCE_HOST, sourceId, { sql: dump, ...options.source });
 	worker.add(TARGET_HOST, TARGET, {
 		sql: "INSERT INTO t VALUES (0, 'old');\n",
-		adoptOnApply: options.files === false ? 0 : 2
+		adoptOnApply: options.files === false ? 0 : 2,
+		...options.target
 	});
 	const probes: string[] = [];
 	const deps: BackupDeps = {
@@ -783,6 +789,252 @@ describe('the secret scan', () => {
 });
 
 describe('the worker adapter', () => {
+	describe('the paged and offloaded routes', () => {
+		const auth = { bearer: 't' };
+		const answering = (
+			status: number,
+			body: unknown = {},
+			headers: Record<string, string> = {}
+		) => {
+			const seen: { url: string; method: string; headers: Headers; body: unknown }[] = [];
+			const worker = backupWorkerOf(
+				(async (input, init) => {
+					seen.push({
+						url: String(input),
+						method: init?.method ?? 'GET',
+						headers: new Headers(init?.headers),
+						body: init?.body
+					});
+					return new Response(typeof body === 'string' ? body : JSON.stringify(body), {
+						status,
+						headers
+					});
+				}) as typeof fetch,
+				1_000
+			);
+			return { worker, seen };
+		};
+
+		it('probes the route and treats a missing one as an old site', async () => {
+			expect(
+				await answering(200, { ok: true, upload: null }).worker.pagedRestoreSupported(
+					'h.app',
+					auth
+				)
+			).toBe(true);
+			expect(await answering(404, 'no').worker.pagedRestoreSupported('h.app', auth)).toBe(
+				false
+			);
+			expect(await answering(501, 'no').worker.pagedRestoreSupported('h.app', auth)).toBe(
+				false
+			);
+			await expect(
+				answering(503).worker.pagedRestoreSupported('h.app', auth)
+			).rejects.toMatchObject({
+				name: 'SiteAnswered'
+			});
+			await expect(
+				answering(401).worker.pagedRestoreSupported('h.app', auth)
+			).rejects.toMatchObject({
+				code: 'owner_token_rejected'
+			});
+		});
+
+		it('begins with the declaration and reads the upload and the held parts', async () => {
+			const { worker, seen } = answering(200, {
+				ok: true,
+				upload: 'up_1',
+				receivedParts: [0, 2]
+			});
+			const upload = await worker.beginRestore(
+				'h.app',
+				{ bytes: 10, parts: 3, sha256: 'a'.repeat(64), label: 'op_1' },
+				auth
+			);
+			expect(upload).toEqual({ upload: 'up_1', receivedParts: [0, 2] });
+			expect(seen[0]!.url).toBe('https://h.app/restore-parts?action=begin');
+			expect(JSON.parse(String(seen[0]!.body))).toEqual({
+				bytes: 10,
+				parts: 3,
+				sha256: 'a'.repeat(64),
+				label: 'op_1'
+			});
+			await expect(
+				answering(200, { ok: true }).worker.beginRestore(
+					'h.app',
+					{ bytes: 1, parts: 1, sha256: 'a'.repeat(64), label: 'x' },
+					auth
+				)
+			).rejects.toThrow('not readable');
+		});
+
+		it('puts a part with its digest and length', async () => {
+			const { worker, seen } = answering(200, { ok: true, part: 4, stored: true });
+			await worker.putRestorePart(
+				'h.app',
+				'up 1',
+				4,
+				new Uint8Array(7),
+				'b'.repeat(64),
+				auth
+			);
+			expect(seen[0]!.url).toBe(
+				'https://h.app/restore-parts?action=put&upload=up%201&part=4'
+			);
+			expect(seen[0]!.method).toBe('PUT');
+			expect(seen[0]!.headers.get('x-part-sha256')).toBe('b'.repeat(64));
+			expect(seen[0]!.headers.get('authorization')).toBe('Bearer t');
+		});
+
+		it.each([
+			[413, 'too_large', 'restore_too_large'],
+			[409, 'busy', 'restore_busy'],
+			[409, 'incomplete', 'restore_rejected'],
+			[422, 'digest', 'restore_rejected'],
+			[410, 'expired', 'restore_rejected'],
+			[507, 'storage_full', 'restore_rejected']
+		])('turns a %s %s answer into the permanent %s', async (status, code, expected) => {
+			await expect(
+				answering(status, { ok: false, code }).worker.putRestorePart(
+					'h.app',
+					'up_1',
+					0,
+					new Uint8Array(1),
+					'c'.repeat(64),
+					auth
+				)
+			).rejects.toMatchObject({ code: expected });
+		});
+
+		it('retries a 5xx and a timeout answer and never quotes the body', async () => {
+			for (const status of [500, 502, 503, 408, 429]) {
+				await expect(
+					answering(status, 'secret body').worker.commitRestore('h.app', 'up_1', auth)
+				).rejects.toMatchObject({ name: 'SiteAnswered' });
+			}
+			const error = await answering(422, { code: 'digest', note: 'secret body' })
+				.worker.putRestorePart('h.app', 'up_1', 0, new Uint8Array(1), 'c'.repeat(64), auth)
+				.catch((caught: Error) => caught);
+			expect((error as Error).message).not.toContain('secret body');
+			expect((error as Error).message).toContain('422 digest');
+		});
+
+		it('reads status as null when the site holds no upload', async () => {
+			expect(
+				await answering(200, { ok: true, upload: null }).worker.restoreStatus(
+					'h.app',
+					'up_1',
+					auth
+				)
+			).toBeNull();
+			expect(
+				await answering(404, { code: 'unknown_upload' }).worker.restoreStatus(
+					'h.app',
+					'up_1',
+					auth
+				)
+			).toBeNull();
+			expect(
+				await answering(200, {
+					ok: true,
+					upload: 'up_1',
+					receivedParts: [1]
+				}).worker.restoreStatus('h.app', 'up_1', auth)
+			).toEqual({ upload: 'up_1', receivedParts: [1] });
+			await expect(
+				answering(404, 'plain').worker.restoreStatus('h.app', 'up_1', auth)
+			).rejects.toMatchObject({
+				code: 'restore_rejected'
+			});
+		});
+
+		it('commits, reports a finished upload as gone, and aborts', async () => {
+			expect(
+				await answering(200, {
+					ok: true,
+					done: false,
+					assembledParts: 3,
+					parts: 9
+				}).worker.commitRestore('h.app', 'up_1', auth)
+			).toEqual({ done: false, assembledParts: 3, gone: false });
+			expect(
+				await answering(404, { code: 'unknown_upload' }).worker.commitRestore(
+					'h.app',
+					'up_1',
+					auth
+				)
+			).toEqual({ done: false, assembledParts: 0, gone: true });
+			const { worker, seen } = answering(200, { ok: true, aborted: true });
+			await worker.abortRestore('h.app', 'up_1', auth);
+			expect(seen[0]!.url).toBe('https://h.app/restore-parts?action=abort&upload=up_1');
+		});
+
+		it('lists offloaded files with keyset paging and reads null for an old site', async () => {
+			const page = {
+				ok: true,
+				files: [
+					{
+						uri: 'public://a.png',
+						size: 5,
+						contentType: 'image/png',
+						sha256: 'd'.repeat(64),
+						modified: 9
+					}
+				],
+				next: 'public://a.png',
+				total: { files: 2, bytes: 8 }
+			};
+			const { worker, seen } = answering(200, page);
+			expect(await worker.offloadedPage('h.app', 'public://z', 50, auth)).toEqual({
+				files: [
+					{
+						uri: 'public://a.png',
+						size: 5,
+						contentType: 'image/png',
+						sha256: 'd'.repeat(64),
+						modified: 9
+					}
+				],
+				next: 'public://a.png',
+				total: { files: 2, bytes: 8 }
+			});
+			expect(seen[0]!.url).toBe('https://h.app/offloaded?limit=50&after=public%3A%2F%2Fz');
+			expect(
+				await answering(404, 'no').worker.offloadedPage('h.app', null, 1, auth)
+			).toBeNull();
+			expect(
+				await answering(501, 'no').worker.offloadedPage('h.app', null, 1, auth)
+			).toBeNull();
+		});
+
+		it('streams one file with its size and digest and refuses a bad answer', async () => {
+			const ok = answering(200, 'hello', {
+				'x-cfw-file-size': '5',
+				'x-cfw-file-sha256': 'e'.repeat(64)
+			});
+			const streamed = await ok.worker.offloadedStream('h.app', 'public://a b.txt', auth);
+			expect(streamed.size).toBe(5);
+			expect(streamed.sha256).toBe('e'.repeat(64));
+			expect(await new Response(streamed.body).text()).toBe('hello');
+			expect(ok.seen[0]!.url).toBe('https://h.app/offloaded?uri=public%3A%2F%2Fa%20b.txt');
+			await expect(
+				answering(401).worker.offloadedStream('h.app', 'public://a', auth)
+			).rejects.toMatchObject({
+				code: 'owner_token_rejected'
+			});
+			await expect(
+				answering(502, { code: 'storage_unavailable' }).worker.offloadedStream(
+					'h.app',
+					'public://a',
+					auth
+				)
+			).rejects.toMatchObject({ name: 'SiteAnswered' });
+			await expect(
+				answering(200, 'x').worker.offloadedStream('h.app', 'public://a', auth)
+			).rejects.toMatchObject({ name: 'SiteAnswered' });
+		});
+	});
+
 	it('stays on the site host, encodes the cursor and sends the token as a bearer', async () => {
 		const seen: { url: string; auth: string | null }[] = [];
 		const worker = backupWorkerOf(
@@ -802,6 +1054,47 @@ describe('the worker adapter', () => {
 		});
 		expect(seen[0]!.url).not.toContain('secrets');
 		await expect(worker.exportPage('bad host', 'start', { bearer: 't' })).rejects.toBeDefined();
+	});
+
+	it('puts the mark on the restore address only when one is asked for, and reads the echo', async () => {
+		const seen: string[] = [];
+		const worker = (reply: Record<string, unknown>) =>
+			backupWorkerOf(
+				(async (input) => {
+					seen.push(String(input));
+					return Response.json(reply);
+				}) as typeof fetch,
+				1_000
+			);
+		const auth = { bearer: 't' };
+		const plain = await worker({ chunks: 2, statements: 5 }).restore(
+			'a.drupflare.app',
+			new Uint8Array(),
+			'promote-1',
+			auth
+		);
+		const ignored = await worker({ chunks: 2, statements: 5 }).restore(
+			'a.drupflare.app',
+			new Uint8Array(),
+			'promote-1',
+			auth,
+			'cutover-op_1'
+		);
+		const echoed = await worker({ chunks: 2, statements: 5, mark: 'cutover-op_1' }).restore(
+			'a.drupflare.app',
+			new Uint8Array(),
+			'promote-1',
+			auth,
+			'cutover-op_1'
+		);
+		expect(seen).toEqual([
+			'https://a.drupflare.app/restore?label=promote-1',
+			'https://a.drupflare.app/restore?label=promote-1&mark=cutover-op_1',
+			'https://a.drupflare.app/restore?label=promote-1&mark=cutover-op_1'
+		]);
+		expect(plain).toEqual({ chunks: 2, statements: 5 });
+		expect(ignored).toEqual({ chunks: 2, statements: 5 });
+		expect(echoed).toEqual({ chunks: 2, statements: 5, mark: 'cutover-op_1' });
 	});
 
 	it('maps each answer to a typed error or a retryable one', async () => {
@@ -922,8 +1215,212 @@ describe('the worker adapter', () => {
 	});
 });
 
+// #region the paged restore
+
+// rows of about a kilobyte, so a dump just over the single body ceiling is a few thousand lines
+const bigDump = (bytes: number) => {
+	const pad = 'x'.repeat(1000);
+	const rows = Math.ceil(bytes / 1_030);
+	return Array.from({ length: rows }, (_, n) => `INSERT INTO t VALUES (${n}, '${pad}');\n`).join(
+		''
+	);
+};
+const PAGED = { restoreCeilingBytes: MAX_RESTORE_PAGED_BYTES };
+const pagedWorld = (options: WorldOptions = {}) =>
+	backupWorld({
+		files: false,
+		dump: bigDump(SINGLE_RESTORE_BYTES + 100_000),
+		source: { aligned: true, pageChars: 1_000_000 },
+		...options
+	});
+
+async function pagedRestore(bw: Bw, options: Parameters<typeof runRestore>[1] = {}) {
+	await backedUp(bw, PAGED);
+	return runRestore(bw, { ...options, patch: { ...PAGED, ...options.patch } });
+}
+
+describe('the paged restore', () => {
+	it('restores a dump above 16 MiB in parts of at most 1 MiB and never calls the single route', async () => {
+		const bw = await pagedWorld();
+		const { outcome, executed } = await pagedRestore(bw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		const target = bw.worker.sites.get(TARGET_HOST)!;
+		expect(target.sql).toBe(bw.dump);
+		expect(bw.worker.calls.restores).toEqual([]);
+		expect(bw.worker.calls.begins).toHaveLength(1);
+		const [begun] = bw.worker.calls.begins;
+		expect(begun).toMatchObject({
+			label: RESTORE_OP,
+			bytes: new TextEncoder().encode(bw.dump).byteLength,
+			sha256: await sha256Hex(bw.dump)
+		});
+		expect(bw.worker.calls.puts).toHaveLength(begun!.parts);
+		expect(Math.max(...bw.worker.calls.puts.map((put) => put.bytes))).toBeLessThanOrEqual(
+			1024 * 1024
+		);
+		expect(bw.worker.calls.puts.reduce((sum, put) => sum + put.bytes, 0)).toBe(begun!.bytes);
+		expect(executed).toEqual(
+			expect.arrayContaining([
+				'restore',
+				'restore.plan',
+				'restore.begin',
+				'restore.put.0',
+				'restore.commit.0',
+				'restore.finish'
+			])
+		);
+		expect(bw.worker.calls.aborts).toBe(0);
+	}, 20_000);
+
+	it('keeps the single route for a dump at the ceiling of one body', async () => {
+		const bw = await backupWorld({
+			files: false,
+			dump: bigDump(SINGLE_RESTORE_BYTES - 400_000),
+			source: { aligned: true, pageChars: 1_000_000 }
+		});
+		const { outcome } = await pagedRestore(bw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(bw.worker.calls.restores).toHaveLength(1);
+		expect(bw.worker.calls.begins).toEqual([]);
+	}, 20_000);
+
+	it('puts only the parts a killed step left out, and the dump lands once', async () => {
+		const bw = await pagedWorld();
+		await backedUp(bw, PAGED);
+		const memo: Memo = new Map();
+		// start, lease, check, grant, restore, plan, begin, then the first group of puts
+		await expect(
+			runRestore(bw, { memo, script: { killDuring: 8 }, patch: PAGED })
+		).rejects.toBeInstanceOf(Killed);
+		expect(memo.has('restore.begin')).toBe(true);
+		expect(memo.has('restore.put.0')).toBe(false);
+		const first = bw.worker.calls.puts.length;
+		expect(first).toBeGreaterThan(10);
+		const { outcome } = await runRestore(bw, { memo, patch: PAGED });
+		expect(outcome).toEqual({ status: 'succeeded' });
+		const parts = bw.worker.calls.begins[0]!.parts;
+		expect(bw.worker.calls.puts).toHaveLength(parts);
+		expect(new Set(bw.worker.calls.puts.map((put) => put.part)).size).toBe(parts);
+		expect(bw.worker.sites.get(TARGET_HOST)!.sql).toBe(bw.dump);
+	}, 30_000);
+
+	it('does not send the dump again when the commit step lost its result', async () => {
+		const bw = await pagedWorld();
+		await backedUp(bw, PAGED);
+		const memo: Memo = new Map();
+		// the two groups of puts come before the first commit
+		await expect(
+			runRestore(bw, { memo, script: { killDuring: 10 }, patch: PAGED })
+		).rejects.toBeInstanceOf(Killed);
+		expect(memo.has('restore.put.1')).toBe(true);
+		expect(memo.has('restore.commit.0')).toBe(false);
+		expect(bw.worker.calls.commits).toBe(1);
+		const { outcome } = await runRestore(bw, { memo, patch: PAGED });
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(bw.worker.calls.begins).toHaveLength(1);
+		expect(bw.worker.sites.get(TARGET_HOST)!.imports).toHaveLength(1);
+	}, 30_000);
+
+	it('runs commit again until the site reports done', async () => {
+		const bw = await pagedWorld({ target: { commitsBeforeDone: 3 } });
+		const { outcome, executed } = await pagedRestore(bw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(executed.filter((name) => name.startsWith('restore.commit.'))).toHaveLength(4);
+		expect(bw.worker.calls.commits).toBe(4);
+	}, 20_000);
+
+	it('retries a part the site answered 503 and puts the same bytes', async () => {
+		const bw = await pagedWorld({ target: { putFailures: new Map([[2, 2]]) } });
+		const { outcome } = await pagedRestore(bw, { script: { retries: 3 } });
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(bw.worker.calls.puts.filter((put) => put.part === 2)).toHaveLength(1);
+		expect(bw.worker.sites.get(TARGET_HOST)!.sql).toBe(bw.dump);
+	}, 20_000);
+
+	it('aborts the upload on a digest mismatch and leaves the site as it was', async () => {
+		const bw = await pagedWorld({ target: { digestRefusals: new Set([1]) } });
+		const { outcome } = await pagedRestore(bw);
+		trip(outcome, 'restore_rejected');
+		expect(bw.worker.calls.aborts).toBe(1);
+		const target = bw.worker.sites.get(TARGET_HOST)!;
+		expect(target.upload).toBeNull();
+		expect(target.imports).toEqual([]);
+		expect(target.sql).toBe("INSERT INTO t VALUES (0, 'old');\n");
+	}, 20_000);
+
+	it('aborts when a part changed in the bucket after the plan', async () => {
+		const bw = await pagedWorld();
+		await backedUp(bw, PAGED);
+		const memo: Memo = new Map();
+		await expect(
+			runRestore(bw, { memo, script: { killAfter: 6 }, patch: PAGED })
+		).rejects.toBeInstanceOf(Killed);
+		expect(memo.has('restore.plan')).toBe(true);
+		const key = backupKeys.part(bw.world.orgId, bw.sourceId, BACKUP_ID, 0);
+		const changed = new Uint8Array(bw.blobs.objects.get(key)!);
+		changed[0] = changed[0] === 73 ? 105 : 73;
+		bw.blobs.objects.set(key, changed);
+		const { outcome } = await runRestore(bw, { memo, patch: PAGED });
+		expect(outcome.status === 'succeeded' ? '' : codeOf(outcome.reason)).toBe('part_changed');
+		expect(bw.worker.calls.aborts).toBe(1);
+		expect(bw.worker.sites.get(TARGET_HOST)!.imports).toEqual([]);
+	}, 30_000);
+
+	it('refuses a site that has no paged routes and leaves it untouched', async () => {
+		const bw = await pagedWorld({ target: { paged: false } });
+		const { outcome } = await pagedRestore(bw);
+		trip(outcome, 'restore_unsupported');
+		expect(bw.worker.calls.begins).toEqual([]);
+		expect(bw.worker.calls.restores).toEqual([]);
+		expect(bw.worker.sites.get(TARGET_HOST)!.imports).toEqual([]);
+	}, 20_000);
+
+	it('refuses when another upload is open on the site', async () => {
+		const bw = await pagedWorld();
+		bw.worker.sites.get(TARGET_HOST)!.upload = {
+			id: 'up_other',
+			label: 'someone else',
+			bytes: 5,
+			parts: 1,
+			sha256: 'f'.repeat(64),
+			received: new Map(),
+			commits: 0
+		};
+		const { outcome } = await pagedRestore(bw);
+		trip(outcome, 'restore_busy');
+		expect(bw.worker.sites.get(TARGET_HOST)!.upload?.id).toBe('up_other');
+	}, 20_000);
+
+	it('stops and aborts when the site never finishes assembling', async () => {
+		const bw = await pagedWorld({ target: { commitsBeforeDone: 10_000, stuckAssembled: 3 } });
+		const { outcome } = await pagedRestore(bw);
+		trip(outcome, 'restore_stalled');
+		expect(bw.worker.calls.aborts).toBe(1);
+		expect(bw.worker.calls.commits).toBeLessThan(10);
+	}, 20_000);
+
+	it('trips the cut errors and names the limits', () => {
+		const wide = new TextEncoder().encode(`INSERT INTO t VALUES ('${'x'.repeat(2_000)}');\n`);
+		const error = (() => {
+			try {
+				cutParts(wide, 1_000);
+			} catch (caught) {
+				return caught as BackupError;
+			}
+			throw new Error('expected a refusal');
+		})();
+		expect(error.code).toBe('restore_unaligned');
+		tripped.add('restore_unaligned');
+	});
+});
+
+// #endregion
+
 describe('every typed error', () => {
 	it('is tripped once by the cases above', () => {
-		expect([...tripped].sort()).toEqual([...BACKUP_ERROR_CODES].sort());
+		const elsewhere = ['files_copy_failed', 'files_unsupported', 'files_too_many'];
+		expect([...tripped].sort()).toEqual(
+			BACKUP_ERROR_CODES.filter((code) => !elsewhere.includes(code)).sort()
+		);
 	});
 });

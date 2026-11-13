@@ -28,7 +28,7 @@ export function filesArchiveLimit(roomBytes: number): number {
 export function tooLarge(ceilingBytes: number): ImportError {
 	return new ImportError(
 		'restore_too_large',
-		`the database and the files together are larger than the ${ceilingBytes} bytes a site accepts in a restore; a larger import waits on worker request 8 (a paged restore) and the Container path is not wired`
+		`the database and the files together are larger than the ${ceilingBytes} bytes an import carries in one restore`
 	);
 }
 
@@ -48,7 +48,7 @@ const MIME: Record<string, string> = {
 	html: 'text/html'
 };
 
-function mimeOf(path: string): string | null {
+export function mimeOf(path: string): string | null {
 	const name = path.slice(path.lastIndexOf('/') + 1);
 	const dot = name.lastIndexOf('.');
 	return dot < 0 ? null : (MIME[name.slice(dot + 1).toLowerCase()] ?? null);
@@ -56,7 +56,7 @@ function mimeOf(path: string): string | null {
 
 // the tables as the worker creates them, so a body that arrives before the site touched a file
 // still has somewhere to land
-const TABLES = [
+export const TABLES = [
 	`CREATE TABLE IF NOT EXISTS cfw_file (
       uri TEXT PRIMARY KEY,
       size INTEGER NOT NULL,
@@ -95,7 +95,7 @@ function hex(bytes: Uint8Array): string {
 
 // one chunk row; a value over the budget is an insert of its first slice as text, appends for the
 // rest and one unhex, because `||` on a blob yields text
-function chunkStatements(uri: string, seq: number, bytes: Uint8Array): string[] {
+export function chunkStatements(uri: string, seq: number, bytes: Uint8Array): string[] {
 	const literal = `x'${hex(bytes)}'`;
 	const head = `INSERT INTO "cfw_file_chunk" ("uri", "seq", "bytes") VALUES (${quote(uri)}, ${seq}, `;
 	if (literal.length <= LITERAL_BUDGET) return [`${head}${literal});`];
@@ -115,6 +115,31 @@ function chunkStatements(uri: string, seq: number, bytes: Uint8Array): string[] 
 	];
 }
 
+// the rows of one file ahead of its chunks: the old chunks go, and the row is written resident
+// (not evicted, no hash, no other site's prefix) so the site reads the bytes from its own database
+export function fileRowStatements(file: {
+	uri: string;
+	size: number;
+	chunks: number;
+	mime: string | null;
+	modified: number;
+	nowMs: number;
+}): string[] {
+	const { uri, size, chunks, mime, modified, nowMs } = file;
+	return [
+		`DELETE FROM "cfw_file_chunk" WHERE "uri" = ${quote(uri)};`,
+		`INSERT OR REPLACE INTO "cfw_file" ("uri", "size", "modified", "mime", "chunks", "mirrored", "rev", "touched", "evicted", "hash", "r2site") VALUES (${quote(uri)}, ${size}, ${modified}, ${mime === null ? 'NULL' : quote(mime)}, ${chunks}, 0, 1, ${nowMs}, 0, NULL, NULL);`
+	];
+}
+
+// the queue row is what makes the new site offload the file to its own bucket
+export const mirrorStatement = (uri: string, nowMs: number) =>
+	`INSERT OR REPLACE INTO "cfw_file_mirror_queue" ("uri", "op", "queued_at", "attempts", "last_error") VALUES (${quote(uri)}, 'put', ${nowMs}, 0, NULL);`;
+
+export function chunkCount(size: number): number {
+	return Math.max(1, Math.ceil(size / FILE_CHUNK_BYTES));
+}
+
 function fileStatements(uri: string, bytes: Uint8Array, mime: string | null, nowMs: number) {
 	const chunks: Uint8Array[] = [];
 	for (let at = 0; at < bytes.length; at += FILE_CHUNK_BYTES) {
@@ -122,10 +147,16 @@ function fileStatements(uri: string, bytes: Uint8Array, mime: string | null, now
 	}
 	if (chunks.length === 0) chunks.push(new Uint8Array(0));
 	return [
-		`DELETE FROM "cfw_file_chunk" WHERE "uri" = ${quote(uri)};`,
-		`INSERT OR REPLACE INTO "cfw_file" ("uri", "size", "modified", "mime", "chunks", "mirrored", "rev", "touched", "evicted", "hash", "r2site") VALUES (${quote(uri)}, ${bytes.length}, ${nowMs}, ${mime === null ? 'NULL' : quote(mime)}, ${chunks.length}, 0, 1, ${nowMs}, 0, NULL, NULL);`,
+		...fileRowStatements({
+			uri,
+			size: bytes.length,
+			chunks: chunks.length,
+			mime,
+			modified: nowMs,
+			nowMs
+		}),
 		...chunks.flatMap((chunk, seq) => chunkStatements(uri, seq, chunk)),
-		`INSERT OR REPLACE INTO "cfw_file_mirror_queue" ("uri", "op", "queued_at", "attempts", "last_error") VALUES (${quote(uri)}, 'put', ${nowMs}, 0, NULL);`
+		mirrorStatement(uri, nowMs)
 	];
 }
 
@@ -177,11 +208,14 @@ export interface FilesConvertOptions {
 	ceilingBytes: number;
 	// the converted database already counted against the ceiling
 	databaseBytes: number;
+	// public by default; the private folder's tar starts at the folder's own name, which is dropped
+	scheme?: 'public' | 'private';
 }
 
 // turns a plain tar of the public files into the statements the worker's own export writes for its
 // file store; nothing in the archive is followed or extracted, only read into rows
 export function convertFiles(archive: Uint8Array, options: FilesConvertOptions): FilesConversion {
+	const scheme = options.scheme ?? 'public';
 	const room = options.ceilingBytes - options.databaseBytes;
 	if (room <= 0 || archive.length > filesArchiveLimit(room)) throw tooLarge(options.ceilingBytes);
 	if (!closed(archive)) {
@@ -203,7 +237,7 @@ export function convertFiles(archive: Uint8Array, options: FilesConvertOptions):
 		}
 		// the largest file that can fit at all, since each byte is two hex digits
 		if (entries.some((entry) => entry.size > room / 2)) throw tooLarge(options.ceilingBytes);
-		tree = tarEntryTree(entries, 0);
+		tree = tarEntryTree(entries, scheme === 'private' ? 1 : 0);
 	} catch (error) {
 		if (error instanceof TarParseError) {
 			throw new ImportError(
@@ -237,7 +271,7 @@ export function convertFiles(archive: Uint8Array, options: FilesConvertOptions):
 			);
 		}
 		if (pieces.length === 0) add(`${TABLES.join('\n')}\n`);
-		const uri = `public://${path}`;
+		const uri = `${scheme}://${path}`;
 		add(`${fileStatements(uri, bytes, mimeOf(path), options.nowMs).join('\n')}\n`);
 		carried += bytes.byteLength;
 	}

@@ -22,6 +22,7 @@ import {
 	setBackupServices
 } from '../../../src/server/services/backups';
 import { resetApiDeps } from '../../../src/server/utils/define-api';
+import { MAX_RESTORE_PAGED_BYTES, SINGLE_RESTORE_BYTES } from '../../../src/shared/restore-limits';
 import { DEPT, ORG, OTHER_ORG, facts, fresh } from '../../unit/domain/fixtures';
 import {
 	asKey,
@@ -365,6 +366,23 @@ describe('POST .../backups/:backupId/restore', () => {
 		expect(reply.status).toBe(422);
 		expect(reply.json).toMatchObject({ details: { reason: 'not_restorable', limit: CEILING } });
 		expect(started).toEqual([]);
+	});
+});
+
+describe('the restore ceiling the services carry', () => {
+	const make = (options: Parameters<typeof backupServicesOf>[3]) =>
+		backupServicesOf(
+			{ BLOB: bucket() },
+			{ getDb, startOperation: async () => undefined },
+			{ get: async () => null, put: async () => true },
+			options
+		);
+
+	it('is one body until the sites page, then the paged ceiling, and an explicit value wins', () => {
+		expect(make({}).restoreCeilingBytes).toBe(SINGLE_RESTORE_BYTES);
+		expect(make({ pagedRestore: false }).restoreCeilingBytes).toBe(SINGLE_RESTORE_BYTES);
+		expect(make({ pagedRestore: true }).restoreCeilingBytes).toBe(MAX_RESTORE_PAGED_BYTES);
+		expect(make({ pagedRestore: true, restoreCeilingBytes: 5 }).restoreCeilingBytes).toBe(5);
 	});
 });
 

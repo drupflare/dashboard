@@ -1,15 +1,27 @@
 import type { D1Database } from '@cloudflare/workers-types';
+import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
 import { D1BackupLedger } from '../../../engine/src/adapters/backups';
 import { backupWorkerOf } from '../../../engine/src/adapters/site';
+import { TABLES } from '../../../engine/src/files-convert';
 import { freezePlan, newOperation } from '../../../engine/src/operations/state';
 import type { BackupDeps } from '../../../engine/src/ports';
+import { FILE_BATCH_FILES, MAX_COPIED_FILES } from '../../../engine/src/workflows/offloaded-files';
 import {
 	planSiteAdopt,
 	runSiteAdopt,
 	type SiteAdoptInput
 } from '../../../engine/src/workflows/site-adopt';
-import { dumpOf, fakeBlobs, fakeKv, fakeWorkers, MARKER } from './backup-fakes';
+import { MAX_RESTORE_PAGED_BYTES } from '../../../src/shared/restore-limits';
+import {
+	dumpOf,
+	fakeBlobs,
+	fakeKv,
+	fakeWorkers,
+	MARKER,
+	splitLikeTheWorker,
+	type FakeFile
+} from './backup-fakes';
 import {
 	FAKE_OWNER_TOKEN,
 	Killed,
@@ -31,6 +43,9 @@ interface Options {
 	adoptedTo?: string | null;
 	probe?: number;
 	offloaded?: number;
+	files?: FakeFile[];
+	dump?: string;
+	target?: Parameters<ReturnType<typeof fakeWorkers>['add']>[2];
 }
 
 async function adoptWorld(options: Options = {}) {
@@ -64,9 +79,14 @@ async function adoptWorld(options: Options = {}) {
 		)
 		.run(world.siteId, world.orgId, world.input.hostname, now, now);
 	if (options.token !== false) await world.deps.custody.sealOwnerToken(SRC, FAKE_OWNER_TOKEN);
-	const dump = dumpOf(options.dumpRows ?? 40);
-	worker.add(SRC_HOST, SRC, { sql: dump, offloaded: options.offloaded ?? 0 });
-	worker.add(world.input.hostname, world.siteId, { sql: '' });
+	const dump = options.dump ?? dumpOf(options.dumpRows ?? 40);
+	worker.add(SRC_HOST, SRC, {
+		sql: dump,
+		aligned: true,
+		offloaded: options.offloaded ?? options.files?.length ?? 0,
+		files: options.files ?? null
+	});
+	worker.add(world.input.hostname, world.siteId, { sql: '', ...options.target });
 	if (options.probe !== undefined) world.site.answers.probe = options.probe;
 	const deps: BackupDeps = {
 		...world.deps,
@@ -144,6 +164,14 @@ function codeOf(reason: string): string | undefined {
 async function operationOf(aw: Aw) {
 	return (await aw.world.store.get(aw.world.operationId))!;
 }
+
+const MIB = 1024 * 1024;
+const bytesOf = (text: string) => new TextEncoder().encode(text);
+const file = (uri: string, text: string, extra: Partial<FakeFile> = {}): FakeFile => ({
+	uri,
+	bytes: bytesOf(text),
+	...extra
+});
 
 describe('the plan', () => {
 	it('names the new site first and the source second, with unique step ids', async () => {
@@ -292,6 +320,13 @@ describe('a refusal before anything is created', () => {
 		expect(aw.worker.calls.restores).toEqual([]);
 	});
 
+	it('lifts the refusal when the source lists its offloaded files', async () => {
+		const aw = await adoptWorld({ files: [file('public://a.bin', 'abc')] });
+		const { outcome } = await run(aw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(aw.worker.calls.fetched).toEqual(['public://a.bin']);
+	});
+
 	it('adopts a source whose stats name no offloaded files', async () => {
 		const aw = await adoptWorld({ offloaded: 0 });
 		const { outcome } = await run(aw);
@@ -415,3 +450,252 @@ describe('the adoption link', () => {
 		expect(sourceRow(aw)).toMatchObject({ adopted_to: null });
 	});
 });
+
+// #region files held only in object storage
+
+// a dump as the site's own export writes it: the file tables, then the evicted row of each file
+const evictedDump = (files: FakeFile[]) =>
+	`${TABLES.join('\n')}\n` +
+	files
+		.map(
+			(item) =>
+				`INSERT INTO "cfw_file" ("uri", "size", "modified", "mime", "chunks", "mirrored", "rev", "touched", "evicted", "hash", "r2site") VALUES ('${item.uri}', ${item.bytes.byteLength}, 100, NULL, 1, 1, 7, 100, 1, '${'f'.repeat(64)}', 'site_${'z'.repeat(26)}');\n`
+		)
+		.join('');
+
+const codeOfFailure = (outcome: { status: string; reason?: string }) =>
+	/: ([a-z_]+): /.exec(outcome.reason ?? '')?.[1];
+
+describe('adopting a site with files held only in object storage', () => {
+	it('lands the bytes as resident rows and replaces the evicted ones, checked in a real database', async () => {
+		const big = new Uint8Array(450_000).map((_, n) => n % 251);
+		const files = [
+			file('public://a.txt', 'hello', { contentType: 'text/plain', modified: 555 }),
+			{ uri: 'private://big.bin', bytes: big },
+			file('public://empty.txt', '')
+		];
+		const aw = await adoptWorld({ files, dump: evictedDump(files) });
+		const { outcome, executed } = await run(aw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(executed).toEqual(expect.arrayContaining(['files-copy.0', 'files-copy.finish']));
+		const body = aw.worker.sites.get(aw.world.input.hostname)!.sql;
+		const db = new DatabaseSync(':memory:');
+		for (const statement of splitLikeTheWorker(body).statements) db.exec(statement);
+		const rows = db.prepare('SELECT * FROM cfw_file ORDER BY uri').all() as Record<
+			string,
+			unknown
+		>[];
+		expect(rows.map((row) => row.uri)).toEqual([
+			'private://big.bin',
+			'public://a.txt',
+			'public://empty.txt'
+		]);
+		for (const row of rows) {
+			expect(row).toMatchObject({
+				evicted: 0,
+				hash: null,
+				r2site: null,
+				mirrored: 0,
+				rev: 1
+			});
+		}
+		expect(rows[1]).toMatchObject({ size: 5, modified: 555, mime: 'text/plain', chunks: 1 });
+		expect(rows[0]).toMatchObject({ size: 450_000, chunks: 3 });
+		const read = (uri: string) => {
+			const chunks = db
+				.prepare('SELECT bytes FROM cfw_file_chunk WHERE uri = ? ORDER BY seq')
+				.all(uri) as { bytes: Uint8Array }[];
+			return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk.bytes)));
+		};
+		expect(read('private://big.bin').equals(Buffer.from(big))).toBe(true);
+		expect(read('public://a.txt').toString()).toBe('hello');
+		expect(read('public://empty.txt')).toHaveLength(0);
+		const queued = db.prepare('SELECT uri, op FROM cfw_file_mirror_queue ORDER BY uri').all();
+		expect(queued).toHaveLength(3);
+		expect(queued[0]).toMatchObject({ op: 'put' });
+	});
+
+	it('removes the stored statements once the site is live', async () => {
+		const aw = await adoptWorld({ files: [file('public://a.txt', 'hello')] });
+		await run(aw);
+		expect(
+			[...aw.blobs.objects.keys()].filter((key) => key.startsWith('copied-files/'))
+		).toEqual([]);
+	});
+
+	it('pages the listing and takes the files in batches', async () => {
+		const files = Array.from({ length: FILE_BATCH_FILES * 2 + 7 }, (_, n) =>
+			file(`public://f${String(n).padStart(4, '0')}.txt`, `file ${n}`)
+		);
+		const aw = await adoptWorld({ files });
+		const { outcome, executed } = await run(aw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(executed.filter((name) => /^files-copy\.\d+$/.test(name))).toEqual([
+			'files-copy.0',
+			'files-copy.1',
+			'files-copy.2'
+		]);
+		// the first listing is the check before anything is exported
+		expect(aw.worker.calls.listings.map((call) => call.limit)).toEqual([1, 50, 50, 50]);
+		expect(aw.worker.calls.listings.map((call) => call.after)).toEqual([
+			null,
+			null,
+			'public://f0049.txt',
+			'public://f0099.txt'
+		]);
+		expect(aw.worker.calls.fetched).toHaveLength(files.length);
+		expect(new Set(aw.worker.calls.fetched).size).toBe(files.length);
+	});
+
+	it('copies a file that fails once and succeeds on the second read', async () => {
+		const files = [file('public://a.txt', 'hello'), file('public://b.txt', 'world')];
+		const aw = await adoptWorld({ files });
+		aw.worker.sites.get(SRC_HOST)!.fileFailures.set('public://a.txt', 1);
+		const { outcome } = await run(aw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(aw.worker.calls.fetched.filter((uri) => uri === 'public://a.txt')).toHaveLength(2);
+		expect(aw.worker.sites.get(aw.world.input.hostname)!.sql).toContain("'public://a.txt'");
+	});
+
+	it('fails the operation with a count when files fail twice, and names no path', async () => {
+		const files = [
+			file('public://secret-name-1.txt', 'one'),
+			file('public://ok.txt', 'two'),
+			file('public://secret-name-2.txt', 'three')
+		];
+		const aw = await adoptWorld({ files });
+		const source = aw.worker.sites.get(SRC_HOST)!;
+		source.fileFailures.set('public://secret-name-1.txt', 5);
+		source.fileCorrupt.add('public://secret-name-2.txt');
+		const { outcome } = await run(aw);
+		expect(codeOfFailure(outcome)).toBe('files_copy_failed');
+		expect(outcome.status).toBe('rolled-back');
+		expect(outcome.status === 'succeeded' ? '' : outcome.reason).toContain('2 of 3 files');
+		expect(outcome.status === 'succeeded' ? '' : outcome.reason).not.toContain('secret-name');
+		expect(aw.worker.calls.fetched.filter((uri) => uri.includes('secret-name-1'))).toHaveLength(
+			2
+		);
+		expect(aw.worker.calls.restores).toEqual([]);
+		expect(aw.worker.calls.begins).toEqual([]);
+		expect(targetRow(aw)).toMatchObject({ state: 'deleted', ready_at: null });
+		expect(
+			[...aw.blobs.objects.keys()].filter((key) => key.startsWith('copied-files/'))
+		).toEqual([]);
+	});
+
+	it('carries a file larger than the batch cap on its own, through the paged restore', async () => {
+		const big = new Uint8Array(9 * MIB).map((_, n) => (n * 7) % 253);
+		const files = [file('public://a.txt', 'hello'), { uri: 'public://huge.bin', bytes: big }];
+		const aw = await adoptWorld({ files, dump: evictedDump(files) });
+		const { outcome, executed } = await run(aw, {
+			patch: { restoreCeilingBytes: MAX_RESTORE_PAGED_BYTES }
+		});
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(executed.filter((name) => /^files-copy\.\d+$/.test(name))).toEqual([
+			'files-copy.0',
+			'files-copy.1'
+		]);
+		expect(aw.worker.calls.restores).toEqual([]);
+		expect(aw.worker.calls.begins).toHaveLength(1);
+		const db = new DatabaseSync(':memory:');
+		const body = aw.worker.sites.get(aw.world.input.hostname)!.sql;
+		for (const statement of splitLikeTheWorker(body).statements) db.exec(statement);
+		const chunks = db
+			.prepare('SELECT bytes FROM cfw_file_chunk WHERE uri = ? ORDER BY seq')
+			.all('public://huge.bin') as { bytes: Uint8Array }[];
+		expect(
+			Buffer.concat(chunks.map((chunk) => Buffer.from(chunk.bytes))).equals(Buffer.from(big))
+		).toBe(true);
+	}, 30_000);
+
+	it('refuses files that do not fit beside the database in one body and creates nothing', async () => {
+		const big = new Uint8Array(9 * MIB).fill(5);
+		const aw = await adoptWorld({ files: [{ uri: 'public://huge.bin', bytes: big }] });
+		const { outcome } = await run(aw);
+		expect(codeOfFailure(outcome)).toBe('restore_too_large');
+		expect(aw.worker.calls.fetched).toEqual([]);
+		expect(targetRow(aw)).toMatchObject({ state: 'deleted', ready_at: null });
+	});
+
+	it('refuses a site with more files than a copy carries', async () => {
+		const files = Array.from({ length: MAX_COPIED_FILES + 1 }, (_, n) =>
+			file(`public://f${String(n).padStart(5, '0')}`, '')
+		);
+		const aw = await adoptWorld({ files });
+		const { outcome } = await run(aw);
+		expect(codeOfFailure(outcome)).toBe('files_too_many');
+		expect(aw.worker.calls.fetched).toEqual([]);
+	}, 20_000);
+
+	it('keeps the refusal when the source has no list route', async () => {
+		const aw = await adoptWorld({ offloaded: 4 });
+		const { outcome } = await run(aw);
+		expect(codeOfFailure(outcome)).toBe('files_outside_database');
+		expect(aw.worker.calls.listings).toEqual([]);
+		expect(aw.worker.calls.exports).toBe(0);
+	});
+
+	it('stops when the route goes away after the check', async () => {
+		const aw = await adoptWorld({ files: [file('public://a.txt', 'hello')] });
+		let listings = 0;
+		aw.deps.worker = backupWorkerOf(
+			((input: string | URL | Request, init?: RequestInit) => {
+				if (String(input).includes('/offloaded?limit=') && ++listings > 1) {
+					return Promise.resolve(new Response('gone', { status: 404 }));
+				}
+				return aw.worker.fetcher(input, init);
+			}) as typeof fetch,
+			1_000
+		);
+		const { outcome } = await run(aw);
+		expect(codeOfFailure(outcome)).toBe('files_unsupported');
+		expect(aw.worker.calls.restores).toEqual([]);
+	});
+
+	it('refuses files that need the paged restore when the new site lacks it', async () => {
+		const big = new Uint8Array(9 * MIB).fill(3);
+		const aw = await adoptWorld({
+			files: [{ uri: 'public://huge.bin', bytes: big }],
+			target: { paged: false }
+		});
+		const { outcome } = await run(aw, {
+			patch: { restoreCeilingBytes: MAX_RESTORE_PAGED_BYTES }
+		});
+		expect(codeOfFailure(outcome)).toBe('restore_unsupported');
+		expect(aw.worker.calls.restores).toEqual([]);
+		expect(aw.worker.calls.begins).toEqual([]);
+	}, 30_000);
+
+	it('keeps small files on the single route even when the new site lacks paging', async () => {
+		const aw = await adoptWorld({
+			files: [file('public://a.txt', 'hello')],
+			target: { paged: false }
+		});
+		const { outcome } = await run(aw);
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(aw.worker.calls.restores).toHaveLength(1);
+	});
+
+	it('a copy killed while it reads a batch reads the same batch again and lands once', async () => {
+		const files = Array.from({ length: 60 }, (_, n) =>
+			file(`public://f${String(n).padStart(3, '0')}.txt`, `file ${n}`)
+		);
+		const reference = await adoptWorld({ files });
+		const done = await run(reference);
+		expect(done.outcome).toEqual({ status: 'succeeded' });
+		const at = done.executed.indexOf('files-copy.0') + 1;
+		const aw = await adoptWorld({ files });
+		const memo: Memo = new Map();
+		await expect(run(aw, { memo, script: { killDuring: at } })).rejects.toBeInstanceOf(Killed);
+		const { outcome } = await run(aw, { memo });
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(aw.worker.sites.get(aw.world.input.hostname)!.sql.replaceAll(/\d{13}/g, 'T')).toBe(
+			reference.worker.sites
+				.get(reference.world.input.hostname)!
+				.sql.replaceAll(/\d{13}/g, 'T')
+		);
+		expect(aw.worker.calls.restores).toHaveLength(1);
+	});
+});
+
+// #endregion

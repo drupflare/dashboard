@@ -65,12 +65,23 @@ export const importKeys = {
 		`${importKeys.prefix(orgId, operationId)}dump/`,
 	filesPrefix: (orgId: string, operationId: string) =>
 		`${importKeys.prefix(orgId, operationId)}files/`,
+	privatePrefix: (orgId: string, operationId: string) =>
+		`${importKeys.prefix(orgId, operationId)}private/`,
 	sqlPrefix: (orgId: string, operationId: string) =>
 		`${importKeys.prefix(orgId, operationId)}sql/`,
+	// the statements of a pg_dump that are not data: one piece per scanned window, then the whole
+	// that every data step reads, and the index statements that replay last
+	ddlPart: (orgId: string, operationId: string, seq: number) =>
+		part(`${importKeys.prefix(orgId, operationId)}ddl/`, seq, 'sql'),
+	ddl: (orgId: string, operationId: string) => `${importKeys.prefix(orgId, operationId)}ddl.sql`,
+	indexes: (orgId: string, operationId: string) =>
+		`${importKeys.prefix(orgId, operationId)}indexes.sql`,
 	dump: (orgId: string, operationId: string, seq: number) =>
 		part(importKeys.dumpPrefix(orgId, operationId), seq, 'sql'),
 	files: (orgId: string, operationId: string, seq: number) =>
 		part(importKeys.filesPrefix(orgId, operationId), seq, 'tar'),
+	private: (orgId: string, operationId: string, seq: number) =>
+		part(importKeys.privatePrefix(orgId, operationId), seq, 'tar'),
 	sql: (orgId: string, operationId: string, seq: number) =>
 		part(importKeys.sqlPrefix(orgId, operationId), seq, 'sql')
 };
