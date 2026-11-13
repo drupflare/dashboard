@@ -1,6 +1,7 @@
 {
 	"workers_dev": false,
-	"routes": [{ "pattern": "link.drupflare.com/link/*", "zone_name": "drupflare.com" }],
+	"vars": { "RELEASES_STORE": "blob" },
+	"routes": [{ "pattern": "link-staging.drupflare.com/link/*", "zone_name": "drupflare.com" }],
 	"d1_databases": [
 		{
 			"binding": "DB",

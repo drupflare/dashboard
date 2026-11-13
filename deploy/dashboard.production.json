@@ -18,10 +18,12 @@
 	"vars": {
 		"MANAGED_ACCOUNT_ID": "2bba2ae752a5bb611580fdccbce6d200",
 		"MANAGED_HOST_SUFFIX": "drupflare.app",
-		"RELEASE_DRUPAL": "v1.0.5",
+		"RELEASE_DRUPAL": "snap-b551063-b6175d49",
+		"PAGED_RESTORE": "on",
 		"WEBAUTHN_RP_ID": "app.drupflare.com",
 		"WEBAUTHN_ORIGIN": "https://app.drupflare.com",
 		"NUXT_BASE_URL": "https://app.drupflare.com",
+		"FLEET_LINK_ORIGIN": "wss://link.drupflare.com",
 		"ACCESS_TEAM": "gmitch215",
 		"ACCESS_AUD": "27f245e8dad3055635fa6c118875c0ffae26b6e7854577c267112fe9e357f9f5"
 	}

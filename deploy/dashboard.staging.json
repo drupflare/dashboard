@@ -21,11 +21,12 @@
 		"MANAGED_ACCOUNT_ID": "2bba2ae752a5bb611580fdccbce6d200",
 		"MANAGED_HOST_SUFFIX": "drupflare.app",
 		"MANAGED_LABEL_SUFFIX": "-staging",
-		"RELEASE_DRUPAL": "v1.0.5",
+		"RELEASE_DRUPAL": "snap-b551063-b6175d49",
+		"PAGED_RESTORE": "on",
 		"WEBAUTHN_RP_ID": "staging-app.drupflare.com",
 		"WEBAUTHN_ORIGIN": "https://staging-app.drupflare.com",
 		"NUXT_BASE_URL": "https://staging-app.drupflare.com",
-		"FLEET_LINK_ORIGIN": "wss://link.drupflare.com",
+		"FLEET_LINK_ORIGIN": "wss://link-staging.drupflare.com",
 		"ACCESS_TEAM": "gmitch215",
 		"ACCESS_AUD": "48648928e71eb13546e39a4633352e23f3fbd4348545f92b25db1467fc4c4d9e"
 	}
