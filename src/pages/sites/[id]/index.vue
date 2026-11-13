@@ -138,6 +138,17 @@ async function tryAgain(operation: Operation): Promise<void> {
 					</UButton>
 				</div>
 
+				<div>
+					<UButton
+						color="neutral"
+						variant="outline"
+						icon="i-lucide-arrow-right-left"
+						:to="`/sites/${encodeURIComponent(site.id)}/cutover`"
+					>
+						Cut Over
+					</UButton>
+				</div>
+
 				<SiteAdmin
 					v-if="adminUrl"
 					:org-id="site.orgId"

@@ -129,6 +129,13 @@ describe('site page', () => {
 		expect(link.exists()).toBe(true);
 	});
 
+	it('links the cutover page from the site', async () => {
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Cut Over'));
+		expect(wrapper.find('a[href$="/cutover"]').exists()).toBe(true);
+	});
+
 	it('does not show Open Admin for a kind without a known admin path', async () => {
 		siteReply = () => ({ body: site('smoke') });
 		const wrapper = await mountPage();

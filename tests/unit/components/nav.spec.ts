@@ -132,6 +132,16 @@ describe('SideNav', () => {
 		expect(wrapper.find('a[href="/admin"]').exists()).toBe(false);
 	});
 
+	it('links planes as a client route', async () => {
+		useSessionStore().me = me;
+		const wrapper = await mount(SideNav);
+		const planes = wrapper
+			.findAllComponents(NuxtLink)
+			.find((link) => link.props('to') === '/planes');
+		expect(planes?.text()).toBe('Planes');
+		expect(planes?.props('external')).toBe(false);
+	});
+
 	it('links billing as a client route', async () => {
 		useSessionStore().me = me;
 		const wrapper = await mount(SideNav);
