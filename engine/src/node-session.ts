@@ -1,6 +1,7 @@
 import { fromBase64Url, signingKeyFromSeed } from '@contracts/common';
 import { DurableObject } from 'cloudflare:workers';
 import type { CommandRequest } from '../../src/server/domain/fleet';
+import { D1BoxSiteStore } from './box-site-store';
 import type { EngineEnv } from './env';
 import {
 	CLOSE,
@@ -30,6 +31,7 @@ export class NodeSession extends DurableObject<EngineEnv> {
 	private link(): NodeLink {
 		this.cached ??= new NodeLink({
 			nodes: new D1NodeStore(this.env.DB),
+			boxSites: new D1BoxSiteStore(this.env.DB, this.env.BLOB),
 			storage: this.ctx.storage.kv,
 			now: Date.now,
 			signingKey: () => {

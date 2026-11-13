@@ -1,3 +1,4 @@
+import type { Operation } from '@contracts/operations';
 import { defineStore } from 'pinia';
 import { toApiClientError, useApi, type ApiClientError } from '~/composables/useApi';
 import type { NodePage, NodeView, PairingView } from '~/shared/nodes';
@@ -61,6 +62,27 @@ export const useNodesStore = defineStore('nodes', {
 		// the token comes back once and is never kept here
 		pair(orgId: string): Promise<PairingView> {
 			return useApi().post<PairingView>(`${nodesPath(orgId)}/pair`, {});
+		},
+		// the box decides whether to add the site; this only opens the operation that waits for it
+		async createSite(
+			orgId: string,
+			id: string,
+			body: { kind: 'drupal'; name: string; host: string },
+			idempotencyKey: string
+		): Promise<Operation> {
+			const fetcher = $fetch as unknown as (
+				url: string,
+				options: { method: 'POST'; headers: Record<string, string>; body: object }
+			) => Promise<Operation>;
+			try {
+				return await fetcher(`/api/v1${nodesPath(orgId)}/${encodeURIComponent(id)}/sites`, {
+					method: 'POST',
+					headers: { 'Idempotency-Key': idempotencyKey },
+					body
+				});
+			} catch (error) {
+				throw toApiClientError(error);
+			}
 		},
 		async revoke(orgId: string, id: string): Promise<void> {
 			const node = await useApi().post<NodeView>(

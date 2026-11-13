@@ -162,7 +162,8 @@ export class FakeNode {
 	commandResult(
 		command: CommandEnvelope,
 		outcome: Body<'command.result'>['outcome'] = 'succeeded',
-		fault?: Fault
+		fault?: Fault,
+		code: string | null = null
 	): Promise<string> {
 		return this.message(
 			'command.result',
@@ -171,7 +172,7 @@ export class FakeNode {
 				stepId: command.body.stepId,
 				idempotencyKey: command.body.idempotencyKey,
 				outcome,
-				code: null,
+				code,
 				deploy: null
 			},
 			fault

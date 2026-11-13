@@ -5,18 +5,21 @@ import {
 	type SigningKey
 } from '../../../contracts/src/common';
 import { FLEET_LINK_VERSION, FLEET_TS_WINDOW_MS } from '../../../contracts/src/fleet-link';
+import type { BoxSiteStore } from '../../../engine/src/box-site-store';
 import {
 	CLOSE,
 	HANDSHAKE_MS,
 	MAX_REFUSALS,
 	NodeLink,
 	SITES_SYNC_MS,
+	SITE_NAMES_RECHECK_MS,
 	handleLink,
 	linkNodeId,
 	type LinkSocket,
 	type SocketState
 } from '../../../engine/src/node-link';
 import type { NodeRecord, NodeStore } from '../../../engine/src/node-store';
+import type { BoxSiteChanges, KnownBoxSite } from '../../../src/server/domain/box-sites';
 import type { NodeUpdate, SiteMapRow } from '../../../src/server/domain/fleet';
 import { type CommandRequest } from '../../../src/server/domain/fleet';
 import { FakeNode } from '../../rigs/fake-node';
@@ -95,7 +98,9 @@ function record(node: FakeNode, over: Partial<NodeRecord> = {}): NodeRecord {
 	};
 }
 
-async function world(over: { dashboard?: SigningKey; minor?: number; orgId?: string } = {}) {
+async function world(
+	over: { dashboard?: SigningKey; minor?: number; orgId?: string; boxSites?: BoxSiteStore } = {}
+) {
 	const clock = { now: START };
 	const node = await FakeNode.create({
 		now: () => clock.now,
@@ -114,6 +119,7 @@ async function world(over: { dashboard?: SigningKey; minor?: number; orgId?: str
 	const sockets: FakeSocket[] = [];
 	const link = new NodeLink({
 		nodes: store,
+		...(over.boxSites === undefined ? {} : { boxSites: over.boxSites }),
 		storage: {
 			get: <T>(key: string) => memory.get(key) as T | undefined,
 			put: (key, value) => void memory.set(key, structuredClone(value))
@@ -193,6 +199,171 @@ describe('the connection', () => {
 		expect(error).toHaveBeenCalled();
 		expect(socket.frames().at(-1)?.type).toBe('ready');
 		await w.link.message(socket, await w.node.status({ seq: 0 }));
+		expect(socket.frames().at(-1)).toEqual({ type: 'refused', code: 'replayed' });
+	});
+});
+
+class FakeBoxSites implements BoxSiteStore {
+	rows: KnownBoxSite[] | null = [];
+	reads: string[] = [];
+	applied: { orgId: string; nodeId: string; changes: BoxSiteChanges; now: number }[] = [];
+	failRead = false;
+	failApply = false;
+
+	async known(orgId: string) {
+		this.reads.push(orgId);
+		if (this.failRead) throw new Error('d1 is down');
+		return this.rows;
+	}
+
+	async apply(orgId: string, nodeId: string, changes: BoxSiteChanges, now: number) {
+		if (this.failApply) throw new Error('d1 is down');
+		this.applied.push({ orgId, nodeId, changes, now });
+		return { created: changes.create.length };
+	}
+}
+
+describe('the site list of a status frame', () => {
+	const ORG = 'org_linktest0001';
+	const status = (node: FakeNode, ...sites: string[]) =>
+		node.status(undefined, { sites, namesHashed: false });
+
+	it('reads the organization rows and applies what a status frame lists', async () => {
+		const boxSites = new FakeBoxSites();
+		const w = await world({ boxSites });
+		const socket = await w.connect();
+		await w.link.message(socket, await status(w.node, 'www.example.edu'));
+		expect(boxSites.reads).toEqual([ORG]);
+		expect(boxSites.applied).toHaveLength(1);
+		expect(boxSites.applied[0]).toMatchObject({ orgId: ORG, nodeId: NODE_ID, now: START });
+		expect(boxSites.applied[0]?.changes.create).toEqual([
+			{ name: 'www-example-edu', host: 'www.example.edu', foundAs: 'www.example.edu' }
+		]);
+	});
+
+	it('suffixes a colliding name with the host name the box sent', async () => {
+		const boxSites = new FakeBoxSites();
+		const w = await world({ boxSites });
+		const socket = await w.connect();
+		await w.link.message(socket, await status(w.node, 'www-example.edu', 'www.example.edu'));
+		const names = boxSites.applied[0]?.changes.create.map((item) => item.name);
+		expect(names).toEqual(['www-example-edu', 'www-example-edu-box-1']);
+	});
+
+	it('falls back to a name made from the node id when the box sends no host name', async () => {
+		const boxSites = new FakeBoxSites();
+		const w = await world({ boxSites });
+		const socket = await w.connect();
+		const { hostname: _hostname, ...bare } = w.node.hostFacts;
+		w.store.node = record(w.node, { hostFacts: bare as NodeRecord['hostFacts'] });
+		const frame = await w.node.message('status', {
+			...bare,
+			nodeId: NODE_ID as never,
+			tenants: [],
+			sites: ['www-example.edu', 'www.example.edu'],
+			namesHashed: false,
+			capacity: {}
+		});
+		await w.link.message(socket, frame);
+		const names = boxSites.applied[0]?.changes.create.map((item) => item.name);
+		expect(names).toEqual(['www-example-edu', `www-example-edu-node-${NODE_ID.slice(-6)}`]);
+	});
+
+	it('writes nothing for a frame that lists what the last one did, until the hour is up', async () => {
+		const boxSites = new FakeBoxSites();
+		const w = await world({ boxSites });
+		const socket = await w.connect();
+		await w.link.message(socket, await status(w.node, 'a.example.org', 'b.example.org'));
+		await w.link.message(socket, await status(w.node, 'b.example.org', 'a.example.org'));
+		expect(boxSites.reads).toHaveLength(1);
+		expect(boxSites.applied).toHaveLength(1);
+		w.clock.now += SITE_NAMES_RECHECK_MS;
+		await w.link.message(socket, await status(w.node, 'a.example.org', 'b.example.org'));
+		expect(boxSites.reads).toHaveLength(2);
+	});
+
+	it('compares again when the list changes', async () => {
+		const boxSites = new FakeBoxSites();
+		const w = await world({ boxSites });
+		const socket = await w.connect();
+		await w.link.message(socket, await status(w.node, 'a.example.org'));
+		await w.link.message(socket, await status(w.node, 'a.example.org', 'b.example.org'));
+		await w.link.message(
+			socket,
+			await w.node.status(undefined, { sites: ['a.example.org'], namesHashed: true })
+		);
+		expect(boxSites.reads).toHaveLength(3);
+	});
+
+	it('keeps the digest back while found sites are left for the next frame', async () => {
+		const boxSites = new FakeBoxSites();
+		const w = await world({ boxSites });
+		const socket = await w.connect();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+		const many = Array.from(
+			{ length: 30 },
+			(_, i) => `s${String(i).padStart(2, '0')}.example.org`
+		);
+		await w.link.message(socket, await status(w.node, ...many));
+		expect(boxSites.applied[0]?.changes).toMatchObject({ skipped: 5 });
+		expect(warn).toHaveBeenCalled();
+		await w.link.message(socket, await status(w.node, ...many));
+		expect(boxSites.reads).toHaveLength(2);
+	});
+
+	it('does nothing when the organization holds too many rows to compare against', async () => {
+		const boxSites = new FakeBoxSites();
+		boxSites.rows = null;
+		const w = await world({ boxSites });
+		const socket = await w.connect();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+		await w.link.message(socket, await status(w.node, 'a.example.org'));
+		expect(boxSites.applied).toEqual([]);
+		expect(warn).toHaveBeenCalled();
+		await w.link.message(socket, await status(w.node, 'a.example.org'));
+		expect(boxSites.reads).toHaveLength(2);
+	});
+
+	it('still takes the message and tries again on the next frame when the database fails', async () => {
+		const boxSites = new FakeBoxSites();
+		const w = await world({ boxSites });
+		const socket = await w.connect();
+		const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		boxSites.failRead = true;
+		await w.link.message(socket, await status(w.node, 'a.example.org'));
+		boxSites.failRead = false;
+		boxSites.failApply = true;
+		await w.link.message(socket, await status(w.node, 'a.example.org'));
+		boxSites.failApply = false;
+		await w.link.message(socket, await status(w.node, 'a.example.org'));
+		expect(error).toHaveBeenCalledTimes(2);
+		expect(w.store.touches).toHaveLength(3);
+		expect(boxSites.applied).toHaveLength(1);
+		expect(socket.frames().filter((frame) => frame.type === 'refused')).toEqual([]);
+	});
+
+	it('leaves other messages and a link without the store alone', async () => {
+		const boxSites = new FakeBoxSites();
+		const w = await world({ boxSites });
+		const socket = await w.connect();
+		await w.link.message(socket, await w.node.findings());
+		expect(boxSites.reads).toEqual([]);
+		const bare = await world();
+		const other = await bare.connect();
+		await bare.link.message(other, await status(bare.node, 'a.example.org'));
+		expect(other.frames().filter((frame) => frame.type === 'refused')).toEqual([]);
+	});
+
+	it('refuses a replayed status frame before it reaches the rows', async () => {
+		const boxSites = new FakeBoxSites();
+		const w = await world({ boxSites });
+		const socket = await w.connect();
+		await w.link.message(socket, await status(w.node, 'a.example.org'));
+		await w.link.message(
+			socket,
+			await w.node.status({ seq: 0 }, { sites: ['b.example.org'], namesHashed: false })
+		);
+		expect(boxSites.reads).toHaveLength(1);
 		expect(socket.frames().at(-1)).toEqual({ type: 'refused', code: 'replayed' });
 	});
 });

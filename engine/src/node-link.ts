@@ -1,4 +1,5 @@
-import type { Challenge } from '@contracts/fleet-link';
+import type { Challenge, NodeEnvelope } from '@contracts/fleet-link';
+import { frameDigest, reconcileBoxSites, tokensFor } from '../../src/server/domain/box-sites';
 import {
 	NO_SEQ,
 	acceptEnvelope,
@@ -24,13 +25,16 @@ import {
 	type CommandRefusal,
 	type CommandRequest
 } from '../../src/server/domain/fleet';
-import type { NodeStore } from './node-store';
+import type { BoxSiteStore } from './box-site-store';
+import type { NodeRecord, NodeStore } from './node-store';
 
 export const LINK_PATH = /^\/link\/(nod_[0-9a-z]{8,40})$/;
 export const HANDSHAKE_MS = 30_000;
 export const MAX_FRAME_CHARS = 256 * 1024;
 export const MAX_REFUSALS = 5;
 export const SITES_SYNC_MS = 60_000;
+// a status frame that lists the same sites as the last one is read again only this often
+export const SITE_NAMES_RECHECK_MS = 60 * 60_000;
 
 // private-use close codes; a node reads the code and the reason text
 export const CLOSE = {
@@ -68,6 +72,8 @@ export interface LinkStorage {
 
 export interface LinkDeps {
 	nodes: NodeStore;
+	// without it a status frame's site list is not compared with the dashboard's rows
+	boxSites?: BoxSiteStore;
 	storage: LinkStorage;
 	now: () => number;
 	signingKey: () => Promise<CryptoKey>;
@@ -85,6 +91,9 @@ export type CommandStatus =
 const RECORDS = 'commands';
 const OUT_SEQ = 'outSeq';
 const IN_SEQ = 'seq';
+const SITE_NAMES = 'siteNames';
+
+type StatusBody = Extract<NodeEnvelope, { type: 'status' }>['body'];
 
 const frame = (value: unknown): string => JSON.stringify(value);
 
@@ -278,6 +287,47 @@ export class NodeLink {
 			await this.deps.nodes.touch(state.nodeId, nodeUpdateOf(message, now));
 		} catch (error) {
 			console.error('node row update failed', state.nodeId, error);
+		}
+		if (message.type === 'status' && node !== null) {
+			await this.reconcileBoxSites(node, message.body, now);
+		}
+	}
+
+	// the site list of a status frame against the organization's rows. A failure never undoes the
+	// message; the next frame, or the hourly look, tries again
+	private async reconcileBoxSites(
+		node: NodeRecord,
+		body: StatusBody,
+		now: number
+	): Promise<void> {
+		const store = this.deps.boxSites;
+		if (store === undefined) return;
+		try {
+			const frame = { names: body.sites, hashed: body.namesHashed };
+			const digest = await frameDigest(frame);
+			const held = this.deps.storage.get<{ digest: string; at: number }>(SITE_NAMES);
+			if (held?.digest === digest && now - held.at < SITE_NAMES_RECHECK_MS) return;
+			const known = await store.known(node.orgId);
+			if (known === null) {
+				console.warn('too many site rows to compare with the box', node.id);
+				return;
+			}
+			const changes = reconcileBoxSites({
+				nodeId: node.id,
+				nodeLabel: body.hostname ?? node.hostFacts.hostname ?? `Node ${node.id.slice(-6)}`,
+				known,
+				frame,
+				tokenOf: await tokensFor(node.id, known, frame),
+				now
+			});
+			const { created } = await store.apply(node.orgId, node.id, changes, now);
+			if (changes.skipped > 0) {
+				console.warn('sites left for the next frame', node.id, created, changes.skipped);
+				return;
+			}
+			this.deps.storage.put(SITE_NAMES, { digest, at: now });
+		} catch (error) {
+			console.error('site list compare failed', node.id, error);
 		}
 	}
 

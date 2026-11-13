@@ -75,7 +75,9 @@ export const bundleKeys = {
 	manifest: (releaseId: string) => `releases/${releaseId}/manifest.json`,
 	metadata: (releaseId: string) => `releases/${releaseId}/metadata.json`,
 	module: (releaseId: string, name: string) => `releases/${releaseId}/modules/${name}`,
-	asset: (releaseId: string, hash: string) => `releases/${releaseId}/assets/${hash}`
+	asset: (releaseId: string, hash: string) => `releases/${releaseId}/assets/${hash}`,
+	// the release's payload for a box: a releases-contract manifest of kind drupal-pack
+	payload: (releaseId: string) => `releases/${releaseId}/payload.json`
 };
 
 // the asset api keys on a sha-256 cut to 32 hex characters

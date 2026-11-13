@@ -88,7 +88,7 @@ export class D1NodeStore implements NodeStore {
 			.prepare(
 				`SELECT organization_id, id, primary_hostname FROM sites
 				 WHERE organization_id = ? AND plane = 'self-hosted' AND primary_hostname IS NOT NULL
-					AND state IN (${LIVE_SITE_STATES}) AND ${binding}
+					AND ready_at IS NOT NULL AND state IN (${LIVE_SITE_STATES}) AND ${binding}
 				 ORDER BY id LIMIT ?`
 			)
 			.bind(...binds, MAX_SITE_MAP + 1)

@@ -10,7 +10,8 @@ import {
 	parseManifest,
 	type BundleLimits
 } from '../../../engine/src/bundle';
-import { buildBundle, contentTypeOf, run } from '../../../scripts/build-bundle';
+import { buildBundle, buildPayload, contentTypeOf, run } from '../../../scripts/build-bundle';
+import { payloadOf } from '../../../src/server/domain/node-site';
 
 const LIMITS: BundleLimits = {
 	maxModuleBytes: 1_000,
@@ -198,5 +199,167 @@ describe('the command', () => {
 		const result = await run(['--help']);
 		expect(result.code).toBe(0);
 		expect(result.out).toContain('does not run wrangler');
+		expect(result.out).toContain('--payload-url');
+	});
+
+	describe('the payload manifest', () => {
+		const HEX = 'cd'.repeat(32);
+		const URL_ =
+			'https://github.com/drupflare/worker/releases/download/v1.0.4/box-1.0.4.tar.gz';
+		const flags = (patch: Record<string, string> = {}) =>
+			Object.entries({
+				'payload-url': URL_,
+				'payload-sha256': HEX,
+				'payload-schema-version': '3',
+				'payload-accepts-schema': '2',
+				...patch
+			}).flatMap(([name, value]) => [`--${name}`, value]);
+
+		it('writes none and changes nothing about the build when no payload flag is given', async () => {
+			const plain = await workspace();
+			const result = await run(plain.args);
+			expect(result.code).toBe(0);
+			expect(result.out).not.toContain('payload.json');
+			await expect(
+				readFile(join(plain.root, 'out', bundleKeys.payload('v1.0.4')))
+			).rejects.toThrow();
+			const withFlags = await workspace();
+			await run([...withFlags.args, ...flags()]);
+			const read = (root: string, name: string) =>
+				readFile(join(root, 'out', 'releases', 'v1.0.4', name), 'utf8');
+			expect(await read(withFlags.root, 'manifest.json')).toBe(
+				await read(plain.root, 'manifest.json')
+			);
+		});
+
+		it('writes the manifest beside the bundle, and the box path accepts it', async () => {
+			const { root, args } = await workspace();
+			const result = await run([...args, ...flags()]);
+			expect(result.code).toBe(0);
+			expect(result.out).toContain('with payload.json');
+			const manifest = JSON.parse(
+				await readFile(join(root, 'out', bundleKeys.payload('v1.0.4')), 'utf8')
+			);
+			expect(manifest).toEqual({
+				kind: 'drupal-pack',
+				version: 'v1.0.4',
+				schemaVersion: 3,
+				acceptsSchema: 2,
+				assets: [{ name: 'box-1.0.4.tar.gz', url: URL_, digest: `sha256:${HEX}` }]
+			});
+			expect(payloadOf(manifest)).toEqual({ url: URL_, checksum: `sha256:${HEX}` });
+		});
+
+		it('refuses a negative or unsafe number in either schema field', () => {
+			const input = { releaseId: 'v1.0.4', url: URL_, sha256: HEX };
+			expect(() => buildPayload({ ...input, schemaVersion: 1, acceptsSchema: -1 })).toThrow(
+				'--payload-accepts-schema must be a whole number'
+			);
+			expect(() => buildPayload({ ...input, schemaVersion: -1, acceptsSchema: 0 })).toThrow(
+				'--payload-schema-version must be a whole number'
+			);
+			expect(() =>
+				buildPayload({ ...input, schemaVersion: 2 ** 60, acceptsSchema: 0 })
+			).toThrow('whole number');
+		});
+
+		it('takes the digest with or without its prefix', () => {
+			const input = { releaseId: 'v1.0.4', url: URL_, schemaVersion: 0, acceptsSchema: 0 };
+			expect(buildPayload({ ...input, sha256: HEX })).toEqual(
+				buildPayload({ ...input, sha256: `sha256:${HEX}` })
+			);
+		});
+
+		it.each([
+			['a plaintext url', { 'payload-url': URL_.replace('https', 'http') }, 'https url'],
+			[
+				'a name that is not an archive',
+				{ 'payload-url': URL_.replace('.tar.gz', '.zip') },
+				'.tar.gz'
+			],
+			[
+				'a url that names another release',
+				{ 'payload-url': URL_.replace('v1.0.4', 'v1.0.5') },
+				'does not name release v1.0.4'
+			],
+			['a digest that is not hex', { 'payload-sha256': 'xyz' }, '64 lowercase hex'],
+			['an uppercase digest', { 'payload-sha256': HEX.toUpperCase() }, '64 lowercase hex'],
+			[
+				'a fractional schema version',
+				{ 'payload-schema-version': '1.5' },
+				'--payload-schema-version must be a whole number'
+			],
+			[
+				'a fractional accepted schema',
+				{ 'payload-accepts-schema': '1.5' },
+				'--payload-accepts-schema must be a whole number'
+			],
+			[
+				'a schema version that is not a number',
+				{ 'payload-schema-version': 'x' },
+				'--payload-schema-version must be a whole number'
+			],
+			[
+				'a signed accepted schema',
+				{ 'payload-accepts-schema': '+1' },
+				'--payload-accepts-schema must be a whole number'
+			],
+			[
+				'an empty schema version',
+				{ 'payload-schema-version': '' },
+				'--payload-schema-version is required'
+			],
+			[
+				'an accepted schema above the schema version',
+				{ 'payload-schema-version': '1', 'payload-accepts-schema': '2' },
+				'cannot be above --payload-schema-version'
+			]
+		])('refuses %s and writes nothing', async (_, patch, message) => {
+			const { root, args } = await workspace();
+			const result = await run([...args, ...flags(patch)]);
+			expect(result.code).toBe(1);
+			expect(result.out).toContain(message);
+			await expect(readdir(join(root, 'out'))).rejects.toThrow();
+		});
+
+		it('refuses a payload flag without the others', async () => {
+			const { args } = await workspace();
+			const result = await run([...args, '--payload-url', URL_]);
+			expect(result.code).toBe(1);
+			expect(result.out).toContain('--payload-sha256 is required');
+		});
+
+		it.each(['payload-schema-version', 'payload-accepts-schema'])(
+			'refuses a payload with --%s missing and writes nothing',
+			async (missing) => {
+				const { root, args } = await workspace();
+				const kept = flags().join(' ').split(' ');
+				const at = kept.indexOf(`--${missing}`);
+				kept.splice(at, 2);
+				const result = await run([...args, ...kept]);
+				expect(result.code).toBe(1);
+				expect(result.out).toContain(`--${missing} is required`);
+				await expect(readdir(join(root, 'out'))).rejects.toThrow();
+			}
+		);
+
+		it('takes equal numbers and zero for both', async () => {
+			const { root, args } = await workspace();
+			const result = await run([
+				...args,
+				...flags({ 'payload-schema-version': '0', 'payload-accepts-schema': '0' })
+			]);
+			expect(result.code).toBe(0);
+			const manifest = JSON.parse(
+				await readFile(join(root, 'out', bundleKeys.payload('v1.0.4')), 'utf8')
+			);
+			expect([manifest.schemaVersion, manifest.acceptsSchema]).toEqual([0, 0]);
+		});
+
+		it('has no flag called --payload-schema any more', async () => {
+			const { args } = await workspace();
+			const result = await run([...args, ...flags(), '--payload-schema', '3']);
+			expect(result.code).toBe(1);
+		});
 	});
 });

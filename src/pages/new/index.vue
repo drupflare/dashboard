@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ApiClientError, toApiClientError, useApi } from '~/composables/useApi';
 import {
+	IMPORT_TEMPLATE,
 	STEP_TITLES,
 	kindFor,
 	nameProblem,
@@ -53,7 +54,18 @@ const creating = ref(false);
 const createError = ref<ApiClientError | null>(null);
 const problem = computed(() => nameProblem(draft.value.name));
 const nameError = computed(() => (touched.value ? problem.value : null));
-const canNext = computed(() => kindFor(draft.value.template) !== null);
+const canNext = computed(
+	() => kindFor(draft.value.template) !== null || draft.value.template === IMPORT_TEMPLATE
+);
+
+// the import card leaves the wizard; every other template moves to the name step
+function proceed(): void {
+	if (draft.value.template === IMPORT_TEMPLATE) {
+		void router.push('/new/import');
+		return;
+	}
+	go(2);
+}
 
 async function submit(): Promise<void> {
 	touched.value = true;
@@ -145,11 +157,20 @@ onMounted(() => {
 						:paid-allowed="paidAllowed"
 					/>
 
+					<p class="text-sm text-muted">
+						Want it on a server you run?
+						<NuxtLink
+							to="/new/self-hosted"
+							class="font-medium text-primary underline"
+							>Create it on your own box</NuxtLink
+						>
+					</p>
+
 					<div class="flex flex-wrap justify-end gap-3">
 						<UButton
 							color="neutral"
 							variant="outline"
-							@click="go(2)"
+							@click="proceed()"
 						>
 							Skip
 						</UButton>
@@ -157,7 +178,7 @@ onMounted(() => {
 							color="primary"
 							variant="solid"
 							:disabled="!canNext"
-							@click="go(2)"
+							@click="proceed()"
 						>
 							Next
 						</UButton>

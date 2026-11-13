@@ -190,10 +190,10 @@ describe('the engine node store', () => {
 	it('lists an organization own live self-hosted sites that hold a hostname, and no one else', async () => {
 		const add = (id: string, org: string, plane: string, state: string, host: string | null) =>
 			env.DB.prepare(
-				`INSERT INTO sites (id, organization_id, name, plane, state, primary_hostname, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+				`INSERT INTO sites (id, organization_id, name, plane, state, primary_hostname, ready_at, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 			)
-				.bind(id, org, id, plane, state, host, NOW, NOW)
+				.bind(id, org, id, plane, state, host, NOW, NOW, NOW)
 				.run();
 		await add('site_nodemap0003', ORG, 'self-hosted', 'active', 'three.example.org');
 		await add('site_nodemap0001', ORG, 'self-hosted', 'active', 'one.example.org');
@@ -203,6 +203,12 @@ describe('the engine node store', () => {
 		await add('site_nodemap0006', ORG, 'self-hosted', 'deleted', 'gone.example.org');
 		await add('site_nodemap0007', ORG, 'self-hosted', 'tombstoned', 'tomb.example.org');
 		await add('site_nodemap0008', OTHER, 'self-hosted', 'active', 'other.example.org');
+		await env.DB.prepare(
+			`INSERT INTO sites (id, organization_id, name, plane, state, primary_hostname, ready_at, created_at, updated_at)
+			 VALUES ('site_nodemap0009', ?, 'pending', 'self-hosted', 'active', 'pending.example.org', NULL, ?, ?)`
+		)
+			.bind(ORG, NOW, NOW)
+			.run();
 		expect(await store().sites(ORG, NODE_ID)).toEqual([
 			{ orgId: ORG, siteId: 'site_nodemap0001', host: 'one.example.org' },
 			{ orgId: ORG, siteId: 'site_nodemap0002', host: 'two.example.org' },
@@ -218,10 +224,10 @@ describe('the engine node store', () => {
 		const org = 'org_nodebind0001';
 		const insert = (id: string, host: string, nodeId: string | null) =>
 			env.DB.prepare(
-				`INSERT INTO sites (id, organization_id, name, plane, state, primary_hostname, node_id, created_at, updated_at)
-				 VALUES (?, ?, ?, 'self-hosted', 'active', ?, ?, ?, ?)`
+				`INSERT INTO sites (id, organization_id, name, plane, state, primary_hostname, node_id, ready_at, created_at, updated_at)
+				 VALUES (?, ?, ?, 'self-hosted', 'active', ?, ?, ?, ?, ?)`
 			)
-				.bind(id, org, id, host, nodeId, NOW, NOW)
+				.bind(id, org, id, host, nodeId, NOW, NOW, NOW)
 				.run();
 		await insert('site_bindone0001', 'bound-a.example.org', NODE_ID);
 		await insert('site_bindone0002', 'bound-b.example.org', 'nod_nodebind0002');
