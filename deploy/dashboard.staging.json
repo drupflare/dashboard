@@ -25,6 +25,7 @@
 		"WEBAUTHN_RP_ID": "staging-app.drupflare.com",
 		"WEBAUTHN_ORIGIN": "https://staging-app.drupflare.com",
 		"NUXT_BASE_URL": "https://staging-app.drupflare.com",
+		"FLEET_LINK_ORIGIN": "wss://link.drupflare.com",
 		"ACCESS_TEAM": "gmitch215",
 		"ACCESS_AUD": "48648928e71eb13546e39a4633352e23f3fbd4348545f92b25db1467fc4c4d9e"
 	}

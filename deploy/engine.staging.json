@@ -1,5 +1,6 @@
 {
 	"workers_dev": false,
+	"routes": [{ "pattern": "link.drupflare.com/link/*", "zone_name": "drupflare.com" }],
 	"d1_databases": [
 		{
 			"binding": "DB",
