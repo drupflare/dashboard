@@ -1,10 +1,15 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
-import { buildBackupDeps, buildDeps, type EngineEnv } from '../env';
+import { buildBackupDeps, buildCutoverDeps, buildDeps, type EngineEnv } from '../env';
 import { PermanentError, StepFailed, type StepRunner } from '../step';
 import { runBackupCreate, type BackupCreateInput } from './backup-create';
 import { runBackupRestore, type BackupRestoreInput } from './backup-restore';
 import type { Outcome } from './common';
+import {
+	runMigrationCutover,
+	type CutoverRunner,
+	type MigrationCutoverInput
+} from './migration-cutover';
 import { runSiteAdopt, type SiteAdoptInput } from './site-adopt';
 import { runSiteCleanup, type SiteCleanupInput } from './site-cleanup';
 import { runSiteCreate, type SiteCreateInput } from './site-create';
@@ -110,6 +115,38 @@ export class SiteAdopt extends WorkflowEntrypoint<EngineEnv, SiteAdoptInput> {
 		return runSiteAdopt(
 			runnerOf(step, BACKUP_STEP_CONFIG),
 			await buildBackupDeps(this.env),
+			event.payload
+		);
+	}
+}
+
+// a wait that ran out ends as a timeout error from the platform; the page does not name its class,
+// so any error from the wait itself reads as the time running out
+function cutoverRunnerOf(step: WorkflowStep): CutoverRunner {
+	return {
+		...runnerOf(step, BACKUP_STEP_CONFIG),
+		async wait(name, type, timeoutMs) {
+			try {
+				const event = await step.waitForEvent(name, {
+					type,
+					timeout: `${Math.max(1, Math.ceil(timeoutMs / 1000))} seconds`
+				});
+				return { payload: event.payload };
+			} catch {
+				return null;
+			}
+		}
+	};
+}
+
+export class MigrationCutover extends WorkflowEntrypoint<EngineEnv, MigrationCutoverInput> {
+	async run(
+		event: Readonly<WorkflowEvent<MigrationCutoverInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runMigrationCutover(
+			cutoverRunnerOf(step),
+			await buildCutoverDeps(this.env),
 			event.payload
 		);
 	}

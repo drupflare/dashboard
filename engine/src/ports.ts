@@ -8,6 +8,7 @@ import type { Granted, LeaseRefusal, Refused } from './lease';
 import type { OperationStore, SiteRowState } from './operations/store';
 import type { ResourceLedger } from './ownership';
 import type { ResourceKind } from './provision-plan';
+import type { SiteSurvey } from './vendor/drangler/survey';
 
 // #region cloudflare
 
@@ -229,6 +230,78 @@ export interface BackupDeps extends EngineDeps {
 	blobs: BackupBlobs;
 	backups: BackupLedger;
 	sleep(ms: number): Promise<void>;
+}
+
+// #endregion
+
+// #region cutover
+
+// every call that changes something takes a key built from the operation and the step, so a repeat
+// after a restart does nothing more
+export interface CutoverSource {
+	lowerTtl(
+		key: string,
+		hostname: string,
+		ttlSeconds: number
+	): Promise<{ previousTtlSeconds: number }>;
+	restoreTtl(key: string, hostname: string, ttlSeconds: number): Promise<void>;
+	// a consistent dump and file set, and the marker later deltas count from
+	snapshot(key: string): Promise<{ marker: string }>;
+	delta(key: string, since: string): Promise<{ marker: string }>;
+	applyWritePolicy(key: string, policy: 'freeze' | 'read-only' | 'delta'): Promise<void>;
+	restoreWrites(key: string): Promise<void>;
+}
+
+export interface CutoverDestination {
+	// null when the snapshot plus the delta load and match, otherwise the plain problem
+	validate(key: string, snapshot: string, delta: string): Promise<string | null>;
+	promote(key: string, snapshot: string, delta: string): Promise<void>;
+	route(key: string, to: 'destination' | 'source'): Promise<void>;
+	acceptedWrites(): Promise<number>;
+	observe(): Promise<{ healthy: boolean; writes: number }>;
+	// the changes accepted since promote, and what the path back to the source cannot carry
+	exportChanges(key: string): Promise<{ reference: string; cannotCarry: string[] }>;
+}
+
+export interface CutoverPorts {
+	source(ref: string): CutoverSource;
+	destination(siteId: string): CutoverDestination;
+}
+
+export interface CutoverDeps extends EngineDeps {
+	cutover: CutoverPorts;
+}
+
+// #endregion
+
+// #region import
+
+export interface SshTarget {
+	host: string;
+	port: number;
+	user: string;
+	// PEM, held in memory for one call and never stored
+	privateKey: string;
+	// the SHA256 fingerprint the owner confirmed; a different host key refuses before any command runs
+	expectedFingerprint: string;
+	root: string;
+}
+
+// read-only survey of a Linux host over SSH; the caller passes the key and the confirmed fingerprint
+export interface SshSurvey {
+	run(target: SshTarget): Promise<SiteSurvey>;
+}
+
+export interface ConvertedChunk {
+	// bytes of the input consumed, so the next chunk starts there
+	cut: number;
+	sql: string;
+	rows: number;
+	statements: number;
+}
+
+export interface SqlConverter {
+	convertChunk(bytes: Uint8Array, last: boolean): Promise<ConvertedChunk>;
 }
 
 // #endregion

@@ -47,6 +47,22 @@ function sourceSiteOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
 		: { to: `/sites/${encodeURIComponent(id)}`, label: 'Back to the Site' };
 }
 
+// a cutover names the new site, which holds the plan and the timeline
+function cutoverOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
+	const id = operation.targetIds[0];
+	return id === undefined
+		? sites
+		: { to: `/sites/${encodeURIComponent(id)}/cutover`, label: 'Open the Move' };
+}
+
+// the two sentences that say whether going back is still a reversal
+export const ROLLBACK_BOUNDARY_COPY = {
+	'dns-reversal':
+		'Until the new site accepts its first write, going back is a DNS change and nothing is lost.',
+	'post-write':
+		'The new site has accepted writes, so going back is no longer a reversal. Keep the new site, abandon its new data, or export its new changes to apply to the old site.'
+} as const;
+
 export const OPERATION_COPY = {
 	'site.create': {
 		title: 'Creating Your Site',
@@ -82,6 +98,16 @@ export const OPERATION_COPY = {
 		failure: 'Could Not Adopt the Site',
 		link: adoptedSiteOf,
 		failureLink: sourceSiteOf
+	},
+	'migration.cutover': {
+		title: 'Moving Your Site',
+		running:
+			'Your old site keeps its data and is never deleted. Leaving this page does not stop the move.',
+		success:
+			'Your address now points at the new site. The old site was not changed or deleted.',
+		failure: 'Could Not Finish the Move',
+		link: cutoverOf,
+		failureLink: cutoverOf
 	},
 	'backup.create': {
 		title: 'Backing Up Your Site',
@@ -125,6 +151,7 @@ const TYPE_LABELS: Record<string, string> = {
 	'site.delete': 'Delete',
 	'site.adopt': 'Adopt',
 	'site.purge': 'Permanent Delete',
+	'migration.cutover': 'Move',
 	'backup.create': 'Backup',
 	'backup.restore': 'Restore'
 };
@@ -189,6 +216,22 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		resources: 'deleting the site storage',
 		name: 'releasing the site address',
 		forget: 'removing the site record'
+	},
+	'migration.cutover': {
+		lease: 'locking the new site for this change',
+		'lower-ttl': 'shortening the DNS cache time so the change spreads quickly',
+		snapshot: 'taking a consistent snapshot of your old site',
+		'capture-delta': 'copying the changes made since the snapshot',
+		validate: 'checking the new site against the snapshot and the changes',
+		'owner-approval': 'waiting for your approval',
+		'apply-write-policy': 'holding writes on your old site',
+		'final-delta': 'copying the last changes and checking them',
+		promote: 'promoting the new site',
+		route: 'pointing your address at the new site',
+		'observe-5m': 'checking the new site after 5 minutes',
+		'observe-30m': 'checking the new site after 30 minutes',
+		'observe-6h': 'checking the new site after 6 hours',
+		'observe-24h': 'checking the new site after 24 hours'
 	},
 	'backup.create': {
 		lease: 'locking the site for this change',
@@ -344,4 +387,20 @@ const ADOPT_ROUTE_REFUSALS: Record<string, string> = {
 export function adoptRefusalReason(error: { details: unknown; message: string }): string {
 	const reason = (error.details as { reason?: unknown } | null)?.reason;
 	return (typeof reason === 'string' && ADOPT_ROUTE_REFUSALS[reason]) || error.message;
+}
+
+const CUTOVER_ROUTE_REFUSALS: Record<string, string> = {
+	no_ready_destination:
+		'This site cannot take a move yet. Only a live managed site with an address can be moved to.',
+	site_busy: REFUSALS.site_busy!,
+	idempotency_key_reused: REFUSALS.idempotency_key_reused!,
+	not_awaiting_approval: 'The move is not waiting for your approval right now.',
+	not_observing: 'The new site is not live yet, so there is nothing to choose.',
+	not_waiting: 'The move has stopped, so it can no longer take your answer. Refresh the page.'
+};
+
+// the plain reason for a refused move, approval or choice; the server message is the fallback
+export function cutoverRefusalReason(error: { details: unknown; message: string }): string {
+	const reason = (error.details as { reason?: unknown } | null)?.reason;
+	return (typeof reason === 'string' && CUTOVER_ROUTE_REFUSALS[reason]) || error.message;
 }

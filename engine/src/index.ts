@@ -1,11 +1,15 @@
 import { buildDeps, type EngineEnv } from './env';
+import { handleLink, linkNodeId } from './node-link';
+import { D1NodeStore } from './node-store';
 import { handleStart } from './start';
 import { sweepAndLog } from './sweep';
 
+export { NodeSession } from './node-session';
 export { SiteLease } from './site-lease';
 export {
 	BackupCreate,
 	BackupRestore,
+	MigrationCutover,
 	SiteAdopt,
 	SiteCleanup,
 	SiteCreate,
@@ -16,20 +20,28 @@ export {
 
 export default {
 	fetch: (request, env) =>
-		handleStart(request, {
-			secret: env.START_SECRET,
-			now: Date.now(),
-			workflows: {
-				'site-create': env.SITE_CREATE,
-				'site-upgrade': env.SITE_UPGRADE,
-				'site-delete': env.SITE_DELETE,
-				'site-purge': env.SITE_PURGE,
-				'site-cleanup': env.SITE_CLEANUP,
-				'site-adopt': env.SITE_ADOPT,
-				'backup-create': env.BACKUP_CREATE,
-				'backup-restore': env.BACKUP_RESTORE
-			}
-		}),
+		linkNodeId(new URL(request.url)) !== null
+			? handleLink(request, {
+					nodes: new D1NodeStore(env.DB),
+					sessions: {
+						get: (nodeId) => env.NODE_SESSION.get(env.NODE_SESSION.idFromName(nodeId))
+					}
+				})
+			: handleStart(request, {
+					secret: env.START_SECRET,
+					now: Date.now(),
+					workflows: {
+						'site-create': env.SITE_CREATE,
+						'site-upgrade': env.SITE_UPGRADE,
+						'site-delete': env.SITE_DELETE,
+						'site-purge': env.SITE_PURGE,
+						'site-cleanup': env.SITE_CLEANUP,
+						'site-adopt': env.SITE_ADOPT,
+						'backup-create': env.BACKUP_CREATE,
+						'backup-restore': env.BACKUP_RESTORE,
+						'migration-cutover': env.MIGRATION_CUTOVER
+					}
+				}),
 	scheduled: (_controller, env, ctx) => {
 		ctx.waitUntil(
 			buildDeps(env).then((deps) => sweepAndLog(deps, { accountId: env.CF_ACCOUNT_ID }))

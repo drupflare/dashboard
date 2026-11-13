@@ -20,7 +20,8 @@ export const START_REFUSALS = [
 	'unknown_path',
 	'unknown_workflow',
 	'replayed',
-	'unconfigured'
+	'unconfigured',
+	'not_running'
 ] as const;
 export type StartRefusal = (typeof START_REFUSALS)[number];
 
@@ -34,7 +35,8 @@ export const START_REFUSAL_STATUS: Record<StartRefusal, number> = {
 	unknown_path: 404,
 	unknown_workflow: 400,
 	replayed: 409,
-	unconfigured: 500
+	unconfigured: 500,
+	not_running: 409
 };
 
 export const WORKFLOW_NAMES = [
@@ -45,9 +47,17 @@ export const WORKFLOW_NAMES = [
 	'site-cleanup',
 	'site-adopt',
 	'backup-create',
-	'backup-restore'
+	'backup-restore',
+	'migration-cutover'
 ] as const;
 export type WorkflowName = (typeof WORKFLOW_NAMES)[number];
+
+export const EVENT_CONTEXT = 'drupflare.engine.event.v1';
+
+// the events a running workflow waits for, by workflow
+export const WORKFLOW_EVENTS: Partial<Record<WorkflowName, readonly string[]>> = {
+	'migration-cutover': ['cutover-approval', 'cutover-decision']
+};
 
 const ID = /^[A-Za-z0-9_-]{8,64}$/;
 
@@ -89,10 +99,11 @@ function hmacKey(secret: string, usages: ('sign' | 'verify')[]) {
 }
 
 // the time and the id are part of what is signed, so neither can be swapped on a captured request
-const signedText = (timestamp: string, id: string, body: string) =>
-	`${START_CONTEXT}\n${timestamp}\n${id}\n${body}`;
+const signedText = (context: string, timestamp: string, id: string, body: string) =>
+	`${context}\n${timestamp}\n${id}\n${body}`;
 
-export async function signStart(
+async function sign(
+	context: string,
 	body: string,
 	options: { secret: string; now: number; id: string }
 ): Promise<Record<string, string>> {
@@ -101,7 +112,7 @@ export async function signStart(
 	const mac = await crypto.subtle.sign(
 		'HMAC',
 		key,
-		encoder.encode(signedText(timestamp, options.id, body))
+		encoder.encode(signedText(context, timestamp, options.id, body))
 	);
 	return {
 		[START_HEADERS.timestamp]: timestamp,
@@ -110,15 +121,25 @@ export async function signStart(
 	};
 }
 
+export const signStart = (body: string, options: { secret: string; now: number; id: string }) =>
+	sign(START_CONTEXT, body, options);
+
+// an event has its own context, so a captured start cannot be replayed as an event
+export const signEvent = (body: string, options: { secret: string; now: number; id: string }) =>
+	sign(EVENT_CONTEXT, body, options);
+
 export type Started = { workflow: WorkflowName; id: string; params: Record<string, unknown> };
 export type StartVerdict = { ok: true; value: Started } | { ok: false; code: StartRefusal };
 
+type SignedVerdict = { ok: true; id: string; json: unknown } | { ok: false; code: StartRefusal };
+
 // checks the signature before it reads the body as anything but bytes
-export async function verifyStart(
+async function verifySigned(
+	context: string,
 	headers: { get(name: string): string | null },
 	body: string,
 	options: { secret: string; now: number }
-): Promise<StartVerdict> {
+): Promise<SignedVerdict> {
 	const timestamp = headers.get(START_HEADERS.timestamp);
 	const id = headers.get(START_HEADERS.id);
 	const signature = headers.get(START_HEADERS.signature);
@@ -135,7 +156,7 @@ export async function verifyStart(
 		'HMAC',
 		key,
 		signed,
-		encoder.encode(signedText(timestamp, id, body))
+		encoder.encode(signedText(context, timestamp, id, body))
 	);
 	if (!valid) return { ok: false, code: 'bad_signature' };
 	if (Math.abs(options.now - Number(timestamp)) > START_WINDOW_MS) {
@@ -147,11 +168,58 @@ export async function verifyStart(
 	} catch {
 		return { ok: false, code: 'malformed' };
 	}
-	const parsed = startBodySchema.safeParse(json);
+	return { ok: true, id, json };
+}
+
+export async function verifyStart(
+	headers: { get(name: string): string | null },
+	body: string,
+	options: { secret: string; now: number }
+): Promise<StartVerdict> {
+	const verdict = await verifySigned(START_CONTEXT, headers, body, options);
+	if (!verdict.ok) return verdict;
+	const parsed = startBodySchema.safeParse(verdict.json);
 	if (!parsed.success) return { ok: false, code: 'malformed' };
 	const { workflow, params } = parsed.data;
 	if (!(WORKFLOW_NAMES as readonly string[]).includes(workflow)) {
 		return { ok: false, code: 'unknown_workflow' };
 	}
-	return { ok: true, value: { workflow: workflow as WorkflowName, id, params } };
+	return { ok: true, value: { workflow: workflow as WorkflowName, id: verdict.id, params } };
+}
+
+export const eventBodySchema = z
+	.object({
+		workflow: z.string(),
+		type: z.string(),
+		payload: z.record(z.string(), z.unknown())
+	})
+	.strict();
+
+export type Sent = {
+	workflow: WorkflowName;
+	id: string;
+	type: string;
+	payload: Record<string, unknown>;
+};
+export type EventVerdict = { ok: true; value: Sent } | { ok: false; code: StartRefusal };
+
+export async function verifyEvent(
+	headers: { get(name: string): string | null },
+	body: string,
+	options: { secret: string; now: number }
+): Promise<EventVerdict> {
+	const verdict = await verifySigned(EVENT_CONTEXT, headers, body, options);
+	if (!verdict.ok) return verdict;
+	const parsed = eventBodySchema.safeParse(verdict.json);
+	if (!parsed.success) return { ok: false, code: 'malformed' };
+	const { workflow, type, payload } = parsed.data;
+	if (!(WORKFLOW_NAMES as readonly string[]).includes(workflow)) {
+		return { ok: false, code: 'unknown_workflow' };
+	}
+	const known = WORKFLOW_EVENTS[workflow as WorkflowName] ?? [];
+	if (!known.includes(type)) return { ok: false, code: 'malformed' };
+	return {
+		ok: true,
+		value: { workflow: workflow as WorkflowName, id: verdict.id, type, payload }
+	};
 }

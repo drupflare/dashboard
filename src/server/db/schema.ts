@@ -1,3 +1,4 @@
+import { PAIRING_STATES } from '@contracts/fleet-link';
 import {
 	OPERATION_STATUSES,
 	OPERATION_TYPES,
@@ -314,6 +315,30 @@ export const singleUse = sqliteTable('single_use', {
 	expiresAt: integer('expires_at').notNull()
 });
 
+export const pairings = sqliteTable('pairings', {
+	id: text('id').primaryKey(),
+	organizationId: text('organization_id').notNull(),
+	claimTokenHash: text('claim_token_hash').notNull().unique(),
+	state: text('state', { enum: PAIRING_STATES }).notNull(),
+	createdBy: text('created_by').notNull(),
+	createdAt: integer('created_at').notNull(),
+	expiresAt: integer('expires_at').notNull(),
+	claimedNodeId: text('claimed_node_id')
+});
+
+export const nodes = sqliteTable('nodes', {
+	id: text('id').primaryKey(),
+	organizationId: text('organization_id').notNull(),
+	publicKey: text('public_key').notNull(),
+	hostFacts: text('host_facts').notNull(),
+	state: text('state', { enum: ['active', 'revoked'] }).notNull(),
+	pairedAt: integer('paired_at').notNull(),
+	lastSeenAt: integer('last_seen_at'),
+	lastAuditHead: text('last_audit_head'),
+	lastEnvelopeSeq: integer('last_envelope_seq').notNull().default(-1),
+	revokedAt: integer('revoked_at')
+});
+
 export const apiKeyLookup = sqliteTable('api_key_lookup', {
 	lookupId: text('lookup_id').primaryKey(),
 	organizationId: text('organization_id').notNull(),
@@ -344,6 +369,8 @@ export const TABLES = [
 	passkeys,
 	singleUse,
 	apiKeyLookup,
+	pairings,
+	nodes,
 	...BILLING_TABLES
 ] as const;
 
@@ -599,6 +626,30 @@ export const SCHEMA_STATEMENTS: string[] = [
 	organization_id TEXT NOT NULL,
 	key_id TEXT NOT NULL
 )`,
+	`CREATE TABLE IF NOT EXISTS pairings (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	claim_token_hash TEXT NOT NULL UNIQUE,
+	state TEXT NOT NULL CHECK (state IN (${quoted(PAIRING_STATES)})),
+	created_by TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL,
+	claimed_node_id TEXT
+)`,
+	`CREATE TABLE IF NOT EXISTS nodes (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	public_key TEXT NOT NULL,
+	host_facts TEXT NOT NULL,
+	state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+	paired_at INTEGER NOT NULL,
+	last_seen_at INTEGER,
+	last_audit_head TEXT,
+	last_envelope_seq INTEGER NOT NULL DEFAULT -1,
+	revoked_at INTEGER
+)`,
+	`CREATE INDEX IF NOT EXISTS nodes_org ON nodes (organization_id, id)`,
+	`CREATE INDEX IF NOT EXISTS pairings_org ON pairings (organization_id, created_at)`,
 	`CREATE INDEX IF NOT EXISTS passkeys_user ON passkeys (user_id)`,
 	`CREATE INDEX IF NOT EXISTS single_use_expiry ON single_use (expires_at)`,
 	`CREATE INDEX IF NOT EXISTS pending_secrets_expiry ON pending_secrets (expires_at)`,
@@ -638,6 +689,42 @@ export const SCHEMA_STATEMENTS: string[] = [
 	`CREATE INDEX IF NOT EXISTS site_resources_account ON site_resources (account_id, kind)
 	WHERE deleted_at IS NULL`,
 	`CREATE INDEX IF NOT EXISTS site_discovery_fetched ON site_discovery (fetched_at)`,
+	`CREATE TABLE IF NOT EXISTS repo_connections (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	provider TEXT NOT NULL CHECK (provider IN ('github', 'gitlab', 'bitbucket', 'gitea', 'forgejo')),
+	external_id TEXT NOT NULL,
+	display_name TEXT NOT NULL,
+	credential_envelope TEXT,
+	scopes TEXT NOT NULL,
+	state TEXT NOT NULL CHECK (state IN ('active', 'revoked')),
+	created_at INTEGER NOT NULL,
+	revoked_at INTEGER
+)`,
+	`CREATE TABLE IF NOT EXISTS site_remotes (
+	id TEXT PRIMARY KEY,
+	site_id TEXT NOT NULL,
+	organization_id TEXT NOT NULL,
+	connection_id TEXT NOT NULL,
+	repo_full_name TEXT NOT NULL,
+	branch TEXT NOT NULL,
+	mount_path TEXT NOT NULL,
+	interval_minutes INTEGER NOT NULL CHECK (interval_minutes >= 5),
+	last_pull_status TEXT,
+	last_pull_at INTEGER,
+	created_at INTEGER NOT NULL
+)`,
+	`CREATE TABLE IF NOT EXISTS repo_deliveries (
+	provider TEXT NOT NULL,
+	delivery_id TEXT NOT NULL,
+	received_at INTEGER NOT NULL,
+	PRIMARY KEY (provider, delivery_id)
+)`,
+	`CREATE INDEX IF NOT EXISTS repo_connections_org ON repo_connections (organization_id, id)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS repo_connections_github_install ON repo_connections (external_id)
+	WHERE provider = 'github' AND state = 'active'`,
+	`CREATE INDEX IF NOT EXISTS site_remotes_site ON site_remotes (organization_id, site_id, id)`,
+	`CREATE INDEX IF NOT EXISTS site_remotes_repo ON site_remotes (repo_full_name, branch)`,
 	...BILLING_SCHEMA_STATEMENTS
 ];
 

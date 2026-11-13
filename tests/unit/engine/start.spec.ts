@@ -3,10 +3,12 @@ import {
 	handleStart,
 	MAX_START_BYTES,
 	secretUsable,
+	signEvent,
 	signStart,
 	START_HEADERS,
 	START_REFUSALS,
 	START_WINDOW_MS,
+	verifyEvent,
 	verifyStart,
 	WORKFLOW_NAMES,
 	type StartRefusal,
@@ -20,17 +22,11 @@ const ID = 'op_start_0000000001';
 const BODY = JSON.stringify({ workflow: 'site-create', params: { operationId: 'op_x', n: 1 } });
 
 function starters() {
-	const created: Record<WorkflowName, Map<string, unknown>> = {
-		'site-create': new Map(),
-		'site-upgrade': new Map(),
-		'site-delete': new Map(),
-		'site-purge': new Map(),
-		'site-cleanup': new Map(),
-		'site-adopt': new Map(),
-		'backup-create': new Map(),
-		'backup-restore': new Map()
-	};
-	const failWith: { error: Error | null } = { error: null };
+	const created = Object.fromEntries(
+		WORKFLOW_NAMES.map((name) => [name, new Map<string, unknown>()])
+	) as Record<WorkflowName, Map<string, unknown>>;
+	const events: { workflow: string; id: string; type: string; payload: unknown }[] = [];
+	const failWith: { error: Error | null; event: Error | null } = { error: null, event: null };
 	const workflows = Object.fromEntries(
 		WORKFLOW_NAMES.map((name): [WorkflowName, WorkflowStarter] => [
 			name,
@@ -44,12 +40,17 @@ function starters() {
 				},
 				async get(id) {
 					if (!created[name].has(id)) throw new Error('instance.not_found');
-					return {} as never;
+					return {
+						async sendEvent(event: { type: string; payload: unknown }) {
+							if (failWith.event !== null) throw failWith.event;
+							events.push({ workflow: name, id, ...event });
+						}
+					} as never;
 				}
 			}
 		])
 	) as Record<WorkflowName, WorkflowStarter>;
-	return { created, workflows, failWith };
+	return { created, workflows, failWith, events };
 }
 
 async function request(
@@ -61,9 +62,10 @@ async function request(
 		method?: string;
 		path?: string;
 		headers?: Record<string, string | null>;
+		sign?: typeof signStart;
 	} = {}
 ) {
-	const signed = await signStart(body, {
+	const signed = await (options.sign ?? signStart)(body, {
 		secret: options.secret ?? SECRET,
 		now: options.now ?? NOW,
 		id: options.id ?? ID
@@ -318,6 +320,134 @@ describe('handleStart', () => {
 		await handle(await request(BODY), SECRET, world);
 		await note(await handle(await request(BODY), SECRET, world));
 		await note(await handle(await request(BODY), 'short'));
+		await note(await handle(await eventRequest(EVENT), SECRET, world));
 		expect([...seen].sort()).toEqual([...START_REFUSALS].sort());
+	});
+});
+
+const EVENT_ID = 'op_cutover_0000000001';
+const EVENT = JSON.stringify({
+	workflow: 'migration-cutover',
+	type: 'cutover-approval',
+	payload: { approvedBy: 'user:u1' }
+});
+
+const eventRequest = (body: string, options: Parameters<typeof request>[1] = {}) =>
+	request(body, { path: '/event', id: EVENT_ID, sign: signEvent, ...options });
+
+describe('events', () => {
+	const handle = (req: Request, workflows = starters(), secret: string | null = SECRET) =>
+		handleStart(req, { secret: secret as string, now: NOW, workflows: workflows.workflows });
+
+	function running() {
+		const world = starters();
+		world.created['migration-cutover'].set(EVENT_ID, {});
+		return world;
+	}
+
+	it('hands the event to the running workflow under the request id', async () => {
+		const world = running();
+		const response = await handle(await eventRequest(EVENT), world);
+		expect(response.status).toBe(202);
+		expect(await response.json()).toEqual({
+			ok: true,
+			workflow: 'migration-cutover',
+			id: EVENT_ID,
+			type: 'cutover-approval'
+		});
+		expect(world.events).toEqual([
+			{
+				workflow: 'migration-cutover',
+				id: EVENT_ID,
+				type: 'cutover-approval',
+				payload: { approvedBy: 'user:u1' }
+			}
+		]);
+	});
+
+	it('verifies an event under its own context', async () => {
+		const headers = (await eventRequest(EVENT)).headers;
+		const verdict = await verifyEvent(headers, EVENT, { secret: SECRET, now: NOW });
+		expect(verdict).toEqual({
+			ok: true,
+			value: {
+				workflow: 'migration-cutover',
+				id: EVENT_ID,
+				type: 'cutover-approval',
+				payload: { approvedBy: 'user:u1' }
+			}
+		});
+	});
+
+	it('refuses a signed start replayed as an event and an event replayed as a start', async () => {
+		const world = running();
+		const asEvent = await handle(await eventRequest(EVENT, { sign: signStart }), world);
+		expect([asEvent.status, await codeOf(asEvent)]).toEqual([401, 'bad_signature']);
+		const asStart = await handle(
+			await request(EVENT, { path: '/start', sign: signEvent, id: EVENT_ID }),
+			world
+		);
+		expect([asStart.status, await codeOf(asStart)]).toEqual([401, 'bad_signature']);
+		expect(world.events).toEqual([]);
+	});
+
+	it('refuses an unsigned event, a stale one and a wrong secret', async () => {
+		const world = running();
+		const bare = new Request('https://engine.example/event', { method: 'POST', body: EVENT });
+		expect((await handle(bare, world)).status).toBe(401);
+		const stale = await handle(await eventRequest(EVENT, { now: 1 }), world);
+		expect([stale.status, await codeOf(stale)]).toEqual([401, 'stale']);
+		const wrong = await handle(await eventRequest(EVENT, { secret: 'x'.repeat(40) }), world);
+		expect([wrong.status, await codeOf(wrong)]).toEqual([401, 'bad_signature']);
+		expect(world.events).toEqual([]);
+	});
+
+	it('refuses an event the workflow does not wait for, an unknown workflow and a bad body', async () => {
+		const world = running();
+		const unknownType = JSON.stringify({
+			workflow: 'migration-cutover',
+			type: 'cutover-delete',
+			payload: {}
+		});
+		const noEvents = JSON.stringify({
+			workflow: 'site-create',
+			type: 'cutover-approval',
+			payload: {}
+		});
+		const unknownWorkflow = JSON.stringify({
+			workflow: 'nope',
+			type: 'cutover-approval',
+			payload: {}
+		});
+		for (const [body, code] of [
+			[unknownType, 'malformed'],
+			[noEvents, 'malformed'],
+			[unknownWorkflow, 'unknown_workflow'],
+			['{', 'malformed'],
+			[
+				JSON.stringify({ workflow: 'migration-cutover', type: 'cutover-approval' }),
+				'malformed'
+			]
+		] as const) {
+			const response = await handle(await eventRequest(body), world);
+			expect(await codeOf(response)).toBe(code);
+		}
+		expect(world.events).toEqual([]);
+	});
+
+	it('answers 409 when no instance is running or the workflow refuses the event', async () => {
+		const none = await handle(await eventRequest(EVENT));
+		expect([none.status, await codeOf(none)]).toEqual([409, 'not_running']);
+		const world = running();
+		world.failWith.event = new Error('instance.not_running');
+		const refused = await handle(await eventRequest(EVENT), world);
+		expect([refused.status, await codeOf(refused)]).toEqual([409, 'not_running']);
+	});
+
+	it('answers 405 for another method on a signed event and 500 when the secret is unusable', async () => {
+		const put = await handle(await eventRequest(EVENT, { method: 'PUT' }), running());
+		expect([put.status, await codeOf(put)]).toEqual([405, 'wrong_method']);
+		const unset = await handle(await eventRequest(EVENT), running(), 'short');
+		expect([unset.status, await codeOf(unset)]).toEqual([500, 'unconfigured']);
 	});
 });

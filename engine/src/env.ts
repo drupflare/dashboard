@@ -3,6 +3,7 @@ import { dispatch, Resources, SESSION_MARGIN_MS, SESSION_TTL_MS } from '@drupfla
 import { authorityOf, type SiteAuthStub } from './adapters/authority';
 import { D1BackupLedger, r2BackupBlobs } from './adapters/backups';
 import { custodyOf } from './adapters/custody';
+import { unavailableCutoverPorts } from './adapters/cutover';
 import { hostsOf } from './adapters/hosts';
 import { namespaceKvOf } from './adapters/kv';
 import { leasesOf, type LeaseStub } from './adapters/leases';
@@ -13,9 +14,10 @@ import { workforceCloudflare } from './adapters/workforce';
 import { readConfig } from './config';
 import { D1OperationStore } from './operations/store';
 import { D1ResourceLedger } from './ownership';
-import type { BackupDeps, EngineDeps } from './ports';
+import type { BackupDeps, CutoverDeps, EngineDeps } from './ports';
 import type { BackupCreateInput } from './workflows/backup-create';
 import type { BackupRestoreInput } from './workflows/backup-restore';
+import type { MigrationCutoverInput } from './workflows/migration-cutover';
 import type { SiteAdoptInput } from './workflows/site-adopt';
 import type { SiteCleanupInput } from './workflows/site-cleanup';
 import type { SiteCreateInput } from './workflows/site-create';
@@ -30,6 +32,7 @@ export interface EngineEnv {
 	SITE_LEASE: DurableObjectNamespace;
 	SITE_AUTH: DurableObjectNamespace;
 	NAMES: DurableObjectNamespace;
+	NODE_SESSION: DurableObjectNamespace;
 	SITE_CREATE: Workflow<SiteCreateInput>;
 	SITE_UPGRADE: Workflow<SiteUpgradeInput>;
 	SITE_DELETE: Workflow<SiteDeleteInput>;
@@ -38,11 +41,13 @@ export interface EngineEnv {
 	SITE_ADOPT: Workflow<SiteAdoptInput>;
 	BACKUP_CREATE: Workflow<BackupCreateInput>;
 	BACKUP_RESTORE: Workflow<BackupRestoreInput>;
+	MIGRATION_CUTOVER: Workflow<MigrationCutoverInput>;
 	RELEASES_URL: string;
 	CF_ACCOUNT_ID: string;
 	CF_API_TOKEN: string;
 	CONTROL_SEED: string;
 	START_SECRET: string;
+	FLEET_SEED: string;
 	DISPATCH_NAMESPACE: string;
 	LEASE_TTL_MS: string | number;
 	ASSET_CHUNK_BYTES: string | number;
@@ -73,6 +78,10 @@ export async function buildBackupDeps(env: EngineEnv): Promise<BackupDeps> {
 		backups: new D1BackupLedger(env.DB),
 		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 	};
+}
+
+export async function buildCutoverDeps(env: EngineEnv): Promise<CutoverDeps> {
+	return { ...(await buildDeps(env)), cutover: unavailableCutoverPorts };
 }
 
 export async function buildDeps(env: EngineEnv): Promise<EngineDeps> {

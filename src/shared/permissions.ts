@@ -123,6 +123,7 @@ export const ACTION_DEFS = {
 	'integration.manage': { scope: 'org', org: ADM },
 	'repo.read': { scope: 'org', org: NOBILL },
 	'repo.manage': { scope: 'org', org: DEV },
+	'repo.connect': { scope: 'org', org: ADM, sessionOnly: true, stepUp: true },
 	'template.read': { scope: 'org', org: NOBILL },
 	'template.manage': { scope: 'org', org: DEV },
 	// #endregion
@@ -146,6 +147,9 @@ export const ACTION_DEFS = {
 	'plane.read': { scope: 'org', org: NOBILL },
 	'plane.manage': { scope: 'org', org: ADM },
 	'plane.connect': { scope: 'department', org: DEV, sessionOnly: true },
+	'node.read': { scope: 'org', org: NOBILL },
+	'node.pair': { scope: 'org', org: ADM, sessionOnly: true, stepUp: true },
+	'node.revoke': { scope: 'org', org: ADM, stepUp: true },
 	'release.read': { scope: 'org', org: NOBILL },
 	'release.manage': { scope: 'org', org: ADM },
 	'import.manage': { scope: 'org', org: DEV },
@@ -187,10 +191,14 @@ export const ACTION_DEFS = {
 	'site.upgrade': { scope: 'site', org: DEV, site: SM },
 	'site.cleanup': { scope: 'site', org: DEV, site: SM },
 	'site.adopt': { scope: 'site', org: ADM, site: SA, sessionOnly: true, stepUp: true },
+	'site.cutover': { scope: 'site', org: ADM, site: SA, sessionOnly: true, stepUp: true },
+	'site.cutover.decide': { scope: 'site', org: ADM, site: SA, sessionOnly: true, stepUp: true },
+	'site.cutover.read': { scope: 'site', org: ADM, site: SA },
 	'site.pull': { scope: 'site', org: DEV, site: SM },
 	'site.modify': { scope: 'site', org: DEV, site: SM },
 	'site.heal': { scope: 'site', org: DEV, site: SM },
 	'site.git.manage': { scope: 'site', org: DEV, site: SA },
+	'site.remote.manage': { scope: 'site', org: DEV, site: SA },
 	'site.domain.manage': { scope: 'site', org: ADM, site: SA },
 	'site.domain.rename': { scope: 'site', org: ADM, site: SA, stepUp: true },
 	'site.credentials.rotate': { scope: 'site', org: ADM, stepUp: true },
@@ -299,7 +307,8 @@ export const PUBLIC_ACTIONS = [
 	'auth.oauth.providers',
 	'auth.oauth.start',
 	'auth.oauth.callback',
-	'auth.logout'
+	'auth.logout',
+	'node.claim'
 ] as const;
 export type PublicAction = (typeof PUBLIC_ACTIONS)[number];
 

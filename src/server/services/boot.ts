@@ -12,7 +12,7 @@ import type { Principal } from '../domain/authorize';
 import { entitlementKeys } from '../domain/entitlements';
 import { renderMail } from '../emails';
 import { cloudflareEmailSender, type EmailBinding } from '../integrations/email';
-import { engineConfigOf, engineStarter } from '../integrations/engine';
+import { engineConfigOf, engineEventSender, engineStarter } from '../integrations/engine';
 import { OAUTH_PROVIDERS, oauthClients, type OAuthConfig } from '../integrations/oauth';
 import type { WebAuthnConfig } from '../integrations/webauthn';
 import { accessConfigOf, accessTokenOf, verifyAccessToken } from '../utils/access';
@@ -42,7 +42,13 @@ import {
 } from './capacity';
 import { collegeAttemptStore, consoleMailSender, type MailSender } from './email-codes';
 import { collegeFactsStore, factsLoader, type FactsDeps } from './facts';
+import { fleetConfigOf, resetFleetServices, setFleetServices, type FleetServices } from './fleet';
 import { collegeIdentityStore, setIdentityServices, type IdentityServices } from './identities';
+import {
+	resetCutoverServices,
+	setCutoverServices,
+	type CutoverServices
+} from './migration-cutover';
 import { setOrganizationServices, type OrganizationServices } from './organizations';
 import {
 	collegeOwnerTokenStore,
@@ -289,6 +295,8 @@ export interface BuiltServices {
 	ownerTokens: OwnerTokenStore;
 	sites: SiteServices;
 	backups: BackupServices;
+	cutover: Partial<CutoverServices>;
+	fleet: FleetServices;
 	siteHealth: Partial<SiteHealthServices>;
 	capacity: Partial<CapacityServices>;
 	pendingSecrets: () => Promise<PendingSecretDeps>;
@@ -374,6 +382,17 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			config: siteInputConfigOf(env)
 		},
 		backups: backupServicesOf({ BLOB: env.BLOB }, { getDb, startOperation }, heads),
+		cutover: {
+			sendEvent: engineEventSender({ ...engineConfigOf(env), now: Date.now }),
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads))
+		},
+		fleet: {
+			getDb,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			baseUrl,
+			now: Date.now,
+			...fleetConfigOf(env)
+		},
 		siteHealth: {
 			getDb,
 			custody: async () => {
@@ -408,6 +427,8 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	setApiDeps(built.api);
 	setSiteServices(built.sites);
 	setBackupServices(built.backups);
+	setCutoverServices(built.cutover);
+	setFleetServices(built.fleet);
 	setSiteHealthServices(built.siteHealth);
 	setCapacityServices(built.capacity);
 	setPendingSecretDeps(built.pendingSecrets);
@@ -428,6 +449,8 @@ export function resetBoot(): void {
 	resetApiDeps();
 	resetSiteServices();
 	resetBackupServices();
+	resetCutoverServices();
+	resetFleetServices();
 	resetSiteHealthServices();
 	resetCapacityServices();
 	resetPendingSecretDeps();

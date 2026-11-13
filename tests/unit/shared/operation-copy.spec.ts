@@ -8,6 +8,7 @@ import {
 	adoptRefusalReason,
 	canRetry,
 	copyFor,
+	cutoverRefusalReason,
 	failedStepError,
 	failedStepId,
 	failureReason,
@@ -18,6 +19,7 @@ import {
 	OPERATION_COPY,
 	operationTypeLabel,
 	refusalReason,
+	ROLLBACK_BOUNDARY_COPY,
 	SITE_HOLD_DAYS,
 	stepLabel,
 	type OperationCopy
@@ -29,6 +31,7 @@ const COVERED = [
 	'site.delete',
 	'site.upgrade',
 	'site.adopt',
+	'migration.cutover',
 	'backup.create',
 	'backup.restore'
 ];
@@ -39,7 +42,7 @@ function enginePlanSteps(): { type: string; id: string }[] {
 	const pairs: { type: string; id: string }[] = [];
 	for (const file of readdirSync(WORKFLOWS).filter((name) => name.endsWith('.ts'))) {
 		const text = readFileSync(WORKFLOWS + file, 'utf8');
-		const marks = [...text.matchAll(/type: '((?:site|backup)\.[a-z-]+)'/g)];
+		const marks = [...text.matchAll(/type: '((?:site|backup|migration)\.[a-z-]+)'/g)];
 		marks.forEach((mark, i) => {
 			const type = mark[1] ?? '';
 			const segment = text.slice(mark.index, marks[i + 1]?.index ?? text.length);
@@ -57,7 +60,7 @@ function enginePlanSteps(): { type: string; id: string }[] {
 const IDENTIFIER = /[a-z0-9]\.[a-z]|[a-z]-[a-z]|_/;
 
 describe('operation copy', () => {
-	it('covers the six operations the progress screen names, and no other', () => {
+	it('covers the seven operations the progress screen names, and no other', () => {
 		expect(Object.keys(OPERATION_COPY).sort()).toEqual([...COVERED].sort());
 		for (const type of COVERED) expect(OPERATION_TYPES).toContain(type);
 	});
@@ -388,5 +391,95 @@ describe('adoption copy', () => {
 		expect(refused('already_adopted')).toBe('This site was already adopted.');
 		expect(refused('nothing_like_it')).toBe('server words');
 		expect(adoptRefusalReason({ details: null, message: 'server words' })).toBe('server words');
+	});
+});
+
+describe('cutover copy', () => {
+	const NEW_SITE = 'site_bbbbbbbbbbbbbbbbbbbbbbbbbb';
+	const STEP_IDS = [
+		'lease',
+		'lower-ttl',
+		'snapshot',
+		'capture-delta',
+		'validate',
+		'owner-approval',
+		'apply-write-policy',
+		'final-delta',
+		'promote',
+		'route',
+		'observe-5m',
+		'observe-30m',
+		'observe-6h',
+		'observe-24h'
+	];
+
+	it('titles the move and opens its page from the new site, on success and on failure', () => {
+		const copy = copyFor('migration.cutover');
+		const operation = { targetIds: [NEW_SITE] };
+		expect(copy.title).toBe('Moving Your Site');
+		expect(copy.failure).toBe('Could Not Finish the Move');
+		expect(copy.running).toContain('never deleted');
+		expect(copy.success).toContain('not changed or deleted');
+		expect(copy.link(operation)).toEqual({
+			to: `/sites/${NEW_SITE}/cutover`,
+			label: 'Open the Move'
+		});
+		expect(copy.failureLink(operation)).toEqual(copy.link(operation));
+		expect(copy.link({ targetIds: [] })?.to).toBe('/sites');
+	});
+
+	it('labels the type and offers no retry', () => {
+		expect(operationTypeLabel('migration.cutover')).toBe('Move');
+		expect(canRetry('migration.cutover', 'failed')).toBe(false);
+		expect(canRetry('migration.cutover', 'rolled-back')).toBe(false);
+	});
+
+	it('labels every step id the plan writes in plain words', () => {
+		for (const id of STEP_IDS) {
+			const label = stepLabel('migration.cutover', id);
+			expect(label, id).not.toBe(GENERIC_STEP_LABEL);
+			expect(label, id).not.toMatch(IDENTIFIER);
+		}
+	});
+
+	it('says where a failed move stopped, in plain words', () => {
+		expect(
+			failureReason({ type: 'migration.cutover', status: 'failed', failedStep: 'validate' })
+		).toBe('Stopped while checking the new site against the snapshot and the changes.');
+		expect(
+			failureReason({ type: 'migration.cutover', status: 'failed', failedStep: 'route' })
+		).toBe('Stopped while pointing your address at the new site.');
+	});
+
+	it('states the rollback boundary in two plain sentences', () => {
+		expect(ROLLBACK_BOUNDARY_COPY['dns-reversal']).toContain('first write');
+		expect(ROLLBACK_BOUNDARY_COPY['dns-reversal']).toContain('nothing is lost');
+		expect(ROLLBACK_BOUNDARY_COPY['post-write']).toContain('no longer a reversal');
+		for (const sentence of Object.values(ROLLBACK_BOUNDARY_COPY)) {
+			expect(sentence).toMatch(/^[\x20-\x7e]+$/);
+			expect(sentence).not.toMatch(/_/);
+		}
+	});
+
+	it.each([
+		['no_ready_destination', 'live managed site'],
+		['site_busy', 'still running'],
+		['idempotency_key_reused', 'clashes'],
+		['not_awaiting_approval', 'not waiting for your approval'],
+		['not_observing', 'not live yet'],
+		['not_waiting', 'has stopped']
+	])('turns the %s refusal into a plain reason', (reason, text) => {
+		expect(cutoverRefusalReason({ details: { reason }, message: 'server words' })).toContain(
+			text
+		);
+	});
+
+	it('falls back to the server message for a reason it does not name', () => {
+		expect(
+			cutoverRefusalReason({ details: { reason: 'new_thing' }, message: 'server words' })
+		).toBe('server words');
+		expect(cutoverRefusalReason({ details: null, message: 'server words' })).toBe(
+			'server words'
+		);
 	});
 });

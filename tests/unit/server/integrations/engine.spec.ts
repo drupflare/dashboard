@@ -3,12 +3,14 @@ import {
 	START_REFUSALS,
 	START_REFUSAL_STATUS,
 	signStart,
+	verifyEvent,
 	verifyStart
 } from '../../../../contracts/src/engine-start';
 import { handleStart, type WorkflowStarter } from '../../../../engine/src/start';
 import {
 	EngineStartError,
 	engineConfigOf,
+	engineEventSender,
 	engineStarter,
 	type EngineBinding,
 	type EngineStartErrorCode
@@ -204,6 +206,93 @@ describe('engineStarter against the engine handler', () => {
 			engineStarter({ binding, secret: SECRET, now: () => NOW - 3_600_000 })(request)
 		);
 		expect(error).toMatchObject({ code: 'stale' });
+	});
+});
+
+describe('engineEventSender', () => {
+	const event = {
+		workflow: 'migration-cutover' as const,
+		id: 'op_abcdefgh12345678',
+		type: 'cutover-approval',
+		payload: { approvedBy: 'user:user-1' }
+	};
+
+	it('posts a signed event the engine verifies, under the operation id', async () => {
+		const seen: { headers: Headers; body: string; url: string }[] = [];
+		const binding: EngineBinding = {
+			async fetch(input, init) {
+				const call = new Request(input as string, init);
+				seen.push({
+					headers: call.headers,
+					body: await call.clone().text(),
+					url: call.url
+				});
+				return Response.json({ ok: true }, { status: 202 });
+			}
+		};
+		await engineEventSender({ binding, secret: SECRET, now: () => NOW })(event);
+		const [call] = seen;
+		expect(call!.url).toBe('https://engine/event');
+		expect(await verifyEvent(call!.headers, call!.body, { secret: SECRET, now: NOW })).toEqual({
+			ok: true,
+			value: {
+				workflow: 'migration-cutover',
+				id: event.id,
+				type: 'cutover-approval',
+				payload: event.payload
+			}
+		});
+		const asStart = await verifyStart(call!.headers, call!.body, { secret: SECRET, now: NOW });
+		expect(asStart).toEqual({ ok: false, code: 'bad_signature' });
+	});
+
+	it('answers 501 not_built when the binding or the secret is unset', async () => {
+		for (const config of [
+			{ binding: undefined, secret: SECRET },
+			{ binding: answering(202, {}), secret: 'short' }
+		]) {
+			const error = await caught(engineEventSender({ ...config, now: () => NOW })(event));
+			expect(error).toMatchObject({ code: 'not_built', status: 501 });
+		}
+	});
+
+	it('maps a refusal, an unreadable answer and a network failure to typed errors', async () => {
+		const codes: string[] = [];
+		for (const binding of [
+			answering(409, { ok: false, code: 'not_running' }),
+			answering(503, { nope: true }),
+			answering(400, { nope: true }),
+			{
+				fetch: async () => {
+					throw new Error('connection refused');
+				}
+			}
+		] satisfies EngineBinding[]) {
+			const error = await caught(
+				engineEventSender({ binding, secret: SECRET, now: () => NOW })(event)
+			);
+			expect(error).toBeInstanceOf(EngineStartError);
+			codes.push((error as EngineStartError).code);
+		}
+		expect(codes).toEqual(['not_running', 'unavailable', 'rejected', 'unavailable']);
+	});
+
+	it('refuses an id that is not a start id before it sends', async () => {
+		let sent = 0;
+		const binding: EngineBinding = {
+			fetch: async () => {
+				sent++;
+				return Response.json({}, { status: 202 });
+			}
+		};
+		const error = await caught(
+			engineEventSender({ binding, secret: SECRET, now: () => NOW })({
+				...event,
+				id: 'short'
+			})
+		);
+		expect(error).toMatchObject({ code: 'invalid_id' });
+		expect(sent).toBe(0);
 	});
 });
 

@@ -13,7 +13,8 @@
 		"bindings": [
 			{ "name": "SITE_LEASE", "class_name": "SiteLease" },
 			{ "name": "SITE_AUTH", "class_name": "SiteAuth", "script_name": "drupflare-dispatch" },
-			{ "name": "NAMES", "class_name": "Names", "script_name": "drupflare-dispatch" }
+			{ "name": "NAMES", "class_name": "Names", "script_name": "drupflare-dispatch" },
+			{ "name": "NODE_SESSION", "class_name": "NodeSession" }
 		]
 	},
 	"workflows": [
@@ -24,9 +25,17 @@
 		{ "name": "site-cleanup", "binding": "SITE_CLEANUP", "class_name": "SiteCleanup" },
 		{ "name": "site-adopt", "binding": "SITE_ADOPT", "class_name": "SiteAdopt" },
 		{ "name": "backup-create", "binding": "BACKUP_CREATE", "class_name": "BackupCreate" },
-		{ "name": "backup-restore", "binding": "BACKUP_RESTORE", "class_name": "BackupRestore" }
+		{ "name": "backup-restore", "binding": "BACKUP_RESTORE", "class_name": "BackupRestore" },
+		{
+			"name": "migration-cutover",
+			"binding": "MIGRATION_CUTOVER",
+			"class_name": "MigrationCutover"
+		}
 	],
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] }],
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },
+		{ "tag": "v2", "new_sqlite_classes": ["NodeSession"] }
+	],
 	"vars": {
 		"DISPATCH_NAMESPACE": "drupflare-prod",
 		"RELEASES_URL": "https://cdn.drupflare.com/payloads/managed/",
@@ -58,7 +67,8 @@
 						"name": "NAMES",
 						"class_name": "Names",
 						"script_name": "drupflare-dispatch-stage"
-					}
+					},
+					{ "name": "NODE_SESSION", "class_name": "NodeSession" }
 				]
 			},
 			"workflows": [
@@ -97,9 +107,17 @@
 					"name": "backup-restore-stage",
 					"binding": "BACKUP_RESTORE",
 					"class_name": "BackupRestore"
+				},
+				{
+					"name": "migration-cutover-stage",
+					"binding": "MIGRATION_CUTOVER",
+					"class_name": "MigrationCutover"
 				}
 			],
-			"migrations": [{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] }],
+			"migrations": [
+				{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },
+				{ "tag": "v2", "new_sqlite_classes": ["NodeSession"] }
+			],
 			"vars": {
 				"DISPATCH_NAMESPACE": "drupflare-stage",
 				"RELEASES_URL": "https://cdn.drupflare.com/payloads/managed/",

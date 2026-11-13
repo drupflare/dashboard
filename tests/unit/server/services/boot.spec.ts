@@ -16,6 +16,7 @@ import {
 import { capacityServices } from '../../../../src/server/services/capacity';
 import { consoleMailSender } from '../../../../src/server/services/email-codes';
 import { factsLoader } from '../../../../src/server/services/facts';
+import { fleetServices } from '../../../../src/server/services/fleet';
 import { siteServices } from '../../../../src/server/services/sites';
 import { authServices, stepUpAtOf } from '../../../../src/server/utils/auth';
 import { ApiError } from '../../../../src/shared/errors';
@@ -127,6 +128,23 @@ describe('bootOnce', () => {
 		expect(capacityServices().getDb).toBe(built.capacity.getDb);
 		resetBoot();
 		expect(capacityServices().reads).toBeNull();
+	});
+
+	it('installs the fleet services with the link host and key from the env, and takes them away on reset', async () => {
+		const key = 'r2EXtK8adXShcS1LcXu6-pg-dlzFrrSaWFSUBElQY2s';
+		const built = bootOnce(
+			envWith({ FLEET_LINK_ORIGIN: 'wss://link.example/ignored', FLEET_PUBLIC_KEY: key }),
+			{ baseUrl: 'https://app.example' }
+		);
+		expect(fleetServices()).toMatchObject({
+			getDb: built.fleet.getDb,
+			baseUrl: 'https://app.example',
+			linkOrigin: 'wss://link.example',
+			dashboardPublicKey: key
+		});
+		resetBoot();
+		expect(fleetServices().linkOrigin).toBeNull();
+		await expect(fleetServices().getDb()).rejects.toMatchObject({ code: 'not_built' });
 	});
 
 	it('installs the backup services from the bindings and takes them away on reset', async () => {

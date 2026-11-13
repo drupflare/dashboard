@@ -2,6 +2,7 @@ import {
 	MAX_START_BYTES,
 	START_REFUSALS,
 	secretUsable,
+	signEvent,
 	signStart,
 	startIdPattern,
 	type StartRefusal,
@@ -47,6 +48,14 @@ export function engineConfigOf(env: Record<string, unknown>): Omit<EngineConfig,
 		binding: isBinding(env.ENGINE) ? env.ENGINE : undefined,
 		secret: typeof secret === 'string' && secret !== '' ? secret : undefined
 	};
+}
+
+export interface EngineEventRequest {
+	workflow: WorkflowName;
+	// the operation id of the running workflow
+	id: string;
+	type: string;
+	payload: Record<string, unknown>;
 }
 
 const REFUSALS: readonly string[] = START_REFUSALS;
@@ -95,6 +104,46 @@ export function engineStarter(
 		if (code === 'replayed') return;
 		if (code !== null) {
 			throw new EngineStartError(code, `the engine refused the start: ${code}`);
+		}
+		throw new EngineStartError(
+			response.status >= 500 ? 'unavailable' : 'rejected',
+			`the engine answered ${response.status}`
+		);
+	};
+}
+
+// resolves once the engine has handed the event to a running workflow; refused when none is waiting
+export function engineEventSender(
+	config: EngineConfig
+): (request: EngineEventRequest) => Promise<void> {
+	return async (request) => {
+		const { binding, secret } = config;
+		if (binding === undefined || !secretUsable(secret)) {
+			throw new ApiError('not_built', 'The engine is not available yet');
+		}
+		if (!startIdPattern.test(request.id)) {
+			throw new EngineStartError('invalid_id', 'the operation id cannot be a start id');
+		}
+		const body = JSON.stringify({
+			workflow: request.workflow,
+			type: request.type,
+			payload: request.payload
+		});
+		const headers = await signEvent(body, { secret, now: config.now(), id: request.id });
+		let response: Response;
+		try {
+			response = await binding.fetch('https://engine/event', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json', ...headers },
+				body
+			});
+		} catch {
+			throw new EngineStartError('unavailable', 'the engine did not answer');
+		}
+		if (response.status === 202) return;
+		const code = await refusalOf(response);
+		if (code !== null) {
+			throw new EngineStartError(code, `the engine refused the event: ${code}`);
 		}
 		throw new EngineStartError(
 			response.status >= 500 ? 'unavailable' : 'rejected',
