@@ -3,7 +3,7 @@ import type { SitePlane } from '@contracts/sites';
 import { buildPlan, observe, transition } from '../operations/state';
 import type { SiteRowState } from '../operations/store';
 import { purgeRows, purgeScript } from '../ownership';
-import type { EngineDeps } from '../ports';
+import type { DomainDeps, EngineDeps } from '../ports';
 import { StepFailed, type StepRunner } from '../step';
 import {
 	acquireLease,
@@ -18,6 +18,10 @@ import {
 	type Ctx,
 	type Outcome
 } from './common';
+import { releaseSiteDomains } from './domain-attach';
+
+// a deploy that builds the domain ports lets a delete release the site's custom hostnames too
+export type DomainReleaseDeps = EngineDeps & Partial<Pick<DomainDeps, 'hostnames' | 'domains'>>;
 
 export interface SiteDeleteInput {
 	operationId: string;
@@ -82,6 +86,16 @@ export function planSitePurge(input: Pick<SitePurgeInput, 'siteId'>): Plan {
 	});
 }
 
+async function releaseDomains(deps: DomainReleaseDeps, siteId: string) {
+	if (deps.hostnames === undefined || deps.domains === undefined) {
+		return { released: [], failed: [] };
+	}
+	return releaseSiteDomains(
+		{ authority: deps.authority, hostnames: deps.hostnames, domains: deps.domains },
+		siteId
+	);
+}
+
 function context(
 	step: StepRunner,
 	deps: EngineDeps,
@@ -112,7 +126,7 @@ async function failForward(ctx: Ctx, failure: StepFailed): Promise<Outcome> {
 
 export async function runSiteDelete(
 	step: StepRunner,
-	deps: EngineDeps,
+	deps: DomainReleaseDeps,
 	input: SiteDeleteInput
 ): Promise<Outcome> {
 	const ctx = context(step, deps, input, 'site.delete');
@@ -138,7 +152,8 @@ export async function runSiteDelete(
 				const answer = await deps.authority.deleteHostIfOwned(hostname, input.siteId);
 				if (answer === 'foreign') left.push(hostname);
 			}
-			return left;
+			const domains = await releaseDomains(deps, input.siteId);
+			return { left, kept: domains.failed };
 		});
 		await runStep(ctx, 'tombstone', 'tombstone', async () => {
 			await fenced(ctx);
@@ -146,9 +161,12 @@ export async function runSiteDelete(
 			await deps.store.setSiteState(input.siteId, 'tombstoned', deps.now());
 		});
 		notes =
-			foreign.length === 0
+			(foreign.left.length === 0
 				? ''
-				: `; left in place, held by another site: ${foreign.join(', ')}`;
+				: `; left in place, held by another site: ${foreign.left.join(', ')}`) +
+			(foreign.kept.length === 0
+				? ''
+				: `; custom domains the provider would not release: ${foreign.kept.join(', ')}`);
 	} catch (error) {
 		if (!(error instanceof StepFailed)) throw error;
 		return failForward(ctx, error);
@@ -163,7 +181,7 @@ export async function runSiteDelete(
 
 export async function runSitePurge(
 	step: StepRunner,
-	deps: EngineDeps,
+	deps: DomainReleaseDeps,
 	input: SitePurgeInput
 ): Promise<Outcome> {
 	const ctx = context(step, deps, input, 'site.purge');
@@ -191,6 +209,7 @@ export async function runSitePurge(
 		});
 		return { status: 'cancelled', reason: refusal };
 	}
+	let kept: string[] = [];
 	try {
 		await startOperation(ctx);
 		await acquireLease(ctx, 'lease');
@@ -199,10 +218,12 @@ export async function runSitePurge(
 			accountId: input.accountId,
 			plane: input.plane ?? 'self-managed'
 		};
-		await runStep(ctx, 'script', 'script', async () => {
+		kept = await runStep(ctx, 'script', 'script', async () => {
 			await fenced(ctx);
 			await purgeRows(deps, claim, ['route']);
+			const domains = await releaseDomains(deps, input.siteId);
 			await purgeScript(deps, claim);
+			return domains.failed;
 		});
 		await runStep(ctx, 'resources', 'resources', async () => {
 			await fenced(ctx);
@@ -221,7 +242,10 @@ export async function runSitePurge(
 		if (!(error instanceof StepFailed)) throw error;
 		return failForward(ctx, error);
 	}
-	await finishSuccess(ctx, `${input.siteId} was purged`);
+	await finishSuccess(
+		ctx,
+		`${input.siteId} was purged${kept.length === 0 ? '' : `; custom domains the provider would not release: ${kept.join(', ')}`}`
+	);
 	await releaseLease(ctx);
 	return { status: 'succeeded' };
 }

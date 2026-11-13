@@ -5,7 +5,7 @@ import type { AttachStage, DnsRecord } from '~/shared/domain-copy';
 export interface AttachView {
 	operationId: string;
 	hostname: string;
-	status: 'running' | 'succeeded' | 'failed';
+	status: 'running' | 'waiting' | 'succeeded' | 'failed';
 	stages: {
 		id: AttachStage;
 		label: string;
@@ -13,13 +13,35 @@ export interface AttachView {
 		text: string;
 	}[];
 	records: DnsRecord[];
+	// the plain sentence for a waiting attach; null otherwise
+	notice: string | null;
 	checks: number;
 	reason: string | null;
+	// when a running attach stops waiting for the ownership record; null otherwise
+	expiresAt: number | null;
 	updatedAt: number;
+}
+
+export interface RecordCheck extends DnsRecord {
+	status: 'ok' | 'missing' | 'wrong' | 'unknown';
+	statusText: string;
+	found: string[];
+}
+
+export interface DomainCheck {
+	hostname: string;
+	apex: boolean;
+	held: boolean;
+	routingKnown: boolean;
+	records: RecordCheck[];
+	hazards: { code: string; text: string }[];
+	unknown: boolean;
 }
 
 export interface DomainPayload {
 	ready: boolean;
+	// false while custom domains are switched off for the platform
+	enabled: boolean;
 	attached: { hostname: string; since: number }[];
 	attach: AttachView | null;
 }
@@ -67,6 +89,25 @@ export const useDomainStore = defineStore('domain', {
 					headers: { 'Idempotency-Key': idempotencyKey },
 					body
 				});
+			} catch (error) {
+				throw toApiClientError(error);
+			}
+			await this.read(orgId, siteId);
+		},
+		// reads every record live and starts nothing, so it can run as often as the owner wants
+		async check(orgId: string, siteId: string, hostname: string): Promise<DomainCheck> {
+			try {
+				return await useApi().post<DomainCheck>(`${base(orgId, siteId)}/check`, {
+					hostname
+				});
+			} catch (error) {
+				throw toApiClientError(error);
+			}
+		},
+		// gives up a name that is still waiting, then reads the page state again
+		async release(orgId: string, siteId: string, hostname: string): Promise<void> {
+			try {
+				await useApi().post(`${base(orgId, siteId)}/release`, { hostname });
 			} catch (error) {
 				throw toApiClientError(error);
 			}

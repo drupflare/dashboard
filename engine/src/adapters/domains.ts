@@ -9,6 +9,7 @@ import {
 } from '../../../src/server/domain/domain-attach';
 import type { DnsRecord } from '../../../src/shared/domain-copy';
 import type {
+	ClaimProof,
 	CustomHostnames,
 	CustomHostnameState,
 	DomainClaim,
@@ -90,7 +91,7 @@ export function observationOf(result: z.infer<typeof hostnameResult>, target: st
 	const records: DnsRecord[] = [];
 	const owner = result.ownership_verification;
 	if (owner?.name !== undefined && owner.value !== undefined) {
-		records.push({ purpose: 'ownership', type: 'TXT', name: owner.name, value: owner.value });
+		records.push({ purpose: 'certificate', type: 'TXT', name: owner.name, value: owner.value });
 	}
 	for (const record of result.ssl?.validation_records ?? []) {
 		if (record.txt_name !== undefined && record.txt_value !== undefined) {
@@ -120,6 +121,10 @@ export interface CustomHostnameOptions {
 }
 
 const OFF = 'custom_domains_off';
+
+// the codes the API answered on 2026-11-13 for an account without the feature: 1404 no quota has
+// been allocated, 1456 is the other answer for the same state
+const OFF_CODES: readonly number[] = [1404, 1456];
 
 // the account needs Cloudflare for SaaS and a token that can edit SSL and certificates; whether the
 // API answers a missing feature with 403 is unverified, so every 401 and 403 reads as either one
@@ -165,6 +170,12 @@ export function customHostnamesOf(options: CustomHostnameOptions): CustomHostnam
 			parsed = checked.success ? checked.data : null;
 		} catch {
 			parsed = null;
+		}
+		if (parsed?.errors?.some((error) => OFF_CODES.includes(error.code ?? 0))) {
+			throw new PermanentError(
+				OFF,
+				`Cloudflare answered ${status} with code ${parsed.errors.find((error) => OFF_CODES.includes(error.code ?? 0))?.code}: Cloudflare for SaaS is not enabled for the zone`
+			);
 		}
 		if (status === 401 || status === 403) {
 			throw new PermanentError(
@@ -230,9 +241,13 @@ interface DomainDbRow {
 	epoch: number;
 	state: ClaimRow['state'];
 	provider_id: string | null;
+	ownership_epoch: number | null;
+	updated_at: number;
 }
 
-const COLUMNS = 'hostname, organization_id, site_id, operation_id, epoch, state, provider_id';
+const COLUMNS =
+	'hostname, organization_id, site_id, operation_id, epoch, state, provider_id, ownership_epoch';
+const READ_COLUMNS = `${COLUMNS}, updated_at`;
 
 function toClaim(row: DomainDbRow): ClaimRow {
 	return {
@@ -242,7 +257,9 @@ function toClaim(row: DomainDbRow): ClaimRow {
 		operationId: row.operation_id,
 		epoch: row.epoch,
 		state: row.state,
-		providerId: row.provider_id
+		providerId: row.provider_id,
+		ownershipEpoch: row.ownership_epoch,
+		updatedAt: row.updated_at
 	};
 }
 
@@ -273,7 +290,7 @@ export class D1DomainLedger implements DomainLedger {
 
 	async current(hostname: string): Promise<ClaimRow | null> {
 		const row = await this.db
-			.prepare(`SELECT ${COLUMNS} FROM custom_domains WHERE hostname = ?`)
+			.prepare(`SELECT ${READ_COLUMNS} FROM custom_domains WHERE hostname = ?`)
 			.bind(hostname)
 			.first<DomainDbRow>();
 		return row === null ? null : toClaim(row);
@@ -283,18 +300,33 @@ export class D1DomainLedger implements DomainLedger {
 	async claim(
 		hostname: string,
 		who: { organizationId: string; siteId: string; operationId: string },
-		now: number
+		now: number,
+		proof?: ClaimProof
 	): Promise<DomainClaim> {
 		const row = await this.current(hostname);
 		const holder = row === null ? null : await this.site(row.siteId);
 		const live = holder !== null && (holder.state === 'active' || holder.state === 'suspended');
-		const decision = decideClaim(row, who, live);
+		const decision = decideClaim(
+			row,
+			who,
+			live,
+			proof === undefined ? {} : { now, contest: true }
+		);
 		if (decision.kind === 'refuse') return { ok: false };
+		let proven = false;
+		if (decision.kind === 'contest') {
+			// the check runs before the write, and the write fails if the holder proved in between
+			if (proof === undefined || !(await proof(decision.epoch))) {
+				return { ok: false, unproven: true };
+			}
+			proven = true;
+		}
+		const guarded = decision.kind === 'contest' || decision.kind === 'expired';
 		if (decision.kind === 'insert') {
 			const { meta } = await this.db
 				.prepare(
 					`INSERT INTO custom_domains (${COLUMNS}, created_at, updated_at)
-					VALUES (?, ?, ?, ?, 1, 'claimed', NULL, ?, ?) ON CONFLICT (hostname) DO NOTHING`
+					VALUES (?, ?, ?, ?, 1, 'claimed', NULL, NULL, ?, ?) ON CONFLICT (hostname) DO NOTHING`
 				)
 				.bind(hostname, who.organizationId, who.siteId, who.operationId, now, now)
 				.run();
@@ -318,8 +350,9 @@ export class D1DomainLedger implements DomainLedger {
 		const { meta } = await this.db
 			.prepare(
 				`UPDATE custom_domains SET organization_id = ?, site_id = ?, operation_id = ?,
-				epoch = epoch + 1, state = 'claimed', provider_id = NULL, updated_at = ?
-				WHERE hostname = ? AND epoch = ?`
+				epoch = epoch + 1, state = 'claimed', provider_id = NULL,
+					ownership_epoch = ${proven ? 'epoch + 1' : 'NULL'}, updated_at = ?
+				WHERE hostname = ? AND epoch = ?${guarded ? " AND state = 'claimed' AND ownership_epoch IS NOT epoch" : ''}`
 			)
 			.bind(
 				who.organizationId,
@@ -330,9 +363,15 @@ export class D1DomainLedger implements DomainLedger {
 				decision.previous.epoch
 			)
 			.run();
-		return meta.changes === 1
-			? { ok: true, epoch: decision.epoch, providerId: null, previous: decision.previous }
-			: { ok: false };
+		if (meta.changes === 1) {
+			return {
+				ok: true,
+				epoch: decision.epoch,
+				providerId: null,
+				previous: decision.previous
+			};
+		}
+		return { ok: false };
 	}
 
 	async setProvider(hostname: string, epoch: number, providerId: string): Promise<boolean> {
@@ -357,10 +396,33 @@ export class D1DomainLedger implements DomainLedger {
 		return meta.changes === 1;
 	}
 
+	async proveOwnership(hostname: string, epoch: number, siteId: string): Promise<boolean> {
+		const { meta } = await this.db
+			.prepare(
+				`UPDATE custom_domains SET ownership_epoch = ?, updated_at = ? WHERE hostname = ?
+				AND epoch = ? AND site_id = ? AND state <> 'released'`
+			)
+			.bind(epoch, this.now(), hostname, epoch, siteId)
+			.run();
+		return meta.changes === 1;
+	}
+
+	async heldBy(siteId: string): Promise<ClaimRow[]> {
+		const { results } = await this.db
+			.prepare(
+				`SELECT ${READ_COLUMNS} FROM custom_domains WHERE site_id = ? AND state <> 'released'
+				ORDER BY hostname`
+			)
+			.bind(siteId)
+			.all<DomainDbRow>();
+		return results.map(toClaim);
+	}
+
 	async release(hostname: string, epoch: number, siteId: string): Promise<boolean> {
 		const { meta } = await this.db
 			.prepare(
-				`UPDATE custom_domains SET state = 'released', provider_id = NULL, updated_at = ?
+				`UPDATE custom_domains SET state = 'released', provider_id = NULL,
+					ownership_epoch = NULL, updated_at = ?
 				WHERE hostname = ? AND epoch = ? AND site_id = ? AND state <> 'released'`
 			)
 			.bind(this.now(), hostname, epoch, siteId)

@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { ApiClientError, toApiClientError, useApi } from '~/composables/useApi';
-import { domainRefusalReason } from '~/shared/domain-copy';
-import { useDomainStore } from '~/stores/domain';
+import {
+	HELD_COPY,
+	ROUTING_LATER_COPY,
+	WAITING_DNS_COPY,
+	WAITING_DNS_TITLE,
+	domainRefusalReason
+} from '~/shared/domain-copy';
+import { useDomainStore, type DomainCheck } from '~/stores/domain';
 import { useSessionStore } from '~/stores/session';
 import type { SiteSummary } from '~/stores/sites';
 
@@ -15,7 +21,11 @@ const session = useSessionStore();
 const site = ref<SiteSummary | null>(null);
 const siteError = ref<ApiClientError | null>(null);
 const busy = ref(false);
+const checking = ref(false);
 const error = ref<string | null>(null);
+// the live read of the records for the domain the owner asked about, or the one being attached
+const checked = ref<DomainCheck | null>(null);
+const checkedHost = ref<string | null>(null);
 const needsStepUp = ref(false);
 let pending: (() => Promise<void>) | null = null;
 let idempotencyKey = crypto.randomUUID();
@@ -25,8 +35,23 @@ const payload = computed(() => store.bySite.get(siteId));
 const loadError = computed(() => store.errors.get(siteId) ?? null);
 const view = computed(() => payload.value?.attach ?? null);
 const running = computed(() => view.value?.status === 'running');
+// the owner still has to add the ownership record, so the name is held for them until a date
+const waitingForRecord = computed(() => running.value && view.value?.expiresAt != null);
+const expiryDate = computed(() =>
+	view.value?.expiresAt == null ? null : dateFormat.format(new Date(view.value.expiresAt))
+);
+const dateFormat = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 // a finished attach, failed or not, gives way to the form so the owner can start again
 const showForm = computed(() => !running.value);
+// the records of a live attach are read for its domain, and otherwise for the one typed in the form
+const watched = computed(() =>
+	view.value && view.value.status !== 'succeeded' ? view.value.hostname : checkedHost.value
+);
+const shown = computed(() => {
+	const current = checked.value;
+	if (current !== null && current.hostname === watched.value) return current;
+	return null;
+});
 
 const fresh = () => {
 	const until = session.me?.stepUpUntil;
@@ -47,20 +72,49 @@ async function loadSite(): Promise<void> {
 	try {
 		site.value = await useApi().get<SiteSummary>(`/sites/${encodeURIComponent(siteId)}`);
 		await load();
+		if (view.value && view.value.status !== 'succeeded') void check(view.value.hostname);
 	} catch (failure) {
 		siteError.value = toApiClientError(failure);
 	}
 }
 
-// the attach waits in the engine for the owner's DNS, so the page reads it again while it runs
+async function check(hostname: string): Promise<void> {
+	const org = orgId.value;
+	if (org === null) return;
+	checkedHost.value = hostname;
+	checking.value = true;
+	error.value = null;
+	try {
+		const result = await store.check(org, siteId, hostname);
+		checked.value = result;
+		if (result.held) error.value = HELD_COPY;
+	} catch (cause) {
+		error.value = domainRefusalReason(toApiClientError(cause));
+	} finally {
+		checking.value = false;
+	}
+}
+
+// the attach waits in the engine for the owner's DNS, so the page reads it again while it runs, and
+// checks the records again while the owner stays
 let timer: ReturnType<typeof setInterval> | undefined;
+let recheck: ReturnType<typeof setInterval> | undefined;
 onMounted(() => {
 	void loadSite();
 	timer = setInterval(() => {
 		if (running.value) void load();
 	}, 15_000);
+	recheck = setInterval(() => {
+		const host = watched.value;
+		if (host !== null && !checking.value && document.visibilityState !== 'hidden') {
+			void check(host);
+		}
+	}, 20_000);
 });
-onBeforeUnmount(() => clearInterval(timer));
+onBeforeUnmount(() => {
+	clearInterval(timer);
+	clearInterval(recheck);
+});
 
 useHead({ title: () => (site.value ? `Domain for ${site.value.name}` : 'Attach a Domain') });
 
@@ -94,6 +148,12 @@ function attach(hostname: string): Promise<void> {
 	const org = orgId.value;
 	if (org === null) return Promise.resolve();
 	return guarded(() => store.attach(org, siteId, { hostname }, idempotencyKey));
+}
+
+function cancel(hostname: string): Promise<void> {
+	const org = orgId.value;
+	if (org === null) return Promise.resolve();
+	return guarded(() => store.release(org, siteId, hostname));
 }
 
 function stepUpDone(): void {
@@ -178,6 +238,34 @@ const siteMissing = computed(() => siteError.value?.status === 404);
 						<h2 class="text-lg font-semibold text-highlighted">{{ view.hostname }}</h2>
 						<SiteDomainStages :view="view" />
 
+						<div
+							v-if="waitingForRecord"
+							class="flex flex-col gap-3 rounded-lg border border-default p-4"
+							data-test="waiting-record"
+						>
+							<h3 class="text-sm font-semibold text-highlighted">
+								{{ WAITING_DNS_TITLE }}
+							</h3>
+							<p class="text-sm text-default">{{ WAITING_DNS_COPY }}</p>
+							<p
+								class="text-sm text-default"
+								data-test="expires"
+							>
+								Drupflare stops waiting on {{ expiryDate }}.
+							</p>
+							<div>
+								<UButton
+									color="neutral"
+									variant="outline"
+									:loading="busy"
+									:disabled="busy"
+									@click="cancel(view.hostname)"
+								>
+									Cancel This Attach
+								</UButton>
+							</div>
+						</div>
+
 						<p
 							v-if="view.reason"
 							role="alert"
@@ -192,19 +280,55 @@ const siteMissing = computed(() => siteError.value?.status === 404);
 						>
 							{{ view.hostname }} is attached. Your site answers on it.
 						</p>
+						<div
+							v-else-if="view.status === 'waiting'"
+							class="flex flex-col gap-3"
+							data-test="waiting"
+						>
+							<p class="text-sm text-default">{{ view.notice }}</p>
+							<div class="flex flex-wrap gap-2">
+								<UButton
+									:loading="busy"
+									:disabled="busy"
+									@click="attach(view.hostname)"
+								>
+									Try Again
+								</UButton>
+								<UButton
+									color="neutral"
+									variant="outline"
+									:disabled="busy"
+									@click="cancel(view.hostname)"
+								>
+									Cancel This Attach
+								</UButton>
+							</div>
+						</div>
 
 						<SiteDomainRecords
-							v-if="view.records.length > 0 && view.status !== 'succeeded'"
-							:hostname="view.hostname"
-							:records="view.records"
+							v-if="view.status !== 'succeeded' && (shown || view.records.length > 0)"
+							:records="shown ? shown.records : view.records"
+							:hazards="shown?.hazards"
+							:routing-later="shown !== null && !shown.routingKnown"
+							:routing-later-text="ROUTING_LATER_COPY"
 						/>
 					</template>
 
 					<SiteDomainForm
 						v-if="showForm"
 						:busy="busy"
+						:checking="checking"
 						:error="error"
 						@attach="attach"
+						@check="check"
+					/>
+
+					<SiteDomainRecords
+						v-if="showForm && shown && !(view && view.status !== 'succeeded')"
+						:records="shown.records"
+						:hazards="shown.hazards"
+						:routing-later="!shown.routingKnown"
+						:routing-later-text="ROUTING_LATER_COPY"
 					/>
 
 					<p

@@ -1,9 +1,15 @@
 import type { Plan } from '@contracts/operations';
 import { scriptName } from '@contracts/sites';
 import {
+	isApex,
+	readOwnership,
+	readRouting,
+	recordList
+} from '../../../src/server/domain/dns-check';
+import {
 	DEFAULT_WAIT_MS,
 	advance,
-	currentStage,
+	isProven,
 	pollDelayMs,
 	readAttachState,
 	startState,
@@ -13,7 +19,16 @@ import {
 } from '../../../src/server/domain/domain-attach';
 import { attachFailureReason, checkHostname } from '../../../src/shared/domain-copy';
 import { SiteAnswered, SiteUnreachable } from '../adapters/site';
-import { buildPlan, setCursor, setVerification, stepOf, transitionStep } from '../operations/state';
+import {
+	buildPlan,
+	observe,
+	setCursor,
+	setVerification,
+	skipPending,
+	stepOf,
+	transition,
+	transitionStep
+} from '../operations/state';
 import type { DomainDeps } from '../ports';
 import { PermanentError, StepFailed, type StepRunner } from '../step';
 import {
@@ -57,10 +72,10 @@ export function planDomainAttach(input: Pick<DomainAttachInput, 'siteId' | 'host
 		steps: [
 			{ id: 'lease', name: 'Take the site writer lease' },
 			{ id: 'claim', name: `Claim ${input.hostname} for this site` },
-			{ id: 'request', name: 'Ask for the ownership and certificate records' },
-			{ id: 'ownership', name: 'Wait for the ownership record' },
+			{ id: 'ownership', name: 'Check the ownership record' },
+			{ id: 'request', name: 'Ask the certificate service for its records' },
 			{ id: 'certificate', name: 'Wait for the certificate' },
-			{ id: 'routing', name: `Route ${input.hostname} to the site` },
+			{ id: 'routing', name: `Wait for the address record, then route ${input.hostname}` },
 			{ id: 'verification', name: 'Load the site through the domain' }
 		],
 		rollbackPoint: 'before the domain is routed to the site'
@@ -69,9 +84,12 @@ export function planDomainAttach(input: Pick<DomainAttachInput, 'siteId' | 'host
 
 interface Claimed {
 	epoch: number;
+	// the ledger already holds this owner's proof for the epoch, so the check is skipped
+	proven: boolean;
 }
 
-const STAGE_STEP = { ownership: 'ownership', certificate: 'certificate' } as const;
+// the code the adapter throws when the provider is off; the operation parks instead of failing
+const OFF = 'custom_domains_off';
 
 // the state lives in the operation's cursor, so a fresh instance and the page read the same thing
 async function record(
@@ -164,6 +182,8 @@ async function claimHostname(
 		const checked = checkHostname(input.hostname);
 		if (!checked.ok) throw new PermanentError(checked.code, checked.message);
 		await assertLiveSite(deps, input);
+		// an unproven claim yields to a challenger whose own value is published for the epoch after the
+		// takeover, since that is the epoch the value on the page was derived from
 		const claim = await deps.domains.claim(
 			checked.hostname,
 			{
@@ -171,11 +191,20 @@ async function claimHostname(
 				siteId: input.siteId,
 				operationId: ctx.operationId
 			},
-			deps.now()
+			deps.now(),
+			async (epoch) => {
+				const challenge = await deps.challenge({
+					siteId: input.siteId,
+					hostname: input.hostname,
+					epoch
+				});
+				const seen = await readOwnership(deps.dns, input.hostname, challenge.accepted);
+				return seen.status === 'ok';
+			}
 		);
 		if (!claim.ok) {
 			throw new PermanentError(
-				'hostname_taken',
+				claim.unproven === true ? 'hostname_unproven' : 'hostname_taken',
 				`${checked.hostname} is held by another site`
 			);
 		}
@@ -186,25 +215,122 @@ async function claimHostname(
 				await deps.hostnames.remove(claim.previous.providerId);
 			}
 		}
-		return { epoch: claim.epoch };
+		const challenge = await deps.challenge({
+			siteId: input.siteId,
+			hostname: input.hostname,
+			epoch: claim.epoch
+		});
+		const records = recordList({
+			hostname: input.hostname,
+			apex: await isApex(deps.dns, input.hostname),
+			target: deps.target,
+			challenge: challenge.value
+		});
+		await record(ctx, deps, input, { type: 'requested', records });
+		const proven = isProven(await deps.domains.current(input.hostname));
+		if (proven) await record(ctx, deps, input, { type: 'proven' });
+		return { epoch: claim.epoch, proven };
 	});
 }
 
-async function requestRecords(
+// a resolver that fails reads as not seen yet, so only the wait running out ends the stage
+async function awaitOwnership(
+	ctx: Ctx,
+	deps: DomainDeps,
+	input: DomainAttachInput,
+	step: DomainRunner,
+	claimed: Claimed
+): Promise<void> {
+	const waitMs = input.waitMs ?? DEFAULT_WAIT_MS;
+	for (let attempt = 0; ; attempt++) {
+		const state = await runStep(
+			ctx,
+			`ownership.poll.${attempt}`,
+			'ownership',
+			async () => {
+				await assertClaim(deps, input, claimed);
+				const challenge = await deps.challenge({
+					siteId: input.siteId,
+					hostname: input.hostname,
+					epoch: claimed.epoch
+				});
+				const seen = await readOwnership(deps.dns, input.hostname, challenge.accepted);
+				if (seen.status === 'ok') {
+					if (
+						!(await deps.domains.proveOwnership(
+							input.hostname,
+							claimed.epoch,
+							input.siteId
+						))
+					) {
+						throw new PermanentError(
+							'hostname_displaced',
+							`${input.hostname} changed hands`
+						);
+					}
+					return record(ctx, deps, input, { type: 'proven' });
+				}
+				const next = await record(ctx, deps, input, { type: 'checked' });
+				if (deps.now() - next.startedAt >= waitMs) {
+					await record(ctx, deps, input, { type: 'failed', code: 'wait_timed_out' });
+					throw new PermanentError(
+						'wait_timed_out',
+						attachFailureReason('wait_timed_out') ?? ''
+					);
+				}
+				return next;
+			},
+			{ begin: false, finish: false }
+		);
+		if (state.stages.ownership === 'done') {
+			await mark(ctx, deps, 'mark.ownership.done', 'ownership', 'succeeded');
+			return;
+		}
+		await step.sleep(`ownership.wait.${attempt}`, pollDelayMs(attempt));
+	}
+}
+
+// the provider is the one outside call; when the account lacks the feature the attach parks, with
+// ownership proven and the claim kept, and the owner tries again later
+async function registerHostname(
 	ctx: Ctx,
 	deps: DomainDeps,
 	input: DomainAttachInput,
 	claimed: Claimed
-): Promise<string> {
-	return runStep(ctx, 'request', 'request', async () => {
-		await fenced(ctx);
-		const { providerId, observation } = await deps.hostnames.ensure(input.hostname);
-		if (!(await deps.domains.setProvider(input.hostname, claimed.epoch, providerId))) {
-			throw new PermanentError('hostname_taken', `${input.hostname} changed hands`);
-		}
-		await record(ctx, deps, input, { type: 'requested', records: observation.records });
-		return providerId;
-	});
+): Promise<string | null> {
+	const providerId = await runStep(
+		ctx,
+		'request',
+		'request',
+		async () => {
+			await fenced(ctx);
+			try {
+				if (deps.target === null) throw new PermanentError(OFF, 'no target is configured');
+				const { providerId, observation } = await deps.hostnames.ensure(input.hostname);
+				if (!(await deps.domains.setProvider(input.hostname, claimed.epoch, providerId))) {
+					throw new PermanentError(
+						'hostname_displaced',
+						`${input.hostname} changed hands`
+					);
+				}
+				await record(ctx, deps, input, {
+					type: 'registered',
+					records: observation.records
+				});
+				return providerId;
+			} catch (error) {
+				if (!(error instanceof PermanentError) || error.code !== OFF) throw error;
+				await record(ctx, deps, input, { type: 'parked', code: OFF });
+				return null;
+			}
+		},
+		{ begin: false, finish: false }
+	);
+	if (providerId === null) return null;
+	await mark(ctx, deps, 'mark.request.running', 'request', 'running');
+	await mark(ctx, deps, 'mark.request.done', 'request', 'succeeded');
+	await mark(ctx, deps, 'mark.certificate.running', 'certificate', 'running');
+	return providerId;
 }
 
 // the claim that this operation holds, or the refusal that says it is gone
@@ -214,6 +340,15 @@ async function assertClaim(
 	claimed: Claimed
 ): Promise<void> {
 	const row = await deps.domains.current(input.hostname);
+	// the owner gave the name up from the page, which is different from losing it to another site
+	if (
+		row !== null &&
+		row.epoch === claimed.epoch &&
+		row.siteId === input.siteId &&
+		row.state === 'released'
+	) {
+		throw new PermanentError('attach_cancelled', `${input.hostname} was released by its owner`);
+	}
 	if (
 		row === null ||
 		row.epoch !== claimed.epoch ||
@@ -221,7 +356,7 @@ async function assertClaim(
 		row.state === 'released'
 	) {
 		throw new PermanentError(
-			'hostname_taken',
+			'hostname_displaced',
 			`${input.hostname} no longer belongs to this site`
 		);
 	}
@@ -242,21 +377,11 @@ async function awaitCertificate(
 	providerId: string
 ): Promise<void> {
 	const waitMs = input.waitMs ?? DEFAULT_WAIT_MS;
-	let state = await plainStep(
-		ctx,
-		'state.read',
-		async () =>
-			readAttachState((await deps.store.get(ctx.operationId))?.cursor ?? null) ??
-			startState(input.hostname, deps.now())
-	);
-	for (let attempt = 0; state.stages.certificate !== 'done'; attempt++) {
-		const stage = currentStage(state) === 'certificate' ? 'certificate' : 'ownership';
-		const before = state;
-		// the stage's own step carries a failure, so its error keeps the code the owner copy reads
-		state = await runStep(
+	for (let attempt = 0; ; attempt++) {
+		const state = await runStep(
 			ctx,
-			`${STAGE_STEP[stage]}.poll.${attempt}`,
-			STAGE_STEP[stage],
+			`certificate.poll.${attempt}`,
+			'certificate',
 			async () => {
 				await assertClaim(deps, input, claimed);
 				// a read costs nothing at the provider; a forced check is the owner's nudge, so it is rare
@@ -269,7 +394,7 @@ async function awaitCertificate(
 					deps,
 					input,
 					found === null
-						? { type: 'failed', code: 'ownership_failed' }
+						? { type: 'failed', code: 'custom_domains_refused' }
 						: { type: 'observed', observation: found.observation }
 				);
 				if (next.reason !== null) throw stateError(next);
@@ -284,15 +409,63 @@ async function awaitCertificate(
 			},
 			{ begin: false, finish: false }
 		);
-		if (before.stages.ownership !== 'done' && state.stages.ownership === 'done') {
-			await mark(ctx, deps, 'mark.ownership.done', 'ownership', 'succeeded');
-			await mark(ctx, deps, 'mark.certificate.running', 'certificate', 'running');
-		}
 		if (state.stages.certificate === 'done') {
 			await mark(ctx, deps, 'mark.certificate.done', 'certificate', 'succeeded');
 			return;
 		}
-		await step.sleep(`${STAGE_STEP[stage]}.wait.${attempt}`, pollDelayMs(attempt));
+		await step.sleep(`certificate.wait.${attempt}`, pollDelayMs(attempt));
+	}
+}
+
+// waits for the routing record to resolve to the target and for the provider to call the hostname
+// active; a resolver that fails is not a missing record
+async function awaitRouting(
+	ctx: Ctx,
+	deps: DomainDeps,
+	input: DomainAttachInput,
+	step: DomainRunner,
+	claimed: Claimed,
+	providerId: string
+): Promise<void> {
+	const waitMs = input.waitMs ?? DEFAULT_WAIT_MS;
+	await mark(ctx, deps, 'mark.routing.running', 'routing', 'running');
+	for (let attempt = 0; ; attempt++) {
+		const ready = await runStep(
+			ctx,
+			`routing.poll.${attempt}`,
+			'routing',
+			async () => {
+				await assertClaim(deps, input, claimed);
+				const found = await deps.hostnames.read(providerId);
+				const next = await record(
+					ctx,
+					deps,
+					input,
+					found === null
+						? { type: 'failed', code: 'custom_domains_refused' }
+						: { type: 'observed', observation: found.observation }
+				);
+				if (next.reason !== null) throw stateError(next);
+				const seen =
+					deps.target === null
+						? null
+						: await readRouting(deps.dns, input.hostname, deps.target);
+				if (found?.observation.hostnameStatus === 'active' && seen?.status === 'ok') {
+					return true;
+				}
+				if (deps.now() - next.startedAt >= waitMs) {
+					await record(ctx, deps, input, { type: 'failed', code: 'wait_timed_out' });
+					throw new PermanentError(
+						'wait_timed_out',
+						attachFailureReason('wait_timed_out') ?? ''
+					);
+				}
+				return false;
+			},
+			{ begin: false, finish: false }
+		);
+		if (ready) return;
+		await step.sleep(`routing.wait.${attempt}`, pollDelayMs(attempt));
 	}
 }
 
@@ -322,7 +495,7 @@ async function routeHostname(
 		// a claim that moved between the check and the write undoes the route this call just made
 		if (!(await deps.domains.markRouted(input.hostname, claimed.epoch, input.siteId))) {
 			await deps.authority.deleteHostIfOwned(input.hostname, input.siteId);
-			throw new PermanentError('hostname_taken', `${input.hostname} changed hands`);
+			throw new PermanentError('hostname_displaced', `${input.hostname} changed hands`);
 		}
 		await record(ctx, deps, input, { type: 'routed' });
 	});
@@ -427,6 +600,28 @@ async function fail(
 		: { status: 'failed', reason, leaked };
 }
 
+// the owner's domain is verified and nothing else can happen yet, so the operation ends here with its
+// claim and proof kept; the remaining steps are skipped, and a new attach picks up from the proof
+async function park(ctx: Ctx, deps: DomainDeps, input: DomainAttachInput): Promise<Outcome> {
+	await plainStep(ctx, 'park', async () => {
+		await deps.store.mutate(ctx.operationId, (operation) => {
+			if (operation.status === 'succeeded') return operation;
+			const noted = observe(
+				operation,
+				`${input.hostname} is verified; custom domains are off, so nothing is attached`,
+				deps.now()
+			);
+			return transition(
+				setVerification(skipPending(noted, deps.now()), 'not-required', deps.now()),
+				'succeeded',
+				deps.now()
+			);
+		});
+	});
+	await releaseLease(ctx);
+	return { status: 'waiting', reason: OFF };
+}
+
 export async function runDomainAttach(
 	step: DomainRunner,
 	deps: DomainDeps,
@@ -445,10 +640,19 @@ export async function runDomainAttach(
 		await startOperation(ctx);
 		await acquireLease(ctx, 'lease');
 		const claimed = await claimHostname(ctx, deps, input);
-		const providerId = await requestRecords(ctx, deps, input, claimed);
 		await mark(ctx, deps, 'mark.ownership.running', 'ownership', 'running');
-		await dropLease(ctx, deps, 'wait');
+		if (claimed.proven) {
+			await mark(ctx, deps, 'mark.ownership.done', 'ownership', 'succeeded');
+		} else {
+			await dropLease(ctx, deps, 'ownership');
+			await awaitOwnership(ctx, deps, input, step, claimed);
+			await holdLease(ctx, deps, 'registration');
+		}
+		const providerId = await registerHostname(ctx, deps, input, claimed);
+		if (providerId === null) return await park(ctx, deps, input);
+		await dropLease(ctx, deps, 'certificate');
 		await awaitCertificate(ctx, deps, input, step, claimed, providerId);
+		await awaitRouting(ctx, deps, input, step, claimed, providerId);
 		await holdLease(ctx, deps, 'routing');
 		await routeHostname(ctx, deps, input, claimed);
 		await dropLease(ctx, deps, 'routing');
@@ -461,3 +665,36 @@ export async function runDomainAttach(
 	await finishSuccess(ctx, `${input.hostname} is attached and the site answers on it`);
 	return { status: 'succeeded' };
 }
+
+// #region release
+
+export interface ReleasedDomains {
+	released: string[];
+	// hostnames whose provider removal was refused; the claim stays so a later run retries
+	failed: string[];
+}
+
+// frees every custom hostname a site holds: the route, the provider's hostname, then the claim; a
+// hostname the site no longer owns is left alone, and a step that runs twice does the same
+export async function releaseSiteDomains(
+	deps: Pick<DomainDeps, 'authority' | 'hostnames' | 'domains'>,
+	siteId: string
+): Promise<ReleasedDomains> {
+	const result: ReleasedDomains = { released: [], failed: [] };
+	for (const row of await deps.domains.heldBy(siteId)) {
+		try {
+			await deps.authority.deleteHostIfOwned(row.hostname, siteId);
+			if (row.providerId !== null) await deps.hostnames.remove(row.providerId);
+		} catch (error) {
+			// an unreachable provider is retried by the step; a refusal is reported
+			if (!(error instanceof PermanentError)) throw error;
+			result.failed.push(row.hostname);
+			continue;
+		}
+		await deps.domains.release(row.hostname, row.epoch, siteId);
+		result.released.push(row.hostname);
+	}
+	return result;
+}
+
+// #endregion

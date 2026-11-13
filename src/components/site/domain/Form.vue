@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { checkHostname } from '~/shared/domain-copy';
 
-defineProps<{ busy: boolean; error: string | null }>();
-const emit = defineEmits<{ attach: [hostname: string] }>();
+defineProps<{ busy: boolean; checking: boolean; error: string | null }>();
+const emit = defineEmits<{ attach: [hostname: string]; check: [hostname: string] }>();
 
 const hostname = ref('');
 const touched = ref(false);
@@ -14,7 +14,12 @@ const problem = computed(() =>
 		: null
 );
 
-function submit(): void {
+function show(): void {
+	touched.value = true;
+	if (checked.value.ok) emit('check', checked.value.hostname);
+}
+
+function attach(): void {
 	touched.value = true;
 	if (checked.value.ok) emit('attach', checked.value.hostname);
 }
@@ -23,7 +28,7 @@ function submit(): void {
 <template>
 	<form
 		class="flex flex-col gap-4"
-		@submit.prevent="submit()"
+		@submit.prevent="show()"
 	>
 		<UFormField
 			label="Domain"
@@ -45,11 +50,20 @@ function submit(): void {
 		>
 			{{ error }}
 		</p>
-		<div>
+		<div class="flex flex-wrap gap-2">
 			<UButton
 				type="submit"
+				color="neutral"
+				variant="outline"
+				:loading="checking"
+				:disabled="checking || !checked.ok"
+				>Show Records</UButton
+			>
+			<UButton
+				type="button"
 				:loading="busy"
 				:disabled="busy || !checked.ok"
+				@click="attach()"
 				>Attach Domain</UButton
 			>
 		</div>

@@ -29,12 +29,12 @@ export interface KeyRing {
 
 const KEK_BYTES = 32;
 
-// reads `<prefix><version>` entries, each a base64url 32-byte key; the highest version wraps new keys
-export async function loadKeyRing(
+// reads `<prefix><version>` entries, each a base64url 32-byte key, by version
+export function readKeyMaterial(
 	secrets: Readonly<Record<string, string | undefined>>,
 	prefix = 'KEK_V'
-): Promise<KeyRing> {
-	const keys = new Map<number, CryptoKey>();
+): Map<number, Uint8Array<ArrayBuffer>> {
+	const material = new Map<number, Uint8Array<ArrayBuffer>>();
 	for (const [name, value] of Object.entries(secrets)) {
 		if (!name.startsWith(prefix) || value === undefined) continue;
 		const digits = name.slice(prefix.length);
@@ -49,15 +49,26 @@ export async function loadKeyRing(
 		if (raw.length !== KEK_BYTES) {
 			throw new CryptoError('bad_key', `${name} must decode to ${KEK_BYTES} bytes`, version);
 		}
+		material.set(version, raw as Uint8Array<ArrayBuffer>);
+	}
+	if (material.size === 0) {
+		throw new CryptoError('no_keys', `no ${prefix}<n> secrets were provided`);
+	}
+	return material;
+}
+
+// the highest version wraps new keys
+export async function loadKeyRing(
+	secrets: Readonly<Record<string, string | undefined>>,
+	prefix = 'KEK_V'
+): Promise<KeyRing> {
+	const keys = new Map<number, CryptoKey>();
+	for (const [version, raw] of readKeyMaterial(secrets, prefix)) {
 		keys.set(
 			version,
-			await crypto.subtle.importKey('raw', raw as Uint8Array<ArrayBuffer>, 'AES-GCM', false, [
-				'encrypt',
-				'decrypt'
-			])
+			await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt'])
 		);
 	}
-	if (keys.size === 0) throw new CryptoError('no_keys', `no ${prefix}<n> secrets were provided`);
 	return { current: Math.max(...keys.keys()), keys };
 }
 
