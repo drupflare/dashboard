@@ -1,0 +1,12 @@
+{
+	__type(name: "DurableObjectsPeriodicGroups") {
+		fields {
+			name
+		}
+	}
+	filter: __type(name: "DurableObjectsPeriodicGroupsFilter") {
+		inputFields {
+			name
+		}
+	}
+}

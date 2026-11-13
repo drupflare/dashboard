@@ -1,0 +1,17 @@
+{
+	__type(name: "account") {
+		fields {
+			name
+			args {
+				name
+				type {
+					name
+					kind
+					ofType {
+						name
+					}
+				}
+			}
+		}
+	}
+}
