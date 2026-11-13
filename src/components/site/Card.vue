@@ -20,5 +20,7 @@ defineProps<{ site: SiteSummary }>();
 			{{ SITE_KIND_LABELS[site.kind] }} on {{ SITE_PLANE_LABELS[site.plane] }}
 		</p>
 		<p class="wrap-break-word text-sm text-muted">{{ site.primaryHostname ?? 'Not Set' }}</p>
+		<SiteFound v-if="site.box?.found" />
+		<SiteMissing v-if="site.box?.missingSince" />
 	</li>
 </template>

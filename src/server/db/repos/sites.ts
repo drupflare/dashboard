@@ -28,6 +28,10 @@ export interface SiteRecord {
 	// the managed site this one was adopted into, and the self-managed site this one came from
 	adoptedTo: string | null;
 	adoptedFrom: string | null;
+	// the name the box reported when it found a site the dashboard did not create; null otherwise
+	boxFoundAs: string | null;
+	// when the box last stopped reporting a site that is still listed
+	boxMissingSince: number | null;
 	readyAt: number | null;
 	createdAt: number;
 	updatedAt: number;
@@ -49,14 +53,16 @@ interface SiteRow {
 	admin_mail: string | null;
 	adopted_to: string | null;
 	adopted_from: string | null;
+	box_found_as: string | null;
+	box_missing_since: number | null;
 	ready_at: number | null;
 	created_at: number;
 	updated_at: number;
 }
 
 const SITE_COLUMNS = `id, organization_id, name, kind, category, plane, config, account_id, state,
-	primary_hostname, release_id, admin_name, admin_mail, adopted_to, adopted_from, ready_at,
-	created_at, updated_at`;
+	primary_hostname, release_id, admin_name, admin_mail, adopted_to, adopted_from, box_found_as,
+	box_missing_since, ready_at, created_at, updated_at`;
 
 function toRecord(row: SiteRow): SiteRecord {
 	return {
@@ -75,6 +81,8 @@ function toRecord(row: SiteRow): SiteRecord {
 		adminMail: row.admin_mail,
 		adoptedTo: row.adopted_to,
 		adoptedFrom: row.adopted_from,
+		boxFoundAs: row.box_found_as,
+		boxMissingSince: row.box_missing_since,
 		readyAt: row.ready_at,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
@@ -104,6 +112,13 @@ export function toSite(
 		hostnames: record.primaryHostname === null ? [] : [record.primaryHostname],
 		release: { current: record.releaseId, available },
 		admin: { username: record.adminName, email: record.adminMail, password },
+		box: {
+			found: record.boxFoundAs !== null,
+			missingSince:
+				record.boxMissingSince === null
+					? null
+					: new Date(record.boxMissingSince).toISOString()
+		},
 		createdAt: new Date(record.createdAt).toISOString(),
 		updatedAt: new Date(record.updatedAt).toISOString()
 	};
@@ -167,7 +182,7 @@ export async function countOrganizationSites(
 		 WHERE s.organization_id = ? AND s.state IN ('active', 'suspended')
 		 AND (s.ready_at IS NOT NULL OR EXISTS (
 			SELECT 1 FROM operations o WHERE o.organization_id = s.organization_id
-			AND ((o.site_id = s.id AND o.type = 'site.create')
+			AND ((o.site_id = s.id AND o.type IN ('site.create', 'node.command'))
 				OR (o.type = 'site.adopt' AND json_extract(o.target_ids, '$[0]') = s.id))
 			AND o.status IN ('planned', 'awaiting-approval', 'running', 'verifying')))`,
 		[organizationId]
@@ -201,6 +216,76 @@ export async function setSiteState(
 		organizationId,
 		'UPDATE sites SET state = ?, updated_at = ? WHERE organization_id = ? AND id = ?',
 		[state, now, organizationId, id]
+	);
+	return wasChanged(result);
+}
+
+// a site of this organization that is live and ready and already holds this address, whichever
+// box or way it came by
+export async function findLiveSiteByHost(
+	db: CollegeDBClient,
+	organizationId: string,
+	hostname: string
+): Promise<string | null> {
+	const row = await db.first<{ id: string }>(
+		organizationId,
+		`SELECT id FROM sites
+		 WHERE organization_id = ? AND primary_hostname = ? AND ready_at IS NOT NULL
+		 AND state IN ('active', 'suspended') LIMIT 1`,
+		[organizationId, hostname]
+	);
+	return row?.id ?? null;
+}
+
+export async function siteNameTaken(
+	db: CollegeDBClient,
+	organizationId: string,
+	name: string,
+	exceptId: string
+): Promise<boolean> {
+	const row = await db.first<{ id: string }>(
+		organizationId,
+		`SELECT id FROM sites
+		 WHERE organization_id = ? AND name = ? AND id <> ? AND state IN ('active', 'suspended')
+		 LIMIT 1`,
+		[organizationId, name, exceptId]
+	);
+	return row !== null;
+}
+
+// only a site the box reported on its own can be renamed this way; false when the row is not one, or
+// is already gone
+export async function renameFoundSite(
+	db: CollegeDBClient,
+	organizationId: string,
+	id: string,
+	name: string,
+	now: number
+): Promise<boolean> {
+	const result = await db.run(
+		organizationId,
+		`UPDATE sites SET name = ?, updated_at = ?
+		 WHERE organization_id = ? AND id = ? AND box_found_as IS NOT NULL
+		 AND state IN ('active', 'suspended')`,
+		[name, now, organizationId, id]
+	);
+	return wasChanged(result);
+}
+
+// a site found on a box, or one the box no longer reports, leaves the list; the row stays, deleted,
+// so a box that still reports a found site is not read as a new one
+export async function dropBoxSite(
+	db: CollegeDBClient,
+	organizationId: string,
+	id: string,
+	now: number
+): Promise<boolean> {
+	const result = await db.run(
+		organizationId,
+		`UPDATE sites SET state = 'deleted', updated_at = ?
+		 WHERE organization_id = ? AND id = ? AND state IN ('active', 'suspended')
+		 AND (box_found_as IS NOT NULL OR box_missing_since IS NOT NULL)`,
+		[now, organizationId, id]
 	);
 	return wasChanged(result);
 }

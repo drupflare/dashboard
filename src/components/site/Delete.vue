@@ -1,10 +1,17 @@
 <script setup lang="ts">
 import { toApiClientError } from '~/composables/useApi';
+import { boxDeleteNote, type BoxDeleteCase } from '~/shared/box-sites';
 import { SITE_HOLD_DAYS } from '~/shared/operation-copy';
 import { useSessionStore } from '~/stores/session';
 import { useSitesStore } from '~/stores/sites';
 
-const props = defineProps<{ orgId: string; siteId: string; name: string }>();
+// set for a site on a box, where the delete takes the row and leaves the site on the box
+const props = defineProps<{
+	orgId: string;
+	siteId: string;
+	name: string;
+	box?: BoxDeleteCase;
+}>();
 
 const sites = useSitesStore();
 const session = useSessionStore();
@@ -78,11 +85,30 @@ function stepUpDone(): void {
 		<UModal
 			v-model:open="open"
 			title="Delete This Site"
-			:description="`Delete ${name} from this organization.`"
+			:description="
+				box
+					? `Remove ${name} from this organization's list.`
+					: `Delete ${name} from this organization.`
+			"
 		>
 			<template #body>
 				<div class="flex flex-col gap-4">
-					<div class="flex flex-col gap-2 text-sm text-default">
+					<div
+						v-if="box"
+						class="flex flex-col gap-2 text-sm text-default"
+						data-test="box-delete"
+					>
+						<p
+							v-for="line in boxDeleteNote(box)"
+							:key="line"
+						>
+							{{ line }}
+						</p>
+					</div>
+					<div
+						v-else
+						class="flex flex-col gap-2 text-sm text-default"
+					>
 						<p>The site stops serving early in the delete and leaves your list.</p>
 						<p>
 							Its address stays reserved for {{ SITE_HOLD_DAYS }} days, so nobody else

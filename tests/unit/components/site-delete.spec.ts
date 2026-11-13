@@ -42,9 +42,9 @@ function signIn(stepUpUntil: string | null) {
 	};
 }
 
-async function mountDelete() {
+async function mountDelete(box?: 'found' | 'gone' | 'present') {
 	const wrapper = await mountSuspended(Delete, {
-		props: { orgId: ORG, siteId: SITE, name: NAME },
+		props: { orgId: ORG, siteId: SITE, name: NAME, ...(box === undefined ? {} : { box }) },
 		attachTo: document.body
 	});
 	mounted.push(wrapper);
@@ -189,5 +189,47 @@ describe('delete a site', () => {
 		await vi.waitFor(() => expect(dialog()).toBeNull());
 		await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
 		expect(calls).toHaveLength(0);
+	});
+
+	it('says a found site leaves the list only and stays on the box', async () => {
+		cleanup = registerApi({ [path]: { status: 202, body: operation } });
+		const wrapper = await mountDelete('found');
+		await openDialog(wrapper);
+		const text = dialog()!.textContent ?? '';
+		expect(text).toContain(`Remove ${NAME} from this organization's list.`);
+		expect(text).toContain('removes the site from your list only');
+		expect(text).toContain('stays on your box and keeps serving');
+		expect(text).toContain('does not add it back');
+		expect(text).not.toContain('reserved for');
+		expect(text).not.toContain('stops serving');
+	});
+
+	it('says a site the box no longer has leaves the list only', async () => {
+		cleanup = registerApi({ [path]: { status: 202, body: operation } });
+		const wrapper = await mountDelete('gone');
+		await openDialog(wrapper);
+		const text = dialog()!.textContent ?? '';
+		expect(text).toContain('removes the site from your list only');
+		expect(text).toContain('The box no longer has it');
+		expect(text).not.toContain('reserved for');
+	});
+
+	it('tells the owner to remove a site the box still has from the box first', async () => {
+		cleanup = registerApi({ [path]: { status: 202, body: operation } });
+		const wrapper = await mountDelete('present');
+		await openDialog(wrapper);
+		expect(dialog()!.textContent).toContain('Remove it from the box first');
+	});
+
+	it('sends the same confirm text for a site on a box', async () => {
+		cleanup = registerApi({ [path]: { status: 202, body: operation } });
+		const wrapper = await mountDelete('found');
+		await openDialog(wrapper);
+		await type(NAME);
+		inDialog('Delete Site')!.click();
+		await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/new/progress/op_del1'));
+		expect(calls.find((entry) => entry.path.endsWith('/delete'))?.body).toEqual({
+			confirm: NAME
+		});
 	});
 });

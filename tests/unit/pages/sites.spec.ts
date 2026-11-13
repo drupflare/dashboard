@@ -109,6 +109,42 @@ describe('sites page', () => {
 		expect(wrapper.html()).toContain('circle-check');
 	});
 
+	it('marks a site found on a box and a site the box lost, in the table and the card', async () => {
+		sitesReply = () => ({
+			body: {
+				items: [
+					{
+						...site('site_1'),
+						plane: 'self-hosted',
+						box: { found: true, missingSince: null }
+					},
+					{
+						...site('site_2'),
+						plane: 'self-hosted',
+						box: { found: false, missingSince: '2026-02-01T00:00:00Z' }
+					},
+					site('site_3')
+				],
+				nextCursor: null
+			}
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.findAll('tbody tr')).toHaveLength(3));
+		const [found, lost, plain] = wrapper.findAll('tbody tr');
+		expect(found?.text()).toContain('Found on Your Box');
+		expect(found?.text()).not.toContain('Not on the Box');
+		expect(lost?.text()).toContain('Not on the Box');
+		expect(lost?.text()).not.toContain('Found on Your Box');
+		expect(plain?.text()).not.toContain('Box');
+		const cards = wrapper.findAll('ul > li');
+		expect(cards[0]?.text()).toContain('Found on Your Box');
+		expect(cards[1]?.text()).toContain('Not on the Box');
+		expect(cards[2]?.text()).not.toContain('Box');
+		expect(found?.html()).toContain('radar');
+		expect(lost?.html()).toContain('unplug');
+	});
+
 	it('links each site name in the table and the card to its page', async () => {
 		sitesReply = () => ({ body: { items: [site('site_1')], nextCursor: null } });
 		const wrapper = await mountPage();

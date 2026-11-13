@@ -29,5 +29,9 @@ defineProps<{ site: SiteSummary }>();
 		>
 			Not Set
 		</p>
+		<div class="flex flex-wrap gap-x-4 gap-y-1">
+			<SiteFound v-if="site.box?.found" />
+			<SiteMissing v-if="site.box?.missingSince" />
+		</div>
 	</header>
 </template>

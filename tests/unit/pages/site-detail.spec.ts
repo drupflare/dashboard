@@ -37,6 +37,7 @@ let siteReply: () => Reply | Promise<Reply>;
 let opsReply: () => Reply | Promise<Reply>;
 let stateReply: () => Reply;
 let cutoverReply: () => Reply;
+let domainReply: () => Reply;
 const mounted: { unmount: () => void }[] = [];
 
 beforeEach(() => {
@@ -52,6 +53,9 @@ beforeEach(() => {
 			observationOffsetsMs: [],
 			cutover: null
 		}
+	});
+	domainReply = () => ({
+		body: { ready: true, enabled: true, attached: [], attach: null }
 	});
 	opsReply = () => ({
 		body: {
@@ -71,6 +75,7 @@ beforeEach(() => {
 		'GET /api/v1/sites/site_1': () => siteReply(),
 		'GET /api/v1/sites/site_1/operations': () => opsReply(),
 		'GET /api/v1/orgs/org_personal/sites/site_1/cutover': () => cutoverReply(),
+		'GET /api/v1/orgs/org_personal/sites/site_1/domain': () => domainReply(),
 		'GET /api/v1/orgs/org_personal/sites/site_1/first-run-secret': () => stateReply()
 	});
 });
@@ -78,6 +83,7 @@ beforeEach(() => {
 afterEach(() => {
 	mounted.splice(0).forEach((wrapper) => wrapper.unmount());
 	cleanup();
+	document.body.replaceChildren();
 });
 
 async function mountPage() {
@@ -138,6 +144,76 @@ describe('site page', () => {
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Open Admin'));
 		const link = wrapper.find('a[href="https://quiet-oak-harbor.drupflare.app/user/login"]');
 		expect(link.exists()).toBe(true);
+	});
+
+	describe('the Custom Domain button', () => {
+		it('links the domain page for a member who can read it on a site that can take one', async () => {
+			const wrapper = await mountPage();
+
+			await vi.waitFor(() => expect(wrapper.text()).toContain('Custom Domain'));
+			expect(wrapper.find('a[href="/sites/site_1/domain"]').exists()).toBe(true);
+			expect(wrapper.find('[data-test="domains-off"]').exists()).toBe(false);
+		});
+
+		it('turns the button off with a plain sentence while the platform has custom domains off', async () => {
+			domainReply = () => ({
+				body: { ready: true, enabled: false, attached: [], attach: null }
+			});
+			const wrapper = await mountPage();
+
+			await vi.waitFor(() =>
+				expect(wrapper.find('[data-test="domains-off"]').exists()).toBe(true)
+			);
+			expect(wrapper.find('[data-test="domains-off"]').text()).toBe(
+				'Custom domains are not turned on for this Drupflare account yet.'
+			);
+			expect(wrapper.find('a[href$="/domain"]').exists()).toBe(false);
+			const button = wrapper
+				.findAll('button')
+				.find((item) => item.text() === 'Custom Domain');
+			expect(button?.attributes('disabled')).toBeDefined();
+		});
+
+		it.each(['suspended', 'tombstoned'])(
+			'is absent for a %s site, which the server says cannot take a domain',
+			async (state) => {
+				siteReply = () => ({ body: { ...site('drupal'), state } });
+				domainReply = () => ({
+					body: { ready: false, enabled: true, attached: [], attach: null }
+				});
+				const wrapper = await mountPage();
+
+				await vi.waitFor(() =>
+					expect(calls.some((call) => call.path.endsWith('/domain'))).toBe(true)
+				);
+				await vi.waitFor(() => expect(wrapper.find('h1').exists()).toBe(true));
+				expect(wrapper.text()).not.toContain('Custom Domain');
+				expect(wrapper.find('a[href$="/domain"]').exists()).toBe(false);
+			}
+		);
+
+		it('is absent for a member the server refuses the domain read, such as a developer', async () => {
+			domainReply = () => ({
+				status: 403,
+				body: { code: 'forbidden', message: 'Not allowed' }
+			});
+			const wrapper = await mountPage();
+
+			await vi.waitFor(() => expect(wrapper.text()).toContain('Open Admin'));
+			await vi.waitFor(() =>
+				expect(calls.some((call) => call.path.endsWith('/domain'))).toBe(true)
+			);
+			expect(wrapper.text()).not.toContain('Custom Domain');
+			expect(wrapper.text()).not.toContain('not turned on');
+		});
+
+		it('is absent when the domain read fails', async () => {
+			domainReply = () => ({ status: 500, body: { code: 'internal', message: 'down' } });
+			const wrapper = await mountPage();
+
+			await vi.waitFor(() => expect(wrapper.text()).toContain('Open Admin'));
+			expect(wrapper.text()).not.toContain('Custom Domain');
+		});
 	});
 
 	it('hides the cutover link while the server says a cutover cannot run', async () => {
@@ -425,5 +501,114 @@ describe('adopting a self-managed site', () => {
 			expect(wrapper.findAll('button').some((button) => button.text() === 'Adopt')).toBe(true)
 		);
 		expect(wrapper.text()).toContain('Stopped while copying your site database.');
+	});
+});
+
+describe('a site on a box', () => {
+	const found = (patch: Record<string, unknown> = {}) => ({
+		...site('drupal'),
+		plane: 'self-hosted',
+		config: 'canonical',
+		box: { found: true, missingSince: null },
+		...patch
+	});
+	const hasButton = (wrapper: Awaited<ReturnType<typeof mountPage>>, label: string) =>
+		wrapper.findAll('button').some((button) => button.text() === label);
+
+	it('shows the badge and the note for a found site, with only what the box can answer', async () => {
+		siteReply = () => ({ body: found() });
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Found on Your Box'));
+		expect(wrapper.find('[data-test="found-note"]').exists()).toBe(true);
+		expect(wrapper.text()).toContain('Open Admin');
+		expect(wrapper.text()).toContain('Site Health');
+		expect(wrapper.text()).toContain('Readiness');
+		expect(wrapper.text()).not.toContain('Backups');
+		expect(hasButton(wrapper, 'Update')).toBe(false);
+		expect(wrapper.text()).not.toContain('Update Available');
+	});
+
+	it('leaves out health and readiness for a found site the box kept the address of back', async () => {
+		siteReply = () => ({
+			body: found({ name: 'Site 1 on campus-box', primaryHostname: null })
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.find('[data-test="name-note"]').exists()).toBe(true));
+		expect(wrapper.text()).not.toContain('Site Health');
+		expect(wrapper.text()).not.toContain('Readiness');
+		expect(wrapper.text()).not.toContain('Open Admin');
+		expect(wrapper.text()).toContain('Not Set');
+	});
+
+	it('says a site is not on the box and keeps the usual panels for a site the dashboard made', async () => {
+		siteReply = () => ({
+			body: found({ box: { found: false, missingSince: '2026-02-01T00:00:00Z' } })
+		});
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() =>
+			expect(wrapper.find('[data-test="missing-note"]').exists()).toBe(true)
+		);
+		expect(wrapper.text()).toContain('Not on the Box');
+		expect(wrapper.text()).not.toContain('Found on Your Box');
+		expect(wrapper.find('a[href="/planes"]').text()).toBe('Check the Box');
+		expect(wrapper.text()).toContain('Backups');
+	});
+
+	it('renames a found site and shows the new name in the header', async () => {
+		siteReply = () => ({ body: found({ name: 'Site 1 on campus-box' }) });
+		cleanup();
+		cleanup = registerApi({
+			'GET /api/v1/me': { body: me },
+			'GET /api/v1/sites/site_1': () => siteReply(),
+			'GET /api/v1/sites/site_1/operations': () => opsReply(),
+			'POST /api/v1/orgs/org_personal/sites/site_1/rename': () => ({
+				body: found({ name: 'Library Portal' })
+			})
+		});
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(hasButton(wrapper, 'Rename Site')).toBe(true));
+
+		await wrapper
+			.findAll('button')
+			.find((button) => button.text() === 'Rename Site')!
+			.trigger('click');
+		await wrapper.find('#site-rename').setValue('Library Portal');
+		await wrapper.find('form').trigger('submit');
+
+		await vi.waitFor(() => expect(wrapper.find('h1').text()).toBe('Library Portal'));
+		expect(calls.find((call) => call.path.endsWith('/rename'))?.body).toEqual({
+			name: 'Library Portal'
+		});
+	});
+
+	it('offers no rename for a site the dashboard made', async () => {
+		siteReply = () => ({ body: found({ box: { found: false, missingSince: null } }) });
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.find('h1').exists()).toBe(true));
+		expect(hasButton(wrapper, 'Rename Site')).toBe(false);
+		expect(wrapper.find('[data-test="box-notice"]').exists()).toBe(false);
+	});
+
+	it('words the delete dialog for the case the site is in', async () => {
+		siteReply = () => ({ body: found() });
+		const wrapper = await mountSuspended(SitePage, {
+			route: '/sites/site_1',
+			attachTo: document.body
+		});
+		mounted.push(wrapper);
+		await vi.waitFor(() => expect(hasButton(wrapper, 'Delete Site')).toBe(true));
+		await wrapper
+			.findAll('button')
+			.find((button) => button.text() === 'Delete Site')!
+			.trigger('click');
+		await vi.waitFor(() =>
+			expect(document.querySelector('[data-test="box-delete"]')?.textContent).toContain(
+				'stays on your box and keeps serving'
+			)
+		);
 	});
 });

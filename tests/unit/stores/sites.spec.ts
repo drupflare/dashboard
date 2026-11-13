@@ -228,3 +228,78 @@ describe('sites store cleanup', () => {
 		});
 	});
 });
+
+describe('sites store rename', () => {
+	const renamePath = 'POST /api/v1/orgs/org_a/sites/site_1/rename';
+
+	it('sends the name, caches the site that comes back and keeps the list', async () => {
+		const renamed = {
+			...site('site_1', 'org_a'),
+			name: 'Library Portal',
+			box: { found: true, missingSince: null }
+		};
+		cleanup = registerApi({
+			[sitesPath('org_a')]: { body: { items: [site('site_1', 'org_a')], nextCursor: null } },
+			[renamePath]: { body: renamed }
+		});
+		const sites = useSitesStore();
+		await sites.load('org_a');
+
+		const result = await sites.rename('org_a', 'site_1', 'Library Portal');
+
+		expect(result.name).toBe('Library Portal');
+		expect(sites.byId.get('site_1')?.name).toBe('Library Portal');
+		expect(sites.lists.get('org_a')?.ids).toEqual(['site_1']);
+		expect(calls.find((entry) => entry.path.endsWith('/rename'))?.body).toEqual({
+			name: 'Library Portal'
+		});
+	});
+
+	it('throws the failure and clears the session on a 401', async () => {
+		cleanup = registerApi({
+			[renamePath]: {
+				status: 401,
+				body: {
+					code: 'unauthenticated',
+					message: 'Sign in',
+					details: {},
+					requestId: 'req_r1'
+				}
+			}
+		});
+		useSessionStore().me = {
+			id: 'usr_1',
+			email: 'owner@example.test',
+			displayName: null,
+			via: 'session',
+			stepUpUntil: null
+		};
+
+		await expect(useSitesStore().rename('org_a', 'site_1', 'Name')).rejects.toMatchObject({
+			status: 401
+		});
+		expect(useSessionStore().me).toBeNull();
+	});
+
+	it('throws the refusal and leaves the cached site alone', async () => {
+		cleanup = registerApi({
+			[sitesPath('org_a')]: { body: { items: [site('site_1', 'org_a')], nextCursor: null } },
+			[renamePath]: {
+				status: 409,
+				body: {
+					code: 'conflict',
+					message: 'Another site already has this name',
+					details: { reason: 'name_taken' },
+					requestId: 'req_r2'
+				}
+			}
+		});
+		const sites = useSitesStore();
+		await sites.load('org_a');
+
+		await expect(sites.rename('org_a', 'site_1', 'Taken')).rejects.toMatchObject({
+			message: 'Another site already has this name'
+		});
+		expect(sites.byId.get('site_1')?.name).toBe('Site site_1');
+	});
+});

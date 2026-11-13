@@ -2,8 +2,11 @@
 import type { Operation } from '@contracts/operations';
 import { ApiClientError, toApiClientError, useApi } from '~/composables/useApi';
 import { adminUrlFor } from '~/composables/useOnboarding';
+import { boxDeleteCase } from '~/shared/box-sites';
+import { DOMAINS_OFF_COPY } from '~/shared/domain-copy';
 import { canRetry, operationTypeLabel, refusalReason } from '~/shared/operation-copy';
 import { useCutoverStore } from '~/stores/cutover';
+import { useDomainStore, type DomainPayload } from '~/stores/domain';
 import { useOperationsStore } from '~/stores/operations';
 import type { SiteSummary } from '~/stores/sites';
 
@@ -44,6 +47,20 @@ async function loadCutover(): Promise<void> {
 	}
 }
 
+// the button shows only when the server lets this member read the domain page and says the site can
+// take a domain; a refusal for a developer or a viewer reads as no button
+const domain = ref<DomainPayload | null>(null);
+
+async function loadDomain(): Promise<void> {
+	const org = site.value?.orgId;
+	if (!org) return;
+	try {
+		domain.value = await useDomainStore().read(org, siteId);
+	} catch {
+		domain.value = null;
+	}
+}
+
 async function loadOperations(): Promise<void> {
 	operationsError.value = null;
 	try {
@@ -58,7 +75,7 @@ async function loadOperations(): Promise<void> {
 }
 
 onMounted(() => {
-	void loadSite().then(loadCutover);
+	void loadSite().then(() => Promise.all([loadCutover(), loadDomain()]));
 	void loadOperations();
 });
 
@@ -81,6 +98,15 @@ const canAdopt = computed(
 		adopted.value === null
 );
 const siteMissing = computed(() => siteError.value?.status === 404);
+
+// a site the box reported has no managed copy to update or back up, and no address to read health
+// from when the box kept it back
+const found = computed(() => site.value?.box?.found === true);
+const readable = computed(() => !found.value || site.value?.primaryHostname !== null);
+
+function renamed(next: SiteSummary): void {
+	site.value = next;
+}
 
 const dateFormat = new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -139,6 +165,10 @@ async function tryAgain(operation: Operation): Promise<void> {
 
 			<template v-else>
 				<SiteHeader :site="site" />
+				<SiteBox
+					:site="site"
+					@renamed="renamed"
+				/>
 
 				<div v-if="adminUrl">
 					<UButton
@@ -164,8 +194,12 @@ async function tryAgain(operation: Operation): Promise<void> {
 					</UButton>
 				</div>
 
-				<div v-if="site.plane === 'managed' && site.state === 'active'">
+				<div
+					v-if="domain?.ready"
+					class="flex flex-col items-start gap-2"
+				>
 					<UButton
+						v-if="domain.enabled"
 						color="neutral"
 						variant="outline"
 						icon="i-lucide-globe"
@@ -173,6 +207,22 @@ async function tryAgain(operation: Operation): Promise<void> {
 					>
 						Custom Domain
 					</UButton>
+					<template v-else>
+						<UButton
+							color="neutral"
+							variant="outline"
+							icon="i-lucide-globe"
+							disabled
+						>
+							Custom Domain
+						</UButton>
+						<p
+							class="text-sm text-default"
+							data-test="domains-off"
+						>
+							{{ DOMAINS_OFF_COPY }}
+						</p>
+					</template>
 				</div>
 
 				<SiteAdmin
@@ -184,22 +234,26 @@ async function tryAgain(operation: Operation): Promise<void> {
 					:email="site.admin.email"
 				/>
 
-				<HealthTree
-					:org-id="site.orgId"
-					:site-id="site.id"
-				/>
-				<ReadinessChecklist
-					:org-id="site.orgId"
-					:site-id="site.id"
-				/>
-				<SiteUpdate
-					:org-id="site.orgId"
-					:site-id="site.id"
-				/>
-				<SiteBackupPanel
-					:org-id="site.orgId"
-					:site-id="site.id"
-				/>
+				<template v-if="readable">
+					<HealthTree
+						:org-id="site.orgId"
+						:site-id="site.id"
+					/>
+					<ReadinessChecklist
+						:org-id="site.orgId"
+						:site-id="site.id"
+					/>
+				</template>
+				<template v-if="!found">
+					<SiteUpdate
+						:org-id="site.orgId"
+						:site-id="site.id"
+					/>
+					<SiteBackupPanel
+						:org-id="site.orgId"
+						:site-id="site.id"
+					/>
+				</template>
 
 				<SiteAdopt
 					v-if="canAdopt"
@@ -318,6 +372,11 @@ async function tryAgain(operation: Operation): Promise<void> {
 				:org-id="site.orgId"
 				:site-id="site.id"
 				:name="site.name"
+				:box="
+					site.plane === 'self-hosted'
+						? boxDeleteCase(site.box ?? { found: false, missingSince: null })
+						: undefined
+				"
 			/>
 		</div>
 		<template #fallback>

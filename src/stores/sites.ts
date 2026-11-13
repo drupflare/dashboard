@@ -29,6 +29,7 @@ export interface SiteSummary {
 	hostnames: string[];
 	release?: { current: string | null; available: string | null };
 	admin: { username: string | null; email: string | null; password: AdminPasswordState };
+	box?: { found: boolean; missingSince: string | null };
 	createdAt: string;
 	updatedAt: string;
 }
@@ -180,6 +181,25 @@ export const useSitesStore = defineStore('sites', {
 				);
 				this.lists.delete(orgId);
 				return operation;
+			} catch (error) {
+				const failure = toApiClientError(error);
+				if (failure.status === 401) useSessionStore().clear();
+				throw failure;
+			}
+		},
+		// only a site found on a box can be renamed; the answer is the site as it now stands
+		async rename(orgId: string, siteId: string, name: string): Promise<SiteSummary> {
+			const fetcher = $fetch as unknown as (
+				url: string,
+				options: { method: 'POST'; body: Record<string, unknown> }
+			) => Promise<SiteSummary>;
+			try {
+				const site = await fetcher(
+					`/api/v1/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/rename`,
+					{ method: 'POST', body: { name } }
+				);
+				this.byId.set(siteId, site);
+				return site;
 			} catch (error) {
 				const failure = toApiClientError(error);
 				if (failure.status === 401) useSessionStore().clear();

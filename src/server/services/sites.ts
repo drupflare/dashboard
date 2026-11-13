@@ -41,6 +41,7 @@ import { FREE_PLAN_ID, check, type CheckDenial, type Entitlement } from '../doma
 import type { EngineStartRequest } from '../integrations/engine';
 import { EngineStartError } from '../integrations/engine';
 import { entitlementOf, type BillingStore } from './billing';
+import { removeBoxSite } from './box-sites';
 import {
 	MANAGED_HOST_SUFFIX,
 	SiteInputError,
@@ -341,6 +342,7 @@ export async function deleteSite(
 	}
 	const site = await getReadySite(db, input.orgId, input.siteId);
 	if (site === null) throw new ApiError('not_found', 'Not found');
+	if (site.plane === 'self-hosted') return removeBoxSite(db, site, input);
 	if (!LIVE_STATES.includes(site.state) || site.accountId === null) {
 		throw new ApiError('unprocessable', 'This site is already deleted', {
 			reason: 'site_not_live'

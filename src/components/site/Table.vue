@@ -53,6 +53,13 @@ defineProps<{ sites: SiteSummary[] }>();
 							class="text-brand-700 underline dark:text-brand-300"
 							>{{ site.name }}</NuxtLink
 						>
+						<div
+							v-if="site.box?.found || site.box?.missingSince"
+							class="mt-1 flex flex-col gap-1 font-normal"
+						>
+							<SiteFound v-if="site.box?.found" />
+							<SiteMissing v-if="site.box?.missingSince" />
+						</div>
 					</td>
 					<td class="px-4 py-3">{{ SITE_KIND_LABELS[site.kind] }}</td>
 					<td class="px-4 py-3">{{ SITE_PLANE_LABELS[site.plane] }}</td>
