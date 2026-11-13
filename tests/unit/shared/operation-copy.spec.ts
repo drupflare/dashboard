@@ -8,6 +8,7 @@ import {
 	adoptRefusalReason,
 	canRetry,
 	copyFor,
+	cutoverHandSteps,
 	cutoverRefusalReason,
 	failedStepError,
 	failedStepId,
@@ -38,7 +39,8 @@ const COVERED = [
 	'migration.cutover',
 	'backup.create',
 	'backup.restore',
-	'git.pull'
+	'git.pull',
+	'domain.attach'
 ];
 const WORKFLOWS = fileURLToPath(new URL('../../../engine/src/workflows/', import.meta.url));
 
@@ -48,7 +50,7 @@ function enginePlanSteps(): { type: string; id: string }[] {
 	for (const file of readdirSync(WORKFLOWS).filter((name) => name.endsWith('.ts'))) {
 		const text = readFileSync(WORKFLOWS + file, 'utf8');
 		const marks = [
-			...text.matchAll(/type: '((?:site|backup|migration|import|git)\.[a-z-]+)'/g)
+			...text.matchAll(/type: '((?:site|backup|migration|import|git|domain)\.[a-z-]+)'/g)
 		];
 		marks.forEach((mark, i) => {
 			const type = mark[1] ?? '';
@@ -455,7 +457,24 @@ describe('cutover copy', () => {
 		).toBe('Stopped while checking the new site against the snapshot and the changes.');
 		expect(
 			failureReason({ type: 'migration.cutover', status: 'failed', failedStep: 'route' })
-		).toBe('Stopped while pointing your address at the new site.');
+		).toBe('Stopped while waiting for your address to point at the new site.');
+	});
+
+	it('lists what the owner does by hand, with the address, the cache time and the policy', () => {
+		const steps = cutoverHandSteps('www.example.edu', 60, 'freeze');
+		expect(steps.map((step) => step.id)).toEqual([
+			'lower-cache-time',
+			'point-address',
+			'restore-cache-time',
+			'restore-writes'
+		]);
+		expect(steps[0]!.text).toContain('www.example.edu');
+		expect(steps[0]!.text).toContain('60 seconds');
+		expect(steps[3]!.text).toContain('maintenance mode');
+		expect(cutoverHandSteps('a.test', 60, 'read-only')[3]!.text).toContain('Read Only Mode');
+		for (const step of steps) {
+			expect(step.text, step.id).not.toMatch(/workflow|durable|worker/i);
+		}
 	});
 
 	it('states the rollback boundary in two plain sentences', () => {
@@ -526,6 +545,8 @@ describe('import copy', () => {
 		['dossier_refused', 'cannot be imported'],
 		['dump_empty', 'empty database'],
 		['dump_failed', 'did not finish'],
+		['unsupported_statement', 'cannot store'],
+		['no_statement_boundary', 'too large to copy'],
 		['restore_too_large', 'paged restore'],
 		['files_unreadable', 'files was cut short'],
 		['files_bad_path', 'name that cannot be carried'],
@@ -573,7 +594,12 @@ describe('import copy', () => {
 		['host_key_changed', 'different host key'],
 		['survey_not_done', 'not finished'],
 		['plan_full', 'no room'],
-		['idempotency_key_reused', 'clashes']
+		['idempotency_key_reused', 'clashes'],
+		['import_busy', 'already running'],
+		['import_hours_today', 'for today'],
+		['import_hours_this_month', 'for this month'],
+		['import_approval_needed', 'scheduled with Drupflare'],
+		['plan_not_capped', 'not available on this plan']
 	])('turns the %s route refusal into a plain reason', (reason, text) => {
 		expect(importRefusalReason({ details: { reason }, message: 'server words' })).toContain(
 			text
@@ -584,6 +610,19 @@ describe('import copy', () => {
 		expect(
 			importRefusalReason({ details: { reason: 'new_thing' }, message: 'server words' })
 		).toBe('server words');
+	});
+});
+
+describe('the import time limit copy', () => {
+	it('gives the plain reason for an import stopped at its time limit', () => {
+		expect(
+			failureReason({
+				type: 'site.import',
+				status: 'failed',
+				failedStep: 'dump',
+				failedError: 'job_timeout: the import ran past its limit'
+			})
+		).toContain('time limit');
 	});
 });
 
@@ -663,5 +702,95 @@ describe('git pull copy', () => {
 			pullRefusalReason({ details: { reason: 'new_thing' }, message: 'server words' })
 		).toBe('server words');
 		expect(pullRefusalReason({ details: null, message: 'server words' })).toBe('server words');
+	});
+});
+
+describe('domain attach copy', () => {
+	it('titles the attach and points at the domain page on success and on failure', () => {
+		const copy = copyFor('domain.attach');
+		expect(copy.title).toBe('Attaching Your Domain');
+		expect(copy.link({ targetIds: [SITE] })).toEqual({
+			to: `/sites/${SITE}/domain`,
+			label: 'Open the Domain'
+		});
+		expect(copy.failureLink({ targetIds: [SITE] })?.to).toBe(`/sites/${SITE}/domain`);
+		expect(operationTypeLabel('domain.attach')).toBe('Domain');
+	});
+
+	it('labels every step id the plan writes in plain words', () => {
+		for (const id of [
+			'lease',
+			'claim',
+			'request',
+			'ownership',
+			'certificate',
+			'routing',
+			'verification'
+		]) {
+			expect(stepLabel('domain.attach', id)).not.toBe(GENERIC_STEP_LABEL);
+		}
+		expect(stepLabel('domain.attach', 'certificate')).toBe('Waiting for the certificate');
+	});
+
+	it('never offers a retry, since the owner attaches again from the domain page', () => {
+		expect(canRetry('domain.attach', 'failed')).toBe(false);
+	});
+
+	it.each([
+		['hostname_taken', 'Another site already holds'],
+		['platform_zone', 'keeps this domain'],
+		['custom_domains_off', 'not turned on'],
+		['ownership_failed', 'could not be confirmed'],
+		['certificate_failed', 'certificate could not be issued'],
+		['wait_timed_out', 'did not appear in time'],
+		['site_not_ready', 'not live'],
+		['site_busy', 'Another change'],
+		['site_unreachable', 'did not answer'],
+		['provider_unreachable', 'could not reach']
+	])('turns the %s code into a plain reason', (code, text) => {
+		const reason = failureReason({
+			type: 'domain.attach',
+			status: 'failed',
+			failedStep: 'ownership',
+			failedError: `${code}: engine words`
+		});
+		expect(reason).toContain(text);
+		expect(reason).not.toContain('engine words');
+		expect(reason).toMatch(/^[\x20-\x7e]+$/);
+	});
+
+	it('names the step when the failure has no code of its own', () => {
+		expect(
+			failureReason({
+				type: 'domain.attach',
+				status: 'failed',
+				failedStep: 'routing',
+				failedError: 'something odd'
+			})
+		).toBe('Stopped while sending the domain to your site.');
+	});
+
+	it('keeps infrastructure words out of every line the owner reads', () => {
+		const copy = copyFor('domain.attach');
+		const lines = [copy.title, copy.running, copy.success, copy.failure];
+		for (const code of ['hostname_taken', 'custom_domains_off', 'custom_domains_refused']) {
+			lines.push(
+				failureReason({
+					type: 'domain.attach',
+					status: 'failed',
+					failedStep: 'claim',
+					failedError: `${code}: x`
+				}) ?? ''
+			);
+		}
+		for (const word of [
+			/worker/i,
+			/namespace/i,
+			/zone id/i,
+			/custom hostname/i,
+			/authority/i
+		]) {
+			expect(lines.join(' ')).not.toMatch(word);
+		}
 	});
 });

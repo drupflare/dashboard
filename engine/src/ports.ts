@@ -1,6 +1,7 @@
 import type { AuthorityState } from '@contracts/site-auth';
 import type { SitePlane } from '@contracts/sites';
 import type { UploadMetadata } from '@drupflare/workforce';
+import type { ClaimRow, Observation } from '../../src/server/domain/domain-attach';
 import type { BackupRecord, ExportPage } from './backup-parts';
 import type { BundleLimits, BundleManifest, BundleModule } from './bundle';
 import type { Custody, FirstRunAdmin, FirstRunReads, FirstRunSecrets } from './custody';
@@ -263,7 +264,8 @@ export interface CutoverDestination {
 	// null when the snapshot plus the delta load and match, otherwise the plain problem
 	validate(key: string, snapshot: string, delta: string): Promise<string | null>;
 	promote(key: string, snapshot: string, delta: string): Promise<void>;
-	route(key: string, to: 'destination' | 'source'): Promise<void>;
+	// the address that moves, since the destination knows only its own
+	route(key: string, to: 'destination' | 'source', hostname: string): Promise<void>;
 	acceptedWrites(): Promise<number>;
 	observe(): Promise<{ healthy: boolean; writes: number }>;
 	// the changes accepted since promote, and what the path back to the source cannot carry
@@ -271,7 +273,8 @@ export interface CutoverDestination {
 }
 
 export interface CutoverPorts {
-	source(ref: string): CutoverSource;
+	// the organization comes from the signed start, so a ref never reaches another organization's key
+	source(ref: string, orgId: string): CutoverSource;
 	destination(siteId: string): CutoverDestination;
 }
 
@@ -318,6 +321,10 @@ export interface DumpJob {
 	partBytes: number;
 	// the stream stops with a refusal once it has carried this much
 	maxBytes: number;
+	// a database job dumps only these tables
+	tables?: string[];
+	// the structure of these tables and none of their rows; a * stands for any run of characters
+	structureOnly?: string[];
 }
 
 // streams one read-only command's stdout over a single channel into R2 parts; a repeat clears the
@@ -362,6 +369,10 @@ export interface ImportStore {
 		accountId: string,
 		now: number
 	): Promise<void>;
+	// the first start for an operation is kept, so a retried step reports the same clock
+	beginRun(operationId: string, orgId: string, at: number): Promise<number>;
+	// only the first end counts, so a close after the probe does not move the recorded time
+	endRun(operationId: string, at: number): Promise<void>;
 }
 
 export interface ImportDeps extends BackupDeps {
@@ -399,12 +410,73 @@ export interface RemoteLedger {
 		id: string,
 		result: { status: PullStatus; at: number; reason: string | null }
 	): Promise<void>;
+	// the mark a push leaves while a pull runs; a pull clears it when it starts
+	clearPending(id: string): Promise<void>;
+	// clears the mark and says whether one was set
+	takePending(id: string): Promise<boolean>;
 }
 
 export interface GitDeps extends BackupDeps {
 	git: GitWorker;
 	tokenPull: GitTokenPull;
 	remotes: RemoteLedger;
+}
+
+// #endregion
+
+// #region domains
+
+export interface CustomHostnameState {
+	providerId: string;
+	observation: Observation;
+}
+
+// one hostname of a customer at the certificate provider; a call that cannot be served because the
+// account lacks the feature throws a PermanentError that says so
+export interface CustomHostnames {
+	// finds the hostname at the provider or creates it, so a repeat returns the same one
+	ensure(hostname: string): Promise<CustomHostnameState>;
+	read(providerId: string): Promise<CustomHostnameState | null>;
+	// asks the provider to check again now instead of at its next scheduled time
+	refresh(providerId: string): Promise<CustomHostnameState>;
+	remove(providerId: string): Promise<'deleted' | 'absent'>;
+}
+
+export interface DomainSite {
+	organizationId: string;
+	accountId: string | null;
+	plane: SitePlane;
+	state: SiteRowState;
+}
+
+export type DomainClaim =
+	| {
+			ok: true;
+			epoch: number;
+			providerId: string | null;
+			// the claim another site held, when this one took the hostname over
+			previous: ClaimRow | null;
+	  }
+	| { ok: false };
+
+// one row per hostname that is never deleted, so its epoch only rises
+export interface DomainLedger {
+	site(siteId: string): Promise<DomainSite | null>;
+	claim(
+		hostname: string,
+		who: { organizationId: string; siteId: string; operationId: string },
+		now: number
+	): Promise<DomainClaim>;
+	current(hostname: string): Promise<ClaimRow | null>;
+	// each write names the epoch it was made under and does nothing when the hostname has moved on
+	setProvider(hostname: string, epoch: number, providerId: string): Promise<boolean>;
+	markRouted(hostname: string, epoch: number, siteId: string): Promise<boolean>;
+	release(hostname: string, epoch: number, siteId: string): Promise<boolean>;
+}
+
+export interface DomainDeps extends EngineDeps {
+	hostnames: CustomHostnames;
+	domains: DomainLedger;
 }
 
 // #endregion

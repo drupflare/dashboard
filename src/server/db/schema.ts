@@ -171,6 +171,7 @@ export const sites = sqliteTable('sites', {
 	adoptedFrom: text('adopted_from'),
 	adoptedTo: text('adopted_to'),
 	importedFrom: text('imported_from'),
+	nodeId: text('node_id'),
 	readyAt: integer('ready_at'),
 	createdAt: integer('created_at').notNull(),
 	updatedAt: integer('updated_at').notNull()
@@ -487,6 +488,7 @@ export const SCHEMA_STATEMENTS: string[] = [
 	adopted_from TEXT,
 	adopted_to TEXT,
 	imported_from TEXT,
+	node_id TEXT,
 	ready_at INTEGER,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
@@ -678,6 +680,8 @@ export const SCHEMA_STATEMENTS: string[] = [
 	WHERE status IN (${quoted(OPEN_OPERATION_STATUSES)})`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS operations_retry_open ON operations (retry_of)
 	WHERE retry_of IS NOT NULL AND status IN (${quoted(OPEN_OPERATION_STATUSES)})`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS operations_import_open ON operations (organization_id)
+	WHERE type = 'site.import' AND status IN (${quoted(OPEN_OPERATION_STATUSES)})`,
 	`CREATE INDEX IF NOT EXISTS operations_retry ON operations (organization_id, retry_of)
 	WHERE retry_of IS NOT NULL`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS operation_steps_order
@@ -715,7 +719,8 @@ export const SCHEMA_STATEMENTS: string[] = [
 	last_pull_status TEXT,
 	last_pull_at INTEGER,
 	created_at INTEGER NOT NULL,
-	last_pull_reason TEXT
+	last_pull_reason TEXT,
+	pull_pending INTEGER NOT NULL DEFAULT 0
 )`,
 	`CREATE TABLE IF NOT EXISTS repo_deliveries (
 	provider TEXT NOT NULL,
@@ -740,11 +745,31 @@ export const SCHEMA_STATEMENTS: string[] = [
 )`,
 	`CREATE INDEX IF NOT EXISTS import_credentials_org ON import_credentials (organization_id, id)`,
 	`CREATE INDEX IF NOT EXISTS import_credentials_expiry ON import_credentials (expires_at)`,
+	`CREATE TABLE IF NOT EXISTS import_runs (
+	operation_id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	started_at INTEGER NOT NULL,
+	ended_at INTEGER,
+	wall_ms INTEGER CHECK (wall_ms >= 0)
+)`,
+	`CREATE INDEX IF NOT EXISTS import_runs_org ON import_runs (organization_id, started_at)`,
 	`CREATE INDEX IF NOT EXISTS repo_connections_org ON repo_connections (organization_id, id)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS repo_connections_github_install ON repo_connections (external_id)
 	WHERE provider = 'github' AND state = 'active'`,
 	`CREATE INDEX IF NOT EXISTS site_remotes_site ON site_remotes (organization_id, site_id, id)`,
 	`CREATE INDEX IF NOT EXISTS site_remotes_repo ON site_remotes (repo_full_name, branch)`,
+	`CREATE TABLE IF NOT EXISTS custom_domains (
+	hostname TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	site_id TEXT NOT NULL,
+	operation_id TEXT NOT NULL,
+	epoch INTEGER NOT NULL CHECK (epoch >= 1),
+	state TEXT NOT NULL CHECK (state IN ('claimed', 'routed', 'released')),
+	provider_id TEXT,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS custom_domains_site ON custom_domains (organization_id, site_id, hostname)`,
 	...BILLING_SCHEMA_STATEMENTS
 ];
 

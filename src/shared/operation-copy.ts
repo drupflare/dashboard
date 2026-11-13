@@ -1,4 +1,5 @@
 import type { Operation } from '@contracts/operations';
+import { attachFailureReason } from './domain-copy';
 
 // how long a deleted site's address stays reserved; dispatch/src/registry.ts holds the same number
 export const SITE_HOLD_DAYS = 90;
@@ -53,6 +54,14 @@ function cutoverOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
 	return id === undefined
 		? sites
 		: { to: `/sites/${encodeURIComponent(id)}/cutover`, label: 'Open the Move' };
+}
+
+// a domain attach names the site, whose domain page holds the stages and the DNS records
+function domainOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
+	const id = operation.targetIds[0];
+	return id === undefined
+		? sites
+		: { to: `/sites/${encodeURIComponent(id)}/domain`, label: 'Open the Domain' };
 }
 
 // the two sentences that say whether going back is still a reversal
@@ -151,6 +160,15 @@ export const OPERATION_COPY = {
 		failure: 'Could Not Pull the Repository',
 		link: siteOf,
 		failureLink: siteOf
+	},
+	'domain.attach': {
+		title: 'Attaching Your Domain',
+		running:
+			'Your site keeps serving at its Drupflare address. The domain goes live once every stage is done. Leaving this page does not stop the attach.',
+		success: 'Your domain is attached and your site answers on it.',
+		failure: 'Could Not Attach the Domain',
+		link: domainOf,
+		failureLink: domainOf
 	}
 } satisfies Partial<Record<Operation['type'], OperationCopy>>;
 
@@ -182,7 +200,8 @@ const TYPE_LABELS: Record<string, string> = {
 	'migration.cutover': 'Move',
 	'backup.create': 'Backup',
 	'backup.restore': 'Restore',
-	'git.pull': 'Pull'
+	'git.pull': 'Pull',
+	'domain.attach': 'Domain'
 };
 
 export function operationTypeLabel(type: string | undefined): string {
@@ -272,7 +291,7 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 	},
 	'migration.cutover': {
 		lease: 'locking the new site for this change',
-		'lower-ttl': 'shortening the DNS cache time so the change spreads quickly',
+		'lower-ttl': 'reading the DNS cache time of your address',
 		snapshot: 'taking a consistent snapshot of your old site',
 		'capture-delta': 'copying the changes made since the snapshot',
 		validate: 'checking the new site against the snapshot and the changes',
@@ -280,7 +299,7 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		'apply-write-policy': 'holding writes on your old site',
 		'final-delta': 'copying the last changes and checking them',
 		promote: 'promoting the new site',
-		route: 'pointing your address at the new site',
+		route: 'waiting for your address to point at the new site',
 		'observe-5m': 'checking the new site after 5 minutes',
 		'observe-30m': 'checking the new site after 30 minutes',
 		'observe-6h': 'checking the new site after 6 hours',
@@ -306,6 +325,15 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		find: 'finding the repository on the site',
 		pull: 'installing the latest commit',
 		record: 'saving the result'
+	},
+	'domain.attach': {
+		lease: 'locking the site for this change',
+		claim: 'reserving the domain for this site',
+		request: 'asking for the ownership and certificate records',
+		ownership: 'waiting for the ownership record',
+		certificate: 'waiting for the certificate',
+		routing: 'sending the domain to your site',
+		verification: 'loading your site through the domain'
 	}
 };
 
@@ -391,6 +419,10 @@ const IMPORT_REFUSALS: Record<string, string> = {
 	dump_failed:
 		'The database copy on your server did not finish. Check that Drush works there, then start again.',
 	restore_too_large: `The database and the files together are larger than the ${RESTORE_LIMIT_MIB} MiB a managed site accepts in one restore. Nothing was created and your server was not changed. Larger restores need a paged restore, which is not available yet.`,
+	unsupported_statement:
+		'The database holds something a new site cannot store, such as a row that is too large or a trigger. Nothing was created and your server was not changed.',
+	no_statement_boundary:
+		'The database holds a row too large to copy in one piece. Nothing was created and your server was not changed.',
 	files_too_large: 'The files are larger than an import accepts. Nothing was created.',
 	files_unreadable:
 		'The copy of your files was cut short or could not be read. Nothing was created and your server was not changed. Start again.',
@@ -398,7 +430,9 @@ const IMPORT_REFUSALS: Record<string, string> = {
 		'A file on your server has a name that cannot be carried into a new site. Nothing was created and your server was not changed.',
 	files_too_many: 'Your server holds more files than an import carries. Nothing was created.',
 	import_failed: 'The new site could not load the database. Nothing was left behind.',
-	import_timeout: 'The new site took too long to load the database. Nothing was left behind.'
+	import_timeout: 'The new site took too long to load the database. Nothing was left behind.',
+	job_timeout:
+		'The import ran past its time limit, so it was stopped. Nothing was left behind and your server was not changed. Start again to retry.'
 };
 
 const GIT_PULL_REFUSALS: Record<string, string> = {
@@ -451,6 +485,10 @@ export function failureReason(operation: {
 	if (operation.type === 'git.pull') {
 		const refusal = GIT_PULL_REFUSALS[errorCode(operation.failedError) ?? ''];
 		if (refusal !== undefined) return refusal;
+	}
+	if (operation.type === 'domain.attach') {
+		const refusal = attachFailureReason(errorCode(operation.failedError));
+		if (refusal !== null) return refusal;
 	}
 	const phrase =
 		operation.failedStep === null ? null : phraseOf(operation.type, operation.failedStep);
@@ -528,7 +566,47 @@ export function cutoverRefusalReason(error: { details: unknown; message: string 
 	return (typeof reason === 'string' && CUTOVER_ROUTE_REFUSALS[reason]) || error.message;
 }
 
-const IMPORT_ROUTE_REFUSALS: Record<string, string> = {
+export interface CutoverHandStep {
+	id: 'lower-cache-time' | 'point-address' | 'restore-cache-time' | 'restore-writes';
+	when: string;
+	text: string;
+}
+
+// the steps in the owner's own DNS zone and on the old server, which Drupflare cannot do for them
+export function cutoverHandSteps(
+	hostname: string,
+	ttlSeconds: number,
+	policy: 'freeze' | 'read-only' | 'delta'
+): CutoverHandStep[] {
+	const held =
+		policy === 'read-only'
+			? 'turn Read Only Mode back off'
+			: 'turn maintenance mode back off (drush state:delete system.maintenance_mode)';
+	return [
+		{
+			id: 'lower-cache-time',
+			when: 'Before you approve',
+			text: `Set the cache time (TTL) of ${hostname} to ${ttlSeconds} seconds in your DNS, then wait out the old cache time. Drupflare reads the old value when the move starts.`
+		},
+		{
+			id: 'point-address',
+			when: 'Right after you approve',
+			text: `Point ${hostname} at the new site. Drupflare waits a few minutes to see the change. If it does not appear, the move goes back and your old site is unchanged.`
+		},
+		{
+			id: 'restore-cache-time',
+			when: 'After the move',
+			text: `Put the cache time of ${hostname} back to its old value.`
+		},
+		{
+			id: 'restore-writes',
+			when: 'Only if Drupflare could not',
+			text: `If the move says your old site did not take writes again, ${held}.`
+		}
+	];
+}
+
+export const IMPORT_ROUTE_REFUSALS: Record<string, string> = {
 	host_private: 'That address is not on the public internet, so Drupflare cannot reach it.',
 	host_unresolved: 'That server name could not be found. Check the spelling.',
 	credential_expired: IMPORT_REFUSALS.credential_expired!,
@@ -542,7 +620,16 @@ const IMPORT_ROUTE_REFUSALS: Record<string, string> = {
 	unsupported_kind: IMPORT_REFUSALS.unsupported_kind!,
 	idempotency_key_reused: REFUSALS.idempotency_key_reused!,
 	plan_full:
-		'Your plan has no room for another site. Remove a site or change your plan, then import again.'
+		'Your plan has no room for another site. Remove a site or change your plan, then import again.',
+	import_busy:
+		'Another import is already running for this account. Wait for it to finish, then start again.',
+	import_hours_today:
+		'Another import could take this plan past its import time for today. Try again after midnight UTC.',
+	import_hours_this_month:
+		'Another import could take this plan past its import time for this month. Try again on the first day of next month, UTC.',
+	import_approval_needed:
+		'Imports on this plan are scheduled with Drupflare. Contact us and we will set one up with you.',
+	plan_not_capped: 'Imports are not available on this plan yet.'
 };
 
 // the plain reason for a refused import step; the server message is the fallback

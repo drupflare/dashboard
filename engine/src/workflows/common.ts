@@ -23,6 +23,8 @@ export interface Ctx {
 	epoch: number | null;
 	// plan step ids a reused step function writes, renamed to the ones this plan holds
 	stepIds?: Readonly<Record<string, string>>;
+	// set once a job starts its clock; a heartbeat past it stops the job
+	deadlineMs?: number;
 }
 
 export type Outcome =
@@ -37,6 +39,12 @@ export class LeaseLostError extends PermanentError {
 	}
 }
 
+export class JobTimeoutError extends PermanentError {
+	constructor(siteId: string, deadlineMs: number) {
+		super('job_timeout', `${siteId} ran past its limit at ${deadlineMs}`);
+	}
+}
+
 export class SiteBusyError extends PermanentError {
 	constructor(siteId: string, heldBy: string | undefined) {
 		super('site_busy', `${siteId} is being changed by ${heldBy ?? 'another operation'}`);
@@ -47,6 +55,9 @@ export class SiteBusyError extends PermanentError {
 // long run keeps the site for as long as each step finishes inside one lease time
 export async function fenced(ctx: Ctx): Promise<void> {
 	if (ctx.epoch === null) throw new LeaseLostError(ctx.siteId, 'never acquired');
+	if (ctx.deadlineMs !== undefined && ctx.deps.now() >= ctx.deadlineMs) {
+		throw new JobTimeoutError(ctx.siteId, ctx.deadlineMs);
+	}
 	const verdict = await ctx.deps.leases.heartbeat(ctx.siteId, {
 		holder: ctx.operationId,
 		epoch: ctx.epoch,

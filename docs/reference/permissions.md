@@ -112,7 +112,8 @@ Organisation roles are `owner`, `admin`, `developer`, `billing`, `viewer`. Site 
 | `site.heal`                      | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.git.manage`                | site       | x         | x         | x             |             |            | x               |                 |             |                                   |
 | `site.remote.manage`             | site       | x         | x         | x             |             |            | x               |                 |             |                                   |
-| `site.domain.manage`             | site       | x         | x         |               |             |            | x               |                 |             |                                   |
+| `site.domain.manage`             | site       | x         | x         |               |             |            | x               |                 |             | session only, step-up             |
+| `site.domain.read`               | site       | x         | x         |               |             |            | x               |                 |             |                                   |
 | `site.domain.rename`             | site       | x         | x         |               |             |            | x               |                 |             | step-up                           |
 | `site.credentials.rotate`        | site       | x         | x         |               |             |            |                 |                 |             | step-up                           |
 | `site.owner-token.reveal`        | site       | x         | x         |               |             |            |                 |                 |             | session only, step-up             |
@@ -178,6 +179,7 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `site.import`
 - `site.cutover`
 - `site.cutover.decide`
+- `site.domain.manage`
 - `site.owner-token.reveal`
 - `site.owner-token.rotate`
 - `site.backup.export`
@@ -199,6 +201,7 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `site.import`
 - `site.cutover`
 - `site.cutover.decide`
+- `site.domain.manage`
 - `site.domain.rename`
 - `site.credentials.rotate`
 - `site.owner-token.reveal`

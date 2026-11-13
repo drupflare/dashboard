@@ -3,7 +3,9 @@ import { dispatch, Resources, SESSION_MARGIN_MS, SESSION_TTL_MS } from '@drupfla
 import { authorityOf, type SiteAuthStub } from './adapters/authority';
 import { D1BackupLedger, r2BackupBlobs } from './adapters/backups';
 import { custodyOf } from './adapters/custody';
-import { unavailableCutoverPorts } from './adapters/cutover';
+import { cutoverPortsOf } from './adapters/cutover';
+import { dohReader } from './adapters/cutover-dns';
+import { customHostnamesOf, D1DomainLedger } from './adapters/domains';
 import { createDumpStream } from './adapters/dump-stream';
 import { D1RemoteLedger, gitWorkerOf, unavailableTokenPull } from './adapters/git';
 import { hostsOf } from './adapters/hosts';
@@ -20,9 +22,10 @@ import { workforceCloudflare } from './adapters/workforce';
 import { readConfig } from './config';
 import { D1OperationStore } from './operations/store';
 import { D1ResourceLedger } from './ownership';
-import type { BackupDeps, CutoverDeps, EngineDeps, GitDeps, ImportDeps } from './ports';
+import type { BackupDeps, CutoverDeps, DomainDeps, EngineDeps, GitDeps, ImportDeps } from './ports';
 import type { BackupCreateInput } from './workflows/backup-create';
 import type { BackupRestoreInput } from './workflows/backup-restore';
+import type { DomainAttachInput } from './workflows/domain-attach';
 import type { GitPullInput } from './workflows/git-pull';
 import type { ImportSurveyInput } from './workflows/import-survey';
 import type { MigrationCutoverInput } from './workflows/migration-cutover';
@@ -54,9 +57,13 @@ export interface EngineEnv {
 	SITE_IMPORT: Workflow<SiteImportInput>;
 	IMPORT_SURVEY: Workflow<ImportSurveyInput>;
 	GIT_PULL: Workflow<GitPullInput>;
+	DOMAIN_ATTACH: Workflow<DomainAttachInput>;
 	RELEASES_URL: string;
 	CF_ACCOUNT_ID: string;
 	CF_API_TOKEN: string;
+	// the zone that holds customers' custom hostnames and the name they point at; unset turns custom domains off
+	CUSTOM_HOSTNAME_ZONE_ID?: string;
+	CUSTOM_HOSTNAME_TARGET?: string;
 	CONTROL_SEED: string;
 	START_SECRET: string;
 	FLEET_SEED: string;
@@ -119,8 +126,40 @@ export async function buildGitDeps(env: EngineEnv): Promise<GitDeps> {
 	};
 }
 
+export async function buildDomainDeps(env: EngineEnv): Promise<DomainDeps> {
+	return {
+		...(await buildDeps(env)),
+		hostnames: customHostnamesOf({
+			fetch,
+			token: env.CF_API_TOKEN,
+			zoneId: env.CUSTOM_HOSTNAME_ZONE_ID,
+			target: env.CUSTOM_HOSTNAME_TARGET,
+			timeoutMs: Number(env.SITE_TIMEOUT_MS)
+		}),
+		domains: new D1DomainLedger(env.DB, Date.now)
+	};
+}
+
 export async function buildCutoverDeps(env: EngineEnv): Promise<CutoverDeps> {
-	return { ...(await buildDeps(env)), cutover: unavailableCutoverPorts };
+	const base = await buildImportDeps(env);
+	const { edgeportConnector } = await import('./adapters/edgeport-ssh');
+	return {
+		...base,
+		cutover: cutoverPortsOf({
+			imports: base.imports,
+			connector: edgeportConnector,
+			dump: base.dump,
+			converter: base.converter,
+			blobs: base.blobs,
+			dns: dohReader(),
+			backups: base.backups,
+			custody: base.custody,
+			worker: base.worker,
+			site: base.site,
+			sleep: base.sleep,
+			now: base.now
+		})
+	};
 }
 
 export async function buildDeps(env: EngineEnv): Promise<EngineDeps> {

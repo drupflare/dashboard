@@ -4,6 +4,7 @@ import {
 	buildBackupDeps,
 	buildCutoverDeps,
 	buildDeps,
+	buildDomainDeps,
 	buildGitDeps,
 	buildImportDeps,
 	type EngineEnv
@@ -12,6 +13,7 @@ import { PermanentError, StepFailed, type StepRunner } from '../step';
 import { runBackupCreate, type BackupCreateInput } from './backup-create';
 import { runBackupRestore, type BackupRestoreInput } from './backup-restore';
 import type { Outcome } from './common';
+import { runDomainAttach, type DomainAttachInput, type DomainRunner } from './domain-attach';
 import { runGitPull, type GitPullInput } from './git-pull';
 import { runImportSurvey, type ImportSurveyInput } from './import-survey';
 import {
@@ -194,6 +196,26 @@ export class MigrationCutover extends WorkflowEntrypoint<EngineEnv, MigrationCut
 export class GitPull extends WorkflowEntrypoint<EngineEnv, GitPullInput> {
 	async run(event: Readonly<WorkflowEvent<GitPullInput>>, step: WorkflowStep): Promise<Outcome> {
 		return runGitPull(runnerOf(step), await buildGitDeps(this.env), event.payload);
+	}
+}
+
+function domainRunnerOf(step: WorkflowStep): DomainRunner {
+	return {
+		...runnerOf(step),
+		sleep: (name, ms) => step.sleep(name, ms)
+	};
+}
+
+export class DomainAttach extends WorkflowEntrypoint<EngineEnv, DomainAttachInput> {
+	async run(
+		event: Readonly<WorkflowEvent<DomainAttachInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runDomainAttach(
+			domainRunnerOf(step),
+			await buildDomainDeps(this.env),
+			event.payload
+		);
 	}
 }
 

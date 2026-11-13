@@ -43,6 +43,7 @@ describe('permissions table', () => {
 		for (const a of [
 			'site.delete',
 			'site.domain.manage',
+			'site.domain.read',
 			'site.domain.rename',
 			'site.grant.manage',
 			'site.owner-token.reveal'

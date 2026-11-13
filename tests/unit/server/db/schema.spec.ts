@@ -229,6 +229,52 @@ describe('import_credentials and imported_from', () => {
 		expect(getTableConfig(sites).columns.map((c) => c.name)).toContain('imported_from');
 	});
 
+	it('gives sites a nullable node_id the self-hosted site map reads', () => {
+		const db = new DatabaseSync(':memory:');
+		applyAll(db);
+		expect(columnsOf(db, 'sites').find((c) => c.name === 'node_id')).toMatchObject({
+			notnull: 0
+		});
+		expect(getTableConfig(sites).columns.map((c) => c.name)).toContain('node_id');
+	});
+
+	it('gives the run table the columns the engine writes and the usage check reads', () => {
+		const db = new DatabaseSync(':memory:');
+		applyAll(db);
+		expect(columnsOf(db, 'import_runs').map((c) => c.name)).toEqual(
+			['operation_id', 'organization_id', 'started_at', 'ended_at', 'wall_ms'].sort()
+		);
+	});
+
+	it('gives the domain ledger one row per hostname and an epoch that starts at 1', () => {
+		const db = new DatabaseSync(':memory:');
+		applyAll(db);
+		expect(columnsOf(db, 'custom_domains').map((c) => c.name)).toEqual(
+			[
+				'hostname',
+				'organization_id',
+				'site_id',
+				'operation_id',
+				'epoch',
+				'state',
+				'provider_id',
+				'created_at',
+				'updated_at'
+			].sort()
+		);
+		const insert = (hostname: string, epoch: number, state: string) =>
+			db
+				.prepare(
+					`INSERT INTO custom_domains (hostname, organization_id, site_id, operation_id, epoch,
+					state, provider_id, created_at, updated_at) VALUES (?, 'o', 's', 'op', ?, ?, NULL, 1, 1)`
+				)
+				.run(hostname, epoch, state);
+		insert('a.example.test', 1, 'claimed');
+		expect(() => insert('a.example.test', 2, 'claimed')).toThrow();
+		expect(() => insert('b.example.test', 0, 'claimed')).toThrow();
+		expect(() => insert('c.example.test', 1, 'lost')).toThrow();
+	});
+
 	it('runs the statements the dashboard and the engine share against it', () => {
 		const db = new DatabaseSync(':memory:');
 		applyAll(db);

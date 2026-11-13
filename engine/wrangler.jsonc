@@ -33,7 +33,8 @@
 		},
 		{ "name": "site-import", "binding": "SITE_IMPORT", "class_name": "SiteImport" },
 		{ "name": "import-survey", "binding": "IMPORT_SURVEY", "class_name": "ImportSurvey" },
-		{ "name": "git-pull", "binding": "GIT_PULL", "class_name": "GitPull" }
+		{ "name": "git-pull", "binding": "GIT_PULL", "class_name": "GitPull" },
+		{ "name": "domain-attach", "binding": "DOMAIN_ATTACH", "class_name": "DomainAttach" }
 	],
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },
@@ -126,7 +127,12 @@
 					"binding": "IMPORT_SURVEY",
 					"class_name": "ImportSurvey"
 				},
-				{ "name": "git-pull-stage", "binding": "GIT_PULL", "class_name": "GitPull" }
+				{ "name": "git-pull-stage", "binding": "GIT_PULL", "class_name": "GitPull" },
+				{
+					"name": "domain-attach-stage",
+					"binding": "DOMAIN_ATTACH",
+					"class_name": "DomainAttach"
+				}
 			],
 			"migrations": [
 				{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },
