@@ -9,6 +9,7 @@ import {
 	sha256Digest,
 	signatureSchema,
 	signCanonical,
+	siteId,
 	toBase64Url,
 	verifyCanonical,
 	versionRangeSchema,
@@ -17,7 +18,8 @@ import {
 } from './common';
 import { usageReportSchema } from './usage';
 
-export const FLEET_LINK_VERSION = { major: 1, minor: 0 } as const;
+export const FLEET_LINK_VERSION = { major: 1, minor: 1 } as const;
+export const SITES_FRAME_MINOR = 1;
 export const FLEET_LINK_CONTRACT = 'fleet-link';
 
 export const PAIRING_TTL_MS = 15 * 60_000;
@@ -215,6 +217,28 @@ export const commandResultBodySchema = z.object({
 	deploy: z.object({ version: z.string().min(1).max(64), deployedAt: isoTimestamp }).nullable()
 });
 
+// #region site map
+
+export const MAX_SITE_MAP = 1000;
+
+export const siteMapEntrySchema = z.strictObject({
+	siteId,
+	host: z.string().min(1).max(253)
+});
+
+// a box that has not seen this frame builds no usage.report; a box older than 1.1 ignores the type
+export const sitesBodySchema = z
+	.strictObject({
+		nodeId,
+		sites: z.array(siteMapEntrySchema).max(MAX_SITE_MAP)
+	})
+	.refine(
+		({ sites }) =>
+			new Set(sites.map((entry) => entry.siteId)).size === sites.length &&
+			new Set(sites.map((entry) => entry.host)).size === sites.length,
+		{ message: 'site ids and hosts must each be unique' }
+	);
+
 // #endregion
 
 // #region envelope
@@ -241,7 +265,7 @@ export const NODE_MESSAGE_TYPES = [
 	'usage.report',
 	'command.result'
 ] as const;
-export const SERVER_MESSAGE_TYPES = ['command'] as const;
+export const SERVER_MESSAGE_TYPES = ['command', 'sites'] as const;
 
 export const nodeEnvelopeSchema = z.discriminatedUnion('type', [
 	envelope('status', statusBodySchema),
@@ -252,10 +276,18 @@ export const nodeEnvelopeSchema = z.discriminatedUnion('type', [
 	envelope('command.result', commandResultBodySchema)
 ]);
 
-export const serverEnvelopeSchema = envelope('command', commandBodySchema);
+export const commandEnvelopeSchema = envelope('command', commandBodySchema);
+export const sitesEnvelopeSchema = envelope('sites', sitesBodySchema);
+
+export const serverEnvelopeSchema = z.discriminatedUnion('type', [
+	commandEnvelopeSchema,
+	sitesEnvelopeSchema
+]);
 
 export type NodeEnvelope = z.infer<typeof nodeEnvelopeSchema>;
-export type ServerEnvelope = z.infer<typeof serverEnvelopeSchema>;
+export type CommandEnvelope = z.infer<typeof commandEnvelopeSchema>;
+export type SitesEnvelope = z.infer<typeof sitesEnvelopeSchema>;
+export type ServerEnvelope = CommandEnvelope | SitesEnvelope;
 export type FleetEnvelope = NodeEnvelope | ServerEnvelope;
 export type Direction = 'node' | 'server';
 
@@ -322,7 +354,10 @@ export async function verifyEnvelope(
 		opts.publicKey
 	);
 	if (!valid) return { ok: false, code: 'bad_signature' };
-	if (message.type === 'command' && message.body.nodeId !== opts.nodeId) {
+	if (
+		(message.type === 'command' || message.type === 'sites') &&
+		message.body.nodeId !== opts.nodeId
+	) {
 		return { ok: false, code: 'wrong_node' };
 	}
 	const windowMs = opts.windowMs ?? FLEET_TS_WINDOW_MS;
@@ -419,6 +454,7 @@ export const schemas = {
 	claimResponse: claimResponseSchema,
 	nodeEnvelope: nodeEnvelopeSchema,
 	serverEnvelope: serverEnvelopeSchema,
+	sitesBody: sitesBodySchema,
 	challenge: challengeSchema,
 	challengeResponse: challengeResponseSchema
 };

@@ -11,7 +11,7 @@ This directory holds the public contracts of the Drupflare dashboard. They are z
 | `common.ts`            | Prefixed ids, error envelope, cursor pages, canonical JSON, Ed25519, versions |
 | `sites.ts`             | Site shape, planes, states and rings                                          |
 | `operations.ts`        | Operation, step, plan digest, fencing epoch, change budget                    |
-| `fleet-link.ts`        | Pairing, signed envelope, challenge, what leaves the box                      |
+| `fleet-link.ts`        | Pairing, signed envelope, challenge, site map frame, what leaves the box      |
 | `owner-assertion.ts`   | Short-lived signed assertion for one operation on one site                    |
 | `site-auth.ts`         | Lease format, lease and strict modes, availability grace, renewal rule        |
 | `discovery.ts`         | The `/.well-known/drupflare` document                                         |

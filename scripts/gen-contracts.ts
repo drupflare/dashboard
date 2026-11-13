@@ -335,6 +335,20 @@ async function fleetLinkVectors(keys: Record<KeyLabel, SigningKey & { seed: stri
 		}
 	};
 
+	const siteMap: Json = {
+		...base,
+		id: 'msg_sites_0001',
+		type: 'sites',
+		seq: 2,
+		body: {
+			nodeId: NODE,
+			sites: [
+				{ siteId: SITE, host: 'www.example.org' },
+				{ siteId: OTHER_SITE, host: 'news.example.org' }
+			]
+		}
+	};
+
 	const signedNode = {} as Record<string, Json>;
 	for (const [name, message] of Object.entries(unsigned)) {
 		signedNode[name] = await sign(message, keys.node);
@@ -355,6 +369,15 @@ async function fleetLinkVectors(keys: Record<KeyLabel, SigningKey & { seed: stri
 		input: signedCommand,
 		context: serverCtx,
 		signing: signingInput(ENVELOPE_CONTEXT, omitSig(signedCommand as { sig: string }))
+	});
+	const signedSites = await sign(siteMap, keys.dashboard);
+	positive(cases, {
+		name: 'server-sites',
+		kind: 'envelope',
+		description: 'A signed site map from the dashboard: control plane site ids by host.',
+		input: signedSites,
+		context: serverCtx,
+		signing: signingInput(ENVELOPE_CONTEXT, omitSig(signedSites as { sig: string }))
 	});
 	positive(cases, {
 		name: 'reordered-fields-verify',
@@ -466,6 +489,98 @@ async function fleetLinkVectors(keys: Record<KeyLabel, SigningKey & { seed: stri
 		input: signedCommand,
 		context: { ...serverCtx, nodeId: undefined },
 		expect: 'wrong_node'
+	});
+
+	const siteBody = siteMap.body as Json;
+	const sitesOf = (sites: unknown[]): Json => ({ ...siteMap, body: { ...siteBody, sites } });
+	const mapped = siteBody.sites as Json[];
+	const tamperedSites = clone(signedSites);
+	(((tamperedSites.body as Json).sites as Json[])[0] as Json).host = 'evil.example.org';
+	negative(cases, {
+		name: 'sites-from-node-direction',
+		kind: 'envelope',
+		description: 'A site map presented where only node messages are accepted.',
+		input: signedSites,
+		context: nodeCtx,
+		expect: 'wrong_direction'
+	});
+	negative(cases, {
+		name: 'sites-for-another-node',
+		kind: 'envelope',
+		description: 'A correctly signed site map that names a different node than the receiver.',
+		input: await sign(
+			{ ...siteMap, body: { ...siteBody, nodeId: OTHER_NODE } },
+			keys.dashboard
+		),
+		context: serverCtx,
+		expect: 'wrong_node'
+	});
+	negative(cases, {
+		name: 'sites-with-no-receiver-id',
+		kind: 'envelope',
+		description: 'A site map is refused when the receiver does not say which node it is.',
+		input: signedSites,
+		context: { ...serverCtx, nodeId: undefined },
+		expect: 'wrong_node'
+	});
+	negative(cases, {
+		name: 'sites-tampered-body',
+		kind: 'envelope',
+		description: 'A host changed after signing.',
+		input: tamperedSites,
+		context: serverCtx,
+		expect: 'bad_signature'
+	});
+	negative(cases, {
+		name: 'sites-wrong-key',
+		kind: 'envelope',
+		description: 'A site map signed by a key the node has not pinned.',
+		input: await sign(siteMap, keys.other),
+		context: serverCtx,
+		expect: 'bad_signature'
+	});
+	negative(cases, {
+		name: 'sites-expired',
+		kind: 'envelope',
+		description: 'Signed correctly, but the timestamp is older than the window.',
+		input: await sign({ ...siteMap, ts: VECTOR_NOW - FLEET_TS_WINDOW_MS - 1 }, keys.dashboard),
+		context: serverCtx,
+		expect: 'expired'
+	});
+	negative(cases, {
+		name: 'sites-future-timestamp',
+		kind: 'envelope',
+		description: 'Signed correctly, but the timestamp is ahead of the window.',
+		input: await sign({ ...siteMap, ts: VECTOR_NOW + FLEET_TS_WINDOW_MS + 1 }, keys.dashboard),
+		context: serverCtx,
+		expect: 'future'
+	});
+	negative(cases, {
+		name: 'sites-replayed-id',
+		kind: 'envelope',
+		description: 'A valid site map whose id the receiver has already seen.',
+		input: signedSites,
+		context: { ...serverCtx, seen: ['msg_sites_0001'] },
+		expect: 'replayed'
+	});
+	negative(cases, {
+		name: 'sites-duplicate-host',
+		kind: 'envelope',
+		description: 'Signed correctly, but two entries name the same host.',
+		input: await sign(
+			sitesOf([mapped[0], { ...(mapped[1] as Json), host: (mapped[0] as Json).host }]),
+			keys.dashboard
+		),
+		context: serverCtx,
+		expect: 'malformed'
+	});
+	negative(cases, {
+		name: 'sites-unknown-entry-field',
+		kind: 'envelope',
+		description: 'Signed correctly, but an entry carries a field the contract does not define.',
+		input: await sign(sitesOf([{ ...(mapped[0] as Json), extra: 1 }]), keys.dashboard),
+		context: serverCtx,
+		expect: 'malformed'
 	});
 
 	const challenge = createChallenge(VECTOR_NOW, new Uint8Array(16).fill(7));

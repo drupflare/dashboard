@@ -11,10 +11,14 @@ import {
 	CHALLENGE_CONTEXT,
 	COMMAND_CLASSES,
 	ENVELOPE_CONTEXT,
+	FLEET_LINK_VERSION,
 	FLEET_TS_WINDOW_MS,
 	LEAVES_THE_BOX,
+	MAX_SITE_MAP,
 	NEVER_LEAVES_THE_BOX,
 	PAIRING_TTL_MS,
+	SERVER_MESSAGE_TYPES,
+	SITES_FRAME_MINOR,
 	auditHeadBodySchema,
 	challengeResponseSchema,
 	challengeSchema,
@@ -33,6 +37,7 @@ import {
 	serverEnvelopeSchema,
 	signChallengeResponse,
 	signEnvelope,
+	sitesBodySchema,
 	statusBodySchema,
 	verifyChallengeResponse,
 	verifyEnvelope,
@@ -203,6 +208,95 @@ describe('body schemas', () => {
 			expect(schema.safeParse(bad).success).toBe(false);
 		}
 		expect(COMMAND_CLASSES).toContain('destructive');
+	});
+});
+
+describe('site map body', () => {
+	const entry = (n: number) => ({
+		siteId: `site_map${String(n).padStart(8, '0')}`,
+		host: `host-${n}.example.org`
+	});
+	const map = (sites: unknown[]) => ({ nodeId: nodeIdValue, sites });
+
+	it('round-trips a map and an empty map, and names the version that added it', () => {
+		const body = map([entry(1), entry(2)]);
+		expect(sitesBodySchema.parse(body)).toEqual(body);
+		expect(sitesBodySchema.safeParse(map([])).success).toBe(true);
+		expect(FLEET_LINK_VERSION.minor).toBeGreaterThanOrEqual(SITES_FRAME_MINOR);
+		expect(SERVER_MESSAGE_TYPES).toContain('sites');
+	});
+
+	it('refuses unknown fields on the body and on an entry', () => {
+		expect(sitesBodySchema.safeParse({ ...map([entry(1)]), extra: 1 }).success).toBe(false);
+		expect(sitesBodySchema.safeParse(map([{ ...entry(1), extra: 1 }])).success).toBe(false);
+		expect(sitesBodySchema.safeParse({ sites: [entry(1)] }).success).toBe(false);
+	});
+
+	it('refuses a bad id, an empty or oversized host, and a repeated id or host', () => {
+		expect(sitesBodySchema.safeParse(map([{ ...entry(1), siteId: 'nope' }])).success).toBe(
+			false
+		);
+		expect(sitesBodySchema.safeParse(map([{ ...entry(1), host: '' }])).success).toBe(false);
+		expect(
+			sitesBodySchema.safeParse(map([{ ...entry(1), host: 'a'.repeat(254) }])).success
+		).toBe(false);
+		expect(
+			sitesBodySchema.safeParse(map([entry(1), { ...entry(2), host: entry(1).host }])).success
+		).toBe(false);
+		expect(
+			sitesBodySchema.safeParse(map([entry(1), { ...entry(2), siteId: entry(1).siteId }]))
+				.success
+		).toBe(false);
+	});
+
+	it('holds at most the stated count', () => {
+		const all = (count: number) => map(Array.from({ length: count }, (_, i) => entry(i)));
+		expect(sitesBodySchema.safeParse(all(MAX_SITE_MAP)).success).toBe(true);
+		expect(sitesBodySchema.safeParse(all(MAX_SITE_MAP + 1)).success).toBe(false);
+	});
+
+	it('signs, verifies on the server side only, and names its node', async () => {
+		const dashboard = await generateSigningKey();
+		const signed = await signEnvelope(
+			{
+				v: 1,
+				id: 'msg_sites_00001',
+				type: 'sites',
+				ts: 100,
+				seq: 1,
+				ack: 0,
+				body: map([entry(1)])
+			} as UnsignedEnvelope,
+			dashboard.privateKey
+		);
+		const options = {
+			publicKey: dashboard.publicKey,
+			direction: 'server' as const,
+			now: 100,
+			nodeId: nodeIdValue
+		};
+		expect(serverEnvelopeSchema.safeParse(signed).success).toBe(true);
+		expect(await verifyEnvelope(signed, options)).toMatchObject({ ok: true });
+		expect(await verifyEnvelope(signed, { ...options, direction: 'node' })).toEqual({
+			ok: false,
+			code: 'wrong_direction'
+		});
+		expect(await verifyEnvelope(signed, { ...options, nodeId: newId('nod') })).toEqual({
+			ok: false,
+			code: 'wrong_node'
+		});
+		expect(
+			await verifyEnvelope(signed, { ...options, seen: new Set(['msg_sites_00001']) })
+		).toEqual({
+			ok: false,
+			code: 'replayed'
+		});
+		expect(
+			await verifyEnvelope(signed, { ...options, now: 100 + FLEET_TS_WINDOW_MS + 1 })
+		).toEqual({
+			ok: false,
+			code: 'expired'
+		});
 	});
 });
 
@@ -546,7 +640,17 @@ describe('fleet-link vector coverage', () => {
 				'replayed-id',
 				'wrong-version',
 				'signed-over-written-order',
-				'challenge-wrong-nonce'
+				'challenge-wrong-nonce',
+				'sites-from-node-direction',
+				'sites-for-another-node',
+				'sites-with-no-receiver-id',
+				'sites-tampered-body',
+				'sites-wrong-key',
+				'sites-expired',
+				'sites-future-timestamp',
+				'sites-replayed-id',
+				'sites-duplicate-host',
+				'sites-unknown-entry-field'
 			])
 		);
 		const positives = loadVectors('fleet-link').positive.map((c) => c.name);
@@ -554,6 +658,7 @@ describe('fleet-link vector coverage', () => {
 			expect.arrayContaining([
 				'reordered-fields-verify',
 				'server-command',
+				'server-sites',
 				'challenge-response'
 			])
 		);
@@ -572,7 +677,8 @@ describe('fleet-link vector coverage', () => {
 			'audit.head',
 			'usage.report',
 			'command.result',
-			'command'
+			'command',
+			'sites'
 		]) {
 			expect(types.has(type), type).toBe(true);
 		}

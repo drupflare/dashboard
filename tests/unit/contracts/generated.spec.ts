@@ -79,7 +79,11 @@ describe('generated contract files', () => {
 		const file = JSON.parse(rendered.get('contracts/json-schema/fleet-link.json')!);
 		const branches = (s: any) => (s.oneOf ?? s.anyOf).length;
 		expect(branches(file.schemas.nodeEnvelope)).toBe(6);
-		expect(file.schemas.serverEnvelope.properties.type.const).toBe('command');
+		expect(branches(file.schemas.serverEnvelope)).toBe(2);
+		const types = (file.schemas.serverEnvelope.oneOf ?? file.schemas.serverEnvelope.anyOf).map(
+			(branch: any) => branch.properties.type.const
+		);
+		expect(types).toEqual(['command', 'sites']);
 	});
 
 	it('never write a seed into a json schema file and mark every vector key as a test key', () => {
