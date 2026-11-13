@@ -11,6 +11,9 @@ describe('generateSecrets', () => {
 		expect((await signingKeyFromSeed(fromBase64Url(secrets.CONTROL_SEED!))).publicKey).toBe(
 			secrets.CONTROL_PUBLIC_KEY
 		);
+		expect((await signingKeyFromSeed(fromBase64Url(secrets.FLEET_SEED!))).publicKey).toBe(
+			secrets.FLEET_PUBLIC_KEY
+		);
 		const values = Object.values(secrets);
 		expect(new Set(values).size).toBe(values.length);
 		expect(await generateSecrets()).not.toEqual(secrets);
@@ -51,6 +54,8 @@ describe('plan', () => {
 		LEASE_PUBLIC_KEY: 'b',
 		CONTROL_SEED: 'c',
 		CONTROL_PUBLIC_KEY: 'd',
+		FLEET_SEED: 'h',
+		FLEET_PUBLIC_KEY: 'i',
 		START_SECRET: 'e',
 		KEK_V1: 'f',
 		AUTH_CODE_SECRET: 'g',
@@ -75,6 +80,15 @@ describe('plan', () => {
 		);
 		expect(of('drupflare-engine', 'KEK_V1')).toBe(of('drupflare-dashboard', 'KEK_V1'));
 		expect(of('drupflare-dispatch', 'CONTROL_PUBLIC_KEY')).toBe('d');
+	});
+
+	it('gives the fleet seed to the engine and only its public key to the dashboard', () => {
+		const actions = plan('production', values);
+		const names = (worker: string) =>
+			actions.filter((a) => a.kind === 'worker' && a.worker === worker).map((a) => a.name);
+		expect(names('drupflare-engine')).toContain('FLEET_SEED');
+		expect(names('drupflare-dashboard')).toContain('FLEET_PUBLIC_KEY');
+		expect(names('drupflare-dashboard')).not.toContain('FLEET_SEED');
 	});
 
 	it('sets the preview keys and deploy credentials on GitHub only, never on a Worker', () => {

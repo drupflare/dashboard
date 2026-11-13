@@ -34,7 +34,10 @@ const random = () => toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
 export async function generateSecrets(): Promise<Values> {
 	const site = random();
 	const control = random();
+	const fleet = random();
 	return {
+		FLEET_SEED: fleet,
+		FLEET_PUBLIC_KEY: (await signingKeyFromSeed(fromBase64Url(fleet))).publicKey,
 		SITE_AUTH_SEED: site,
 		LEASE_PUBLIC_KEY: (await signingKeyFromSeed(fromBase64Url(site))).publicKey,
 		CONTROL_SEED: control,
@@ -77,6 +80,7 @@ export function plan(environment: 'staging' | 'production' | 'preview', values: 
 		...on(w.dispatch, ['SITE_AUTH_SEED', 'LEASE_PUBLIC_KEY', 'CONTROL_PUBLIC_KEY']),
 		...on(w.engine, [
 			'CONTROL_SEED',
+			'FLEET_SEED',
 			'START_SECRET',
 			'KEK_V1',
 			'CF_API_TOKEN',
@@ -86,6 +90,7 @@ export function plan(environment: 'staging' | 'production' | 'preview', values: 
 			'START_SECRET',
 			'KEK_V1',
 			'AUTH_CODE_SECRET',
+			'FLEET_PUBLIC_KEY',
 			...OPTIONAL_FROM_DEV_VARS.filter((name) => values[name] !== undefined)
 		]),
 		...github
