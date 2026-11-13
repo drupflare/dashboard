@@ -25,6 +25,8 @@ export interface FetchLimits {
 	maxRedirects: number;
 	maxBytes: number;
 	timeoutMs: number;
+	// keep the first maxBytes of a longer body instead of refusing it
+	truncate?: boolean;
 }
 
 export const DEFAULT_FETCH_LIMITS: FetchLimits = {
@@ -39,12 +41,16 @@ export type Resolver = (hostname: string) => Promise<string[]>;
 export interface GuardDeps {
 	fetch: FetchLike;
 	resolve: Resolver;
+	// a redirect this refuses is returned as the response, with its target in `redirect`
+	follow?: (from: URL, to: URL) => boolean;
 }
 
 export interface GuardedResponse {
 	url: string;
 	status: number;
 	body: Uint8Array;
+	headers: Headers;
+	redirect?: URL;
 }
 
 type Octets = [number, number, number, number];
@@ -208,14 +214,29 @@ export async function guardedFetch(
 			);
 			const location = response.headers.get('location');
 			if (!REDIRECT_STATUS.has(response.status) || location === null) {
-				const body = await readCapped(response, limits.maxBytes, clock);
-				return { url: target.href, status: response.status, body };
+				const body = await readCapped(response, limits, clock);
+				return {
+					url: target.href,
+					status: response.status,
+					body,
+					headers: response.headers
+				};
 			}
 			if (redirects >= limits.maxRedirects) {
 				throw new UrlGuardError('redirect_limit', 'Too many redirects');
 			}
 			void response.body?.cancel().catch(() => undefined);
-			target = checkUrl(resolveLocation(location, target));
+			const next = resolveLocation(location, target);
+			if (deps.follow && !deps.follow(target, next)) {
+				return {
+					url: target.href,
+					status: response.status,
+					body: new Uint8Array(0),
+					headers: response.headers,
+					redirect: next
+				};
+			}
+			target = checkUrl(next.href);
 		}
 	} finally {
 		clock.clear();
@@ -236,17 +257,22 @@ async function assertPublicHost(hostname: string, resolve: Resolver, clock: Cloc
 	}
 }
 
-function resolveLocation(location: string, from: URL): string {
+function resolveLocation(location: string, from: URL): URL {
 	try {
-		return new URL(location, from).href;
+		return new URL(location, from);
 	} catch {
 		throw new UrlGuardError('invalid_url', 'Redirect location is not a URL');
 	}
 }
 
-async function readCapped(response: Response, maxBytes: number, clock: Clock): Promise<Uint8Array> {
+async function readCapped(
+	response: Response,
+	limits: FetchLimits,
+	clock: Clock
+): Promise<Uint8Array> {
+	const { maxBytes, truncate } = limits;
 	const declared = response.headers.get('content-length');
-	if (declared !== null && Number(declared) > maxBytes) {
+	if (!truncate && declared !== null && Number(declared) > maxBytes) {
 		void response.body?.cancel().catch(() => undefined);
 		throw tooLarge();
 	}
@@ -258,6 +284,12 @@ async function readCapped(response: Response, maxBytes: number, clock: Clock): P
 		for (;;) {
 			const { done, value } = await clock.race(reader.read());
 			if (done) break;
+			if (truncate && total + value.byteLength > maxBytes) {
+				chunks.push(value.subarray(0, maxBytes - total));
+				total = maxBytes;
+				void reader.cancel().catch(() => undefined);
+				break;
+			}
 			total += value.byteLength;
 			if (total > maxBytes) throw tooLarge();
 			chunks.push(value);

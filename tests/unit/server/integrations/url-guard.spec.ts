@@ -430,6 +430,112 @@ describe('guardedFetch', () => {
 	});
 });
 
+describe('guardedFetch: headers, truncation and the follow hook', () => {
+	it('returns the response headers', async () => {
+		const { fetch, resolve } = deps(
+			{ 'example.com': PUBLIC },
+			{ 'https://example.com/': () => new Response('x', { headers: { 'x-generator': 'a' } }) }
+		);
+		const result = await guardedFetch('https://example.com/', { fetch, resolve }, limits);
+		expect(result.headers.get('x-generator')).toBe('a');
+	});
+
+	it('keeps the first bytes of a longer body when truncate is set', async () => {
+		const { fetch, resolve } = deps(
+			{ 'example.com': PUBLIC },
+			{
+				'https://example.com/': () =>
+					new Response('abcdefghij', { headers: { 'content-length': '10' } })
+			}
+		);
+		const result = await guardedFetch(
+			'https://example.com/',
+			{ fetch, resolve },
+			{ ...limits, maxBytes: 4, truncate: true }
+		);
+		expect(new TextDecoder().decode(result.body)).toBe('abcd');
+	});
+
+	it('returns a short body whole when truncate is set', async () => {
+		const { fetch, resolve } = deps(
+			{ 'example.com': PUBLIC },
+			{ 'https://example.com/': () => new Response('ab') }
+		);
+		const result = await guardedFetch(
+			'https://example.com/',
+			{ fetch, resolve },
+			{ ...limits, maxBytes: 4, truncate: true }
+		);
+		expect(new TextDecoder().decode(result.body)).toBe('ab');
+	});
+
+	it('returns the redirect without following it when follow says no', async () => {
+		const { fetch, resolve, calls } = deps(
+			{ 'example.com': PUBLIC },
+			{
+				'https://example.com/': () =>
+					new Response(null, {
+						status: 301,
+						headers: { location: 'https://other.example/x', 'x-generator': 'g' }
+					})
+			}
+		);
+		const result = await guardedFetch(
+			'https://example.com/',
+			{ fetch, resolve, follow: () => false },
+			limits
+		);
+		expect(result.status).toBe(301);
+		expect(result.redirect?.href).toBe('https://other.example/x');
+		expect(result.headers.get('x-generator')).toBe('g');
+		expect(result.body).toHaveLength(0);
+		expect(calls).toHaveLength(1);
+	});
+
+	it('follows a redirect when follow says yes, and still checks the target', async () => {
+		const { fetch, resolve } = deps(
+			{ 'example.com': PUBLIC, 'www.example.com': PUBLIC },
+			{
+				'https://example.com/': () =>
+					new Response(null, {
+						status: 301,
+						headers: { location: 'https://www.example.com/' }
+					}),
+				'https://www.example.com/': () => new Response('home')
+			}
+		);
+		const seen: string[] = [];
+		const result = await guardedFetch(
+			'https://example.com/',
+			{
+				fetch,
+				resolve,
+				follow: (from, to) => {
+					seen.push(`${from.hostname}>${to.hostname}`);
+					return true;
+				}
+			},
+			limits
+		);
+		expect(seen).toEqual(['example.com>www.example.com']);
+		expect(result.url).toBe('https://www.example.com/');
+		const blocked = deps(
+			{ 'example.com': PUBLIC },
+			{
+				'https://example.com/': () =>
+					new Response(null, { status: 302, headers: { location: 'http://10.0.0.1/' } })
+			}
+		);
+		expect(
+			await guardedFetch(
+				'https://example.com/',
+				{ ...blocked, follow: () => true },
+				limits
+			).catch((e) => e.code)
+		).toBe('ip_literal');
+	});
+});
+
 describe('dohResolve', () => {
 	const json = (body: unknown) =>
 		new Response(JSON.stringify(body), { headers: { 'content-type': 'application/dns-json' } });

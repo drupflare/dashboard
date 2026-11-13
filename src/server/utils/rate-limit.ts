@@ -1,10 +1,17 @@
-export const ROUTE_CLASSES = ['auth-code', 'read', 'write', 'heavy', 'webhook'] as const;
+export const ROUTE_CLASSES = [
+	'auth-code',
+	'read',
+	'write',
+	'heavy',
+	'webhook',
+	'preflight'
+] as const;
 
 export type RouteClass = (typeof ROUTE_CLASSES)[number];
 
 // a route names one of the route classes; the limiter also keeps the address ceiling that sits
-// behind the auth-code class
-export const LIMIT_CLASSES = [...ROUTE_CLASSES, 'auth-code-ip'] as const;
+// behind the auth-code class and the global ceiling behind the preflight class
+export const LIMIT_CLASSES = [...ROUTE_CLASSES, 'auth-code-ip', 'preflight-global'] as const;
 
 export type LimitClass = (typeof LIMIT_CLASSES)[number];
 

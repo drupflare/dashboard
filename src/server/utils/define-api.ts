@@ -208,7 +208,11 @@ export const PLACEHOLDER_RATES: RateConfig = {
 	read: { limit: 300, windowMs: 60_000 },
 	write: { limit: 60, windowMs: 60_000 },
 	heavy: { limit: 10, windowMs: 60_000 },
-	webhook: { limit: 1000, windowMs: 60_000 }
+	webhook: { limit: 1000, windowMs: 60_000 },
+	// each preflight call makes up to four outbound requests, so it is the tightest public class;
+	// the ceiling counts every caller together, and each isolate keeps its own count
+	preflight: { limit: 10, windowMs: 10 * 60_000 },
+	'preflight-global': { limit: 200, windowMs: 10 * 60_000 }
 };
 
 export const MAX_TRACKED_KEYS = 10_000;
@@ -457,7 +461,7 @@ async function limit(
 
 // an anonymous auth-code request counts against its network's ceiling here, and against its own
 // address once the body is read, so one campus address does not lock out the people behind it
-function throttle(
+async function throttle(
 	event: H3Event,
 	meta: AnyApiMeta,
 	principal: Principal | null,
@@ -465,7 +469,9 @@ function throttle(
 ): Promise<void> {
 	const routeClass =
 		meta.rateClass === 'auth-code' && principal === null ? 'auth-code-ip' : meta.rateClass;
-	return limit(event, deps, routeClass, callerKey(event, principal));
+	await limit(event, deps, routeClass, callerKey(event, principal));
+	// a caller inside its own preflight limit still counts against the shared ceiling
+	if (meta.rateClass === 'preflight') await limit(event, deps, 'preflight-global', 'all');
 }
 
 // the auth-code class also counts per address: the email a body names, lower case and trimmed
