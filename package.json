@@ -27,7 +27,7 @@
 	},
 	"dependencies": {
 		"@drupflare/spool": "^0.2.0",
-		"@drupflare/untarl": "^0.1.0",
+		"@drupflare/untarl": "^0.1.1",
 		"@drupflare/workforce": "^0.2.0",
 		"@earth-app/collegedb": "^1.4.0",
 		"@iconify-json/lucide": "^1.2.151",
@@ -89,8 +89,5 @@
 	},
 	"lint-staged": {
 		"*.{ts,js,mjs,css,md,json,jsonc}": "prettier --write"
-	},
-	"patchedDependencies": {
-		"@drupflare/untarl@0.1.0": "patches/@drupflare%2Funtarl@0.1.0.patch"
 	}
 }

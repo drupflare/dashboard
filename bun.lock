@@ -6,7 +6,7 @@
       "name": "@drupflare/dashboard",
       "dependencies": {
         "@drupflare/spool": "^0.2.0",
-        "@drupflare/untarl": "^0.1.0",
+        "@drupflare/untarl": "^0.1.1",
         "@drupflare/workforce": "^0.2.0",
         "@earth-app/collegedb": "^1.4.0",
         "@iconify-json/lucide": "^1.2.151",
@@ -67,9 +67,6 @@
         "wrangler": "^4.152.0",
       },
     },
-  },
-  "patchedDependencies": {
-    "@drupflare/untarl@0.1.0": "patches/@drupflare%2Funtarl@0.1.0.patch",
   },
   "packages": {
     "@actions/core": ["@actions/core@3.0.1", "", { "dependencies": { "@actions/exec": "^3.0.0", "@actions/http-client": "^4.0.0" } }, "sha512-a6d/Nwahm9fliVGRhdhofo40HjHQasUPusmc7vBfyky+7Z+P2A1J68zyFVaNcEclc/Se+eO595oAr5nwEIoIUA=="],
@@ -180,7 +177,7 @@
 
     "@drupflare/spool": ["@drupflare/spool@0.2.0", "", {}, "sha512-WqG00FGMw1LdT5cvywHZFfQGajtc3Qy1oB3oBxTtwTt2a5lRBHj//zQzNe4oonxq73RzZwjtnMna7BRCwFhKug=="],
 
-    "@drupflare/untarl": ["@drupflare/untarl@0.1.0", "", {}, "sha512-FMabw/DeeM1WGmeF7kV0liY4N1nD0Itc/wIST8VMR3yQZpfyJCG94rB/Jchb42DTKAMs+7asN04085CH8ke7YQ=="],
+    "@drupflare/untarl": ["@drupflare/untarl@0.1.1", "", {}, "sha512-ftI3pVDCDY0k9BUSCjJWJD/aDHSaxWAWMwnW/7gViyVENg4Olxg4w1ACwExquAuXzx+wehNwc1QROna6YyUgcQ=="],
 
     "@drupflare/workforce": ["@drupflare/workforce@0.2.0", "", { "dependencies": { "node-diff3": "^3.2.1" }, "peerDependencies": { "edgeport": "^1.0.6" }, "optionalPeers": ["edgeport"] }, "sha512-NMnmcSldR3WI1eVJ2+4OcL1sTd1FyYvZ11E5ERQ+Dp761hQrXEnXonEZ0tTWaL9CL7jCgP0djOVrfX42s0As6Q=="],
 
