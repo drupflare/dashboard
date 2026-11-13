@@ -1,7 +1,7 @@
 import type { R2Bucket } from '@cloudflare/workers-types';
 import type { CollegeDBClient } from '@earth-app/collegedb';
 import { z } from 'zod';
-import { isUniqueViolation } from '../db/collegedb';
+import { isUniqueViolation } from '../db/unique';
 
 // a unique collision means another writer took the seq; each rival wins at most once
 const MAX_ATTEMPTS = 5;
@@ -152,9 +152,12 @@ function fieldsOf(row: AuditRow): EntryFields {
 const INSERT_ROW = `INSERT INTO audit_log (organization_id, seq, prev_hash, hash, actor, action,
 	 target, detail, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
+// what one append needs of a database; the engine hands it a plain D1 behind the same two calls
+export type AuditDb = Pick<CollegeDBClient, 'first' | 'run'>;
+
 // the next row of a chain, built from the newest row now stored
 async function nextEntry(
-	db: CollegeDBClient,
+	db: AuditDb,
 	organizationId: string,
 	input: AuditInput
 ): Promise<{ entry: AuditEntry; bindings: unknown[] }> {
@@ -203,7 +206,7 @@ async function nextEntry(
 // with a head store the new head is recorded after the row is written, so the head is never ahead
 // of the chain; a failed head write throws and the caller sees the append as failed
 export async function append(
-	db: CollegeDBClient,
+	db: AuditDb,
 	organizationId: string,
 	input: AuditInput,
 	heads?: HeadStore

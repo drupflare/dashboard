@@ -33,8 +33,14 @@
 		},
 		{ "name": "site-import", "binding": "SITE_IMPORT", "class_name": "SiteImport" },
 		{ "name": "import-survey", "binding": "IMPORT_SURVEY", "class_name": "ImportSurvey" },
+		{ "name": "estate-assess", "binding": "ESTATE_ASSESS", "class_name": "EstateAssess" },
 		{ "name": "git-pull", "binding": "GIT_PULL", "class_name": "GitPull" },
-		{ "name": "domain-attach", "binding": "DOMAIN_ATTACH", "class_name": "DomainAttach" }
+		{ "name": "domain-attach", "binding": "DOMAIN_ATTACH", "class_name": "DomainAttach" },
+		{
+			"name": "node-site-create",
+			"binding": "NODE_SITE_CREATE",
+			"class_name": "NodeSiteCreate"
+		}
 	],
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },
@@ -127,11 +133,21 @@
 					"binding": "IMPORT_SURVEY",
 					"class_name": "ImportSurvey"
 				},
+				{
+					"name": "estate-assess-stage",
+					"binding": "ESTATE_ASSESS",
+					"class_name": "EstateAssess"
+				},
 				{ "name": "git-pull-stage", "binding": "GIT_PULL", "class_name": "GitPull" },
 				{
 					"name": "domain-attach-stage",
 					"binding": "DOMAIN_ATTACH",
 					"class_name": "DomainAttach"
+				},
+				{
+					"name": "node-site-create-stage",
+					"binding": "NODE_SITE_CREATE",
+					"class_name": "NodeSiteCreate"
 				}
 			],
 			"migrations": [

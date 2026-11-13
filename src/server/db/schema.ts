@@ -8,6 +8,7 @@ import {
 import { SITE_CATEGORIES, SITE_CONFIGS, SITE_KINDS } from '@contracts/sites';
 import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import { PENDING_SECRET_KINDS } from '../../shared/custody/records';
+import { ESTATE_SCHEMA_STATEMENTS } from '../../shared/estate-sql';
 import { BILLING_SCHEMA_STATEMENTS, BILLING_TABLES } from './billing-schema';
 
 export const SCHEMA_VERSION = 1;
@@ -125,7 +126,8 @@ export const apiKeys = sqliteTable('api_keys', {
 	createdBy: text('created_by').notNull(),
 	expiresAt: integer('expires_at'),
 	revokedAt: integer('revoked_at'),
-	createdAt: integer('created_at').notNull()
+	createdAt: integer('created_at').notNull(),
+	lastUsedAt: integer('last_used_at')
 });
 
 export const delegations = sqliteTable('delegations', {
@@ -172,6 +174,8 @@ export const sites = sqliteTable('sites', {
 	adoptedTo: text('adopted_to'),
 	importedFrom: text('imported_from'),
 	nodeId: text('node_id'),
+	boxFoundAs: text('box_found_as'),
+	boxMissingSince: integer('box_missing_since'),
 	readyAt: integer('ready_at'),
 	createdAt: integer('created_at').notNull(),
 	updatedAt: integer('updated_at').notNull()
@@ -445,7 +449,8 @@ export const SCHEMA_STATEMENTS: string[] = [
 	created_by TEXT NOT NULL,
 	expires_at INTEGER,
 	revoked_at INTEGER,
-	created_at INTEGER NOT NULL
+	created_at INTEGER NOT NULL,
+	last_used_at INTEGER
 )`,
 	`CREATE TABLE IF NOT EXISTS delegations (
 	id TEXT PRIMARY KEY,
@@ -489,6 +494,8 @@ export const SCHEMA_STATEMENTS: string[] = [
 	adopted_to TEXT,
 	imported_from TEXT,
 	node_id TEXT,
+	box_found_as TEXT,
+	box_missing_since INTEGER,
 	ready_at INTEGER,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
@@ -664,6 +671,7 @@ export const SCHEMA_STATEMENTS: string[] = [
 	`CREATE INDEX IF NOT EXISTS invites_org ON invites (organization_id, id)`,
 	`CREATE INDEX IF NOT EXISTS api_keys_org ON api_keys (organization_id, id)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS api_keys_hash ON api_keys (key_hash)`,
+	`CREATE INDEX IF NOT EXISTS api_key_lookup_org ON api_key_lookup (organization_id, key_id)`,
 	`CREATE INDEX IF NOT EXISTS delegations_org ON delegations (organization_id, id)`,
 	`CREATE INDEX IF NOT EXISTS site_grants_org ON site_grants (organization_id, id)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS site_grants_active ON site_grants (site_id, user_id)
@@ -766,10 +774,12 @@ export const SCHEMA_STATEMENTS: string[] = [
 	epoch INTEGER NOT NULL CHECK (epoch >= 1),
 	state TEXT NOT NULL CHECK (state IN ('claimed', 'routed', 'released')),
 	provider_id TEXT,
+	ownership_epoch INTEGER,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 )`,
 	`CREATE INDEX IF NOT EXISTS custom_domains_site ON custom_domains (organization_id, site_id, hostname)`,
+	...ESTATE_SCHEMA_STATEMENTS,
 	...BILLING_SCHEMA_STATEMENTS
 ];
 

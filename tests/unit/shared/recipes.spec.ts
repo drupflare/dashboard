@@ -7,7 +7,8 @@ import { TEMPLATES } from '../../../src/shared/templates';
 type PasswordClass = 'lower' | 'upper' | 'digit' | 'symbol';
 
 const NO_RECIPE: Record<string, string> = {
-	'bring-your-own': 'inferRecipe builds it from a config, see custom.ts'
+	'bring-your-own': 'inferRecipe builds it from a config, see custom.ts',
+	import: 'the import builds the site from a survey of the server, not a recipe'
 };
 
 const SOURCE_RE = /^[A-Za-z0-9@-]+\/[A-Za-z0-9./_-]+:\d+$/;

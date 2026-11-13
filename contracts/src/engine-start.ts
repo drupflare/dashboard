@@ -48,11 +48,13 @@ export const WORKFLOW_NAMES = [
 	'site-adopt',
 	'site-import',
 	'import-survey',
+	'estate-assess',
 	'backup-create',
 	'backup-restore',
 	'migration-cutover',
 	'git-pull',
-	'domain-attach'
+	'domain-attach',
+	'node-site-create'
 ] as const;
 export type WorkflowName = (typeof WORKFLOW_NAMES)[number];
 

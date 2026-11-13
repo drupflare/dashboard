@@ -1,3 +1,4 @@
+import { isBoxArchivePath, serveBoxArchive } from './box-archive';
 import { buildDeps, type EngineEnv } from './env';
 import { handleLink, linkNodeId } from './node-link';
 import { D1NodeStore } from './node-store';
@@ -10,9 +11,11 @@ export {
 	BackupCreate,
 	BackupRestore,
 	DomainAttach,
+	EstateAssess,
 	GitPull,
 	ImportSurvey,
 	MigrationCutover,
+	NodeSiteCreate,
 	SiteAdopt,
 	SiteCleanup,
 	SiteCreate,
@@ -23,8 +26,10 @@ export {
 } from './workflows/classes';
 
 export default {
-	fetch: (request, env) =>
-		linkNodeId(new URL(request.url)) !== null
+	fetch: (request, env) => {
+		const url = new URL(request.url);
+		if (isBoxArchivePath(url)) return serveBoxArchive(request, env.BLOB);
+		return linkNodeId(url) !== null
 			? handleLink(request, {
 					nodes: new D1NodeStore(env.DB),
 					sessions: {
@@ -46,10 +51,13 @@ export default {
 						'migration-cutover': env.MIGRATION_CUTOVER,
 						'site-import': env.SITE_IMPORT,
 						'import-survey': env.IMPORT_SURVEY,
+						'estate-assess': env.ESTATE_ASSESS,
 						'git-pull': env.GIT_PULL,
-						'domain-attach': env.DOMAIN_ATTACH
+						'domain-attach': env.DOMAIN_ATTACH,
+						'node-site-create': env.NODE_SITE_CREATE
 					}
-				}),
+				});
+	},
 	scheduled: (_controller, env, ctx) => {
 		ctx.waitUntil(
 			buildDeps(env).then((deps) => sweepAndLog(deps, { accountId: env.CF_ACCOUNT_ID }))

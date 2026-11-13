@@ -110,7 +110,7 @@ export const ACTION_DEFS = {
 	'review.manage': { scope: 'org', org: ADM },
 	'key.read': { scope: 'org', org: DEV },
 	'key.create': { scope: 'org', org: DEV, sessionOnly: true, stepUp: true },
-	'key.revoke': { scope: 'org', org: DEV },
+	'key.revoke': { scope: 'org', org: DEV, sessionOnly: true },
 	'delegation.read': { scope: 'org', org: NOBILL },
 	'delegation.create': { scope: 'org', org: ADM },
 	'delegation.accept': { scope: 'org', org: ADM },
@@ -150,6 +150,7 @@ export const ACTION_DEFS = {
 	'node.read': { scope: 'org', org: NOBILL },
 	'node.pair': { scope: 'org', org: ADM, sessionOnly: true, stepUp: true },
 	'node.revoke': { scope: 'org', org: ADM, stepUp: true },
+	'node.site.create': { scope: 'org', org: ADM },
 	'release.read': { scope: 'org', org: NOBILL },
 	'release.manage': { scope: 'org', org: ADM },
 	'import.manage': { scope: 'org', org: DEV },
@@ -197,6 +198,7 @@ export const ACTION_DEFS = {
 	'site.cutover': { scope: 'site', org: ADM, site: SA, sessionOnly: true, stepUp: true },
 	'site.cutover.decide': { scope: 'site', org: ADM, site: SA, sessionOnly: true, stepUp: true },
 	'site.cutover.read': { scope: 'site', org: ADM, site: SA },
+	'site.cutover.export': { scope: 'site', org: ADM, site: SA, sessionOnly: true, content: true },
 	'site.pull': { scope: 'site', org: DEV, site: SM },
 	'site.modify': { scope: 'site', org: DEV, site: SM },
 	'site.heal': { scope: 'site', org: DEV, site: SM },
@@ -204,6 +206,7 @@ export const ACTION_DEFS = {
 	'site.remote.manage': { scope: 'site', org: DEV, site: SA },
 	'site.domain.manage': { scope: 'site', org: ADM, site: SA, sessionOnly: true, stepUp: true },
 	'site.domain.read': { scope: 'site', org: ADM, site: SA },
+	'site.domain.check': { scope: 'site', org: ADM, site: SA, sessionOnly: true },
 	'site.domain.rename': { scope: 'site', org: ADM, site: SA, stepUp: true },
 	'site.credentials.rotate': { scope: 'site', org: ADM, stepUp: true },
 	'site.owner-token.reveal': { scope: 'site', org: ADM, sessionOnly: true, stepUp: true },
@@ -312,7 +315,8 @@ export const PUBLIC_ACTIONS = [
 	'auth.oauth.start',
 	'auth.oauth.callback',
 	'auth.logout',
-	'node.claim'
+	'node.claim',
+	'migrate.preflight'
 ] as const;
 export type PublicAction = (typeof PUBLIC_ACTIONS)[number];
 

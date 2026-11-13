@@ -176,10 +176,10 @@ describe('bootOnce', () => {
 });
 
 describe('cutover services', () => {
-	it('stay closed while the new site lacks a worker route the move needs', () => {
+	it('open once the new site has every worker route the move needs', () => {
 		bootOnce(envWith({}));
-		expect(CUTOVER_MISSING_CONTRACTS.length).toBeGreaterThan(0);
-		expect(cutoverServices().adaptersBuilt).toBe(false);
+		expect(CUTOVER_MISSING_CONTRACTS).toEqual([]);
+		expect(cutoverServices().adaptersBuilt).toBe(true);
 	});
 });
 

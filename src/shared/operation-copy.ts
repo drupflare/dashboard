@@ -81,6 +81,15 @@ export const OPERATION_COPY = {
 		link: () => null,
 		failureLink: () => null
 	},
+	'node.command': {
+		title: 'Adding Your Site to Your Box',
+		running:
+			'Someone at the box may need to approve this there before it goes ahead. Leaving this page does not stop it.',
+		success: 'Your site is added on the box and listed here. It serves once the box reloads.',
+		failure: 'Could Not Add the Site to the Box',
+		link: siteOf,
+		failureLink: () => ({ to: '/new/self-hosted', label: 'Back to Your Boxes' })
+	},
 	'site.delete': {
 		title: 'Deleting Your Site',
 		running:
@@ -112,10 +121,11 @@ export const OPERATION_COPY = {
 		title: 'Importing Your Site',
 		running:
 			'Your site keeps running where it is while the copy is made. Leaving this page does not stop the import.',
-		success: 'Your site now also runs as a managed site. The original is unchanged.',
+		success:
+			'Your site now also runs as a managed site. The original is unchanged. Sign in as the Owner on the new site with the password you use on the old one.',
 		failure: 'Could Not Import the Site',
 		link: adoptedSiteOf,
-		failureLink: () => ({ to: '/migrate', label: 'Back to Import' })
+		failureLink: () => ({ to: '/new/import', label: 'Back to Import' })
 	},
 	'import.survey': {
 		title: 'Checking Your Server',
@@ -123,7 +133,7 @@ export const OPERATION_COPY = {
 		success: 'The check is done.',
 		failure: 'Could Not Check the Server',
 		link: () => null,
-		failureLink: () => ({ to: '/migrate', label: 'Back to Import' })
+		failureLink: () => ({ to: '/new/import', label: 'Back to Import' })
 	},
 	'migration.cutover': {
 		title: 'Moving Your Site',
@@ -165,7 +175,7 @@ export const OPERATION_COPY = {
 		title: 'Attaching Your Domain',
 		running:
 			'Your site keeps serving at its Drupflare address. The domain goes live once every stage is done. Leaving this page does not stop the attach.',
-		success: 'Your domain is attached and your site answers on it.',
+		success: 'The domain checks are done. Open the domain to see where it stands.',
 		failure: 'Could Not Attach the Domain',
 		link: domainOf,
 		failureLink: domainOf
@@ -201,7 +211,8 @@ const TYPE_LABELS: Record<string, string> = {
 	'backup.create': 'Backup',
 	'backup.restore': 'Restore',
 	'git.pull': 'Pull',
-	'domain.attach': 'Domain'
+	'domain.attach': 'Domain',
+	'node.command': 'Add to Box'
 };
 
 export function operationTypeLabel(type: string | undefined): string {
@@ -228,6 +239,7 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		export: 'copying your site database',
 		'export-verify': 'checking every part of the copy',
 		'export-record': 'saving the copy',
+		'files-copy': 'copying the files that only live in object storage',
 		'reserve-name': 'reserving the new site address',
 		'resource.': 'creating the new site storage',
 		assets: 'uploading static files to the new site',
@@ -249,8 +261,10 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		preflight: 'checking that your server can be imported',
 		dump: 'copying your database from the server',
 		'files-archive': 'copying your files from the server',
+		'private-archive': 'copying your private files from the server',
 		convert: 'converting the database for the new site',
 		'files-convert': 'preparing the files for the new site',
+		'private-convert': 'preparing the private files for the new site',
 		'reserve-name': 'reserving the new site address',
 		'resource.': 'creating the new site storage',
 		assets: 'uploading static files to the new site',
@@ -326,11 +340,18 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		pull: 'installing the latest commit',
 		record: 'saving the result'
 	},
+	'node.command': {
+		claim: 'reserving the address for this site',
+		payload: 'finding the site files for the current release',
+		add: 'sending the request to your box',
+		wait: 'waiting for your box to add the site, which may need approval there',
+		activate: 'listing the site as ready'
+	},
 	'domain.attach': {
 		lease: 'locking the site for this change',
 		claim: 'reserving the domain for this site',
-		request: 'asking for the ownership and certificate records',
-		ownership: 'waiting for the ownership record',
+		request: 'asking the certificate service for its records',
+		ownership: 'checking the ownership record',
 		certificate: 'waiting for the certificate',
 		routing: 'sending the domain to your site',
 		verification: 'loading your site through the domain'
@@ -369,9 +390,6 @@ export function failedStepError(steps: { state: string; error?: string | null }[
 
 export const LARGER_RESTORE_TITLE = 'Needs a Larger Restore Path';
 
-// the database limit of one restore into a managed site, in MiB
-const RESTORE_LIMIT_MIB = 16;
-
 const ADOPT_REFUSALS: Record<string, string> = {
 	already_adopted: 'This site was already adopted.',
 	not_self_managed: 'Only a self-managed site can be adopted.',
@@ -382,10 +400,37 @@ const ADOPT_REFUSALS: Record<string, string> = {
 	site_not_ready: 'The site is not live, so it cannot be adopted.',
 	unsupported_kind: 'This kind of site cannot be adopted yet.',
 	files_outside_database:
-		'Some files on this site live only in object storage, and a copy cannot carry them yet. Nothing was created and your site was not changed.'
+		'Some files on this site live only in object storage, and your site needs an update before they can be copied. Nothing was created and your site was not changed.',
+	files_unsupported:
+		'Some files on this site live only in object storage, and your site needs an update before they can be copied. Nothing was created and your site was not changed.',
+	files_too_many:
+		'This site holds more files in object storage than a copy carries. Nothing was created and your site was not changed.',
+	restore_too_large:
+		"This site's database and files are larger than a managed site can restore at the moment. Nothing was created and your site was not changed."
 };
 
-const LARGER_RESTORE_REASON = `This site's database is larger than the ${RESTORE_LIMIT_MIB} MiB a managed site accepts in one restore. Nothing was created and your site was not changed. Larger restores need a paged restore, which is not available yet.`;
+// the paged restore and the file copy refusals, shared by every operation that sends a database
+const PAGED_RESTORE_REFUSALS: Record<string, string> = {
+	restore_unsupported:
+		'This database is too large for the version the site runs. Update the site, then try again. Nothing was left behind.',
+	restore_busy:
+		'The site is already loading another database. Wait for that to end, then try again.',
+	restore_unaligned:
+		'The database holds a row too large to send in pieces. Nothing was left behind.',
+	restore_stalled:
+		'The site stopped partway through loading the database. It keeps its earlier data. Try again.'
+};
+
+// the engine writes the count into the text of this refusal, and the owner sees only the count
+function filesCopyFailedReason(error: string | null | undefined): string {
+	const count = /: (\d+) of \d+ files/.exec(error ?? '')?.[1];
+	const files =
+		count === undefined ? 'Some files' : `${count} ${count === '1' ? 'file' : 'files'}`;
+	return `${files} could not be copied from the site. Nothing was left behind and the site was not changed. Try again.`;
+}
+
+const LARGER_RESTORE_REASON =
+	"This site's database is larger than a managed site can restore at the moment. Nothing was created and your site was not changed.";
 
 // an adoption that stopped before it made anything because the database is too big to restore
 export function needsLargerRestore(operation: {
@@ -418,7 +463,8 @@ const IMPORT_REFUSALS: Record<string, string> = {
 	dump_empty: 'The server returned an empty database, so nothing was imported.',
 	dump_failed:
 		'The database copy on your server did not finish. Check that Drush works there, then start again.',
-	restore_too_large: `The database and the files together are larger than the ${RESTORE_LIMIT_MIB} MiB a managed site accepts in one restore. Nothing was created and your server was not changed. Larger restores need a paged restore, which is not available yet.`,
+	restore_too_large:
+		"The database and the files together are larger than this site's version can restore. Nothing was created and your server was not changed.",
 	unsupported_statement:
 		'The database holds something a new site cannot store, such as a row that is too large or a trigger. Nothing was created and your server was not changed.',
 	no_statement_boundary:
@@ -462,6 +508,58 @@ const GIT_PULL_REFUSALS: Record<string, string> = {
 		'The site answered in a way Drupflare could not read, so the result is unknown. Pull again to check.'
 };
 
+// one sentence per code the box-site create writes, for a refused start and for a failed step
+const NODE_SITE_REFUSALS: Record<string, string> = {
+	unsupported_kind: 'Only a Drupal site can be added to a box for now.',
+	node_not_found: 'That box is not paired with this organization.',
+	node_revoked: 'That box was unpaired. Pair it again, then add the site.',
+	node_offline:
+		'That box is not connected right now. Check that bastion is running on it, then try again.',
+	plan_no_nodes: 'Your plan does not include boxes of your own.',
+	no_release: 'Drupflare has no current Drupal release set up for boxes yet.',
+	invalid: 'Enter a domain name such as www.example.org.',
+	wildcard: 'A domain that starts with * cannot be added. Enter one domain name.',
+	platform_zone:
+		'Drupflare keeps this domain for its own sites. Enter a domain you own and point at your box.',
+	host_taken:
+		'Another site already holds this domain. Remove it from that site first, or use a different domain.',
+	no_payload:
+		'The current Drupal release has no site files a box can take yet, so nothing was sent to your box.',
+	box_too_old:
+		'This box does not support creating sites yet. Update bastion on it, then try again.',
+	declined_at_box: 'Someone at the box declined the request, so no site was added.',
+	not_approved:
+		'Nobody approved the request at the box in time, so no site was added. Start again when someone can approve it.',
+	site_exists:
+		'The box already serves a different site on this domain, so nothing was changed. Use another domain or remove that site at the box.',
+	no_tenant:
+		'The box has no tenant yet. Add one at the box with the tenant command, then try again.',
+	unknown_tenant: 'The box does not have the tenant the request named.',
+	capacity_exceeded:
+		'The box has no room for another site. Raise its limit or remove a site there.',
+	box_interrupted:
+		'The box stopped while it was adding the site. Check the box, then start again; a site it already added is picked up.',
+	box_refused: 'The box did not accept the request, so no site was added.',
+	bundle_invalid:
+		'The site files the box downloaded could not run there, so no site was added. Nothing changed on the box.',
+	assets_failed:
+		'The box could not place the site files it downloaded, so no site was added. Check the free space on the box, then start again.',
+	box_failed: 'The box could not add the site. Check it, then start again.'
+};
+
+export function nodeSiteFailureReason(code: string): string {
+	return NODE_SITE_REFUSALS[code] ?? NODE_SITE_REFUSALS.box_failed!;
+}
+
+// the plain reason for a start the server refused; the server message is the fallback
+export function nodeSiteRefusalReason(error: { details: unknown; message: string }): string {
+	const reason = (error.details as { reason?: unknown } | null)?.reason;
+	return (
+		(typeof reason === 'string' && (NODE_SITE_REFUSALS[reason] ?? REFUSALS[reason])) ||
+		error.message
+	);
+}
+
 const FAILED_STATUSES: ReadonlySet<string> = new Set(['failed', 'cancelled', 'rolled-back']);
 
 // the one plain reason shown on the progress page, the site's activity list and the admin list
@@ -478,6 +576,18 @@ export function failureReason(operation: {
 		const refusal = ADOPT_REFUSALS[errorCode(operation.failedError) ?? ''];
 		if (refusal !== undefined) return refusal;
 	}
+	const paged = errorCode(operation.failedError) ?? '';
+	if (
+		(operation.type === 'site.adopt' ||
+			operation.type === 'site.import' ||
+			operation.type === 'backup.restore') &&
+		PAGED_RESTORE_REFUSALS[paged] !== undefined
+	) {
+		return PAGED_RESTORE_REFUSALS[paged];
+	}
+	if (operation.type === 'site.adopt' && paged === 'files_copy_failed') {
+		return filesCopyFailedReason(operation.failedError);
+	}
 	if (operation.type === 'site.import' || operation.type === 'import.survey') {
 		const refusal = IMPORT_REFUSALS[errorCode(operation.failedError) ?? ''];
 		if (refusal !== undefined) return refusal;
@@ -489,6 +599,10 @@ export function failureReason(operation: {
 	if (operation.type === 'domain.attach') {
 		const refusal = attachFailureReason(errorCode(operation.failedError));
 		if (refusal !== null) return refusal;
+	}
+	if (operation.type === 'node.command') {
+		const refusal = NODE_SITE_REFUSALS[errorCode(operation.failedError) ?? ''];
+		if (refusal !== undefined) return refusal;
 	}
 	const phrase =
 		operation.failedStep === null ? null : phraseOf(operation.type, operation.failedStep);

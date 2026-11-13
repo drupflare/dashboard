@@ -118,6 +118,7 @@ const TREE: Record<string, string[]> = {
 		'transfer-a-site',
 		'client-workspaces',
 		'api-keys',
+		'connect-an-ai-client',
 		'connected-apps',
 		'sso',
 		'audit-log'

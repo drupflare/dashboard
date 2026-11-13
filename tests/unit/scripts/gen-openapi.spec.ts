@@ -5,12 +5,17 @@ import { z } from 'zod';
 import { errorEnvelope } from '../../../contracts/src/common';
 import {
 	API_ROOT,
+	buildSpec,
 	HANDLER_BRAND,
+	MAX_OPERATION_ID,
 	OUTPUT,
+	PRODUCTION_ORIGIN,
 	renderOpenApi,
-	scanRoutes
+	scanRoutes,
+	type RouteEntry
 } from '../../../scripts/gen-openapi';
 import { API_TAG_NAMES } from '../../../src/server/api-tags';
+import { keyUsable } from '../../../src/server/domain/scopes';
 import { API_HANDLER } from '../../../src/server/utils/define-api';
 import { parseIdempotencyKey } from '../../../src/server/utils/idempotency';
 import { isAction, isPublicAction, isSessionOnly } from '../../../src/shared/permissions';
@@ -125,6 +130,85 @@ describe('gen-openapi: live route tree', () => {
 	});
 });
 
+describe('gen-openapi: what an MCP gateway reads', () => {
+	let live: Json;
+
+	beforeAll(async () => {
+		live = JSON.parse(await renderOpenApi(API_ROOT)) as Json;
+	});
+
+	it('names the production host as the one server, and keeps info, tags and both schemes', () => {
+		expect(PRODUCTION_ORIGIN).toBe('https://app.drupflare.com');
+		expect(live.servers).toEqual([{ url: PRODUCTION_ORIGIN, description: 'Production' }]);
+		expect(live.info.title).toBe('Drupflare Dashboard API');
+		expect(live.tags.map((tag: Json) => tag.name)).toEqual(API_TAG_NAMES);
+		expect(Object.keys(live.components.securitySchemes)).toEqual(['session', 'apiKey']);
+	});
+
+	it('gives every operation a summary and an id a tool name can hold', () => {
+		const ids = new Set<string>();
+		for (const { path, method, op } of operations(live)) {
+			expect(op.summary.trim().length, `${method} ${path}`).toBeGreaterThan(0);
+			expect(op.operationId, `${method} ${path}`).toMatch(/^[A-Za-z0-9_-]+$/);
+			expect(op.operationId.length, `${method} ${path}`).toBeLessThanOrEqual(
+				MAX_OPERATION_ID
+			);
+			ids.add(op.operationId);
+		}
+		expect(ids.size).toBe(operations(live).length);
+		expect(MAX_OPERATION_ID).toBe(64);
+	});
+
+	it('lists apiKey first on every operation a key can call and on no other', () => {
+		for (const { path, method, op } of operations(live)) {
+			const action = op['x-action'];
+			const label = `${method} ${path} (${action})`;
+			if (op.security.length === 0) {
+				expect(isPublicAction(action), label).toBe(true);
+				continue;
+			}
+			const lists = op.security.some((entry: Json) => 'apiKey' in entry);
+			expect(lists, label).toBe(keyUsable(action));
+			if (lists) expect(Object.keys(op.security[0]), label).toEqual(['apiKey']);
+			if (isSessionOnly(action)) expect(op.security, label).toEqual([{ session: [] }]);
+		}
+	});
+
+	it('documents the key routes, and the create and revoke routes refuse a key', () => {
+		const org = '/api/v1/orgs/{orgId}/api-keys';
+		const expected: [string, string, string, string][] = [
+			[org, 'get', 'key.read', '200'],
+			[org, 'post', 'key.create', '201'],
+			[`${org}/{keyId}/revoke`, 'post', 'key.revoke', '200']
+		];
+		for (const [path, method, action, status] of expected) {
+			const op = live.paths[path]?.[method];
+			expect(op, `${method} ${path}`).toBeDefined();
+			expect(op['x-action']).toBe(action);
+			expect(op.responses[status]).toBeDefined();
+		}
+		expect(live.paths[org].get.security).toEqual([{ apiKey: [] }, { session: [] }]);
+		expect(live.paths[org].post.security).toEqual([{ session: [] }]);
+		expect(live.paths[`${org}/{keyId}/revoke`].post.security).toEqual([{ session: [] }]);
+	});
+
+	it('refuses to render an operation id past the limit', () => {
+		const route: RouteEntry = {
+			rel: 'v1/long.get.ts',
+			method: 'get',
+			path: `/api/v1/${'segment-'.repeat(10)}end`,
+			meta: {
+				scope: 'organization',
+				action: 'org.read',
+				rateClass: 'read',
+				tags: ['orgs'],
+				summary: 'A route with a very long path'
+			}
+		};
+		expect(() => buildSpec([route])).toThrow(`the limit is ${MAX_OPERATION_ID}`);
+	});
+});
+
 describe('gen-openapi: sample routes', () => {
 	it('is deterministic and sorted by path then method', async () => {
 		expect(await renderOpenApi(FIXTURES)).toBe(sampleText);
@@ -170,7 +254,7 @@ describe('gen-openapi: sample routes', () => {
 		expect(schemes.apiKey).toMatchObject({ type: 'http', scheme: 'bearer' });
 		const security = (path: string, method: string) => sample.paths[path][method].security;
 		expect(security('/api/v1/auth/code', 'post')).toEqual([]);
-		expect(security('/api/v1/sites/{id}', 'get')).toEqual([{ session: [] }, { apiKey: [] }]);
+		expect(security('/api/v1/sites/{id}', 'get')).toEqual([{ apiKey: [] }, { session: [] }]);
 		expect(security('/api/v1/orgs/{orgId}/keys', 'post')).toEqual([{ session: [] }]);
 		expect(security('/api/v1/admin/aggregates', 'get')).toEqual([{ session: [] }]);
 		for (const { op } of operations(sample)) {

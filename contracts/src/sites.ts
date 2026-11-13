@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { isoTimestamp, orgId, siteId, type SiteId } from './common';
 
-export const SITES_VERSION = { major: 1, minor: 2 } as const;
+export const SITES_VERSION = { major: 1, minor: 3 } as const;
 
 export const SITE_KINDS = ['drupal', 'nuxtpress', 'smoke', 'mylora', 'custom'] as const;
 export const SITE_CATEGORIES = ['cms', 'workers'] as const;
@@ -45,7 +45,7 @@ export function categoryOfKind(kind: SiteKind): SiteCategory {
 }
 
 // a 1.0 document has no category, config or accountId, one from before releases has no release, and
-// one from before 1.2 has no admin; each gets the value such a site had
+// one from before 1.2 has no admin or one from before 1.3 no box state; each gets the old value
 function withSiteDefaults(input: unknown): unknown {
 	if (typeof input !== 'object' || input === null || Array.isArray(input)) return input;
 	const doc = input as Record<string, unknown>;
@@ -56,6 +56,7 @@ function withSiteDefaults(input: unknown): unknown {
 		accountId: null,
 		release: { current: null, available: null },
 		admin: { username: null, email: null, password: 'unknown' },
+		box: { found: false, missingSince: null },
 		...doc
 	};
 }
@@ -80,6 +81,9 @@ const siteObject = z.object({
 		email: z.string().min(1).max(320).nullable(),
 		password: adminPasswordState
 	}),
+	// found: the box reported the site and the dashboard did not create it; missingSince: when the box
+	// last stopped reporting a site that is still listed
+	box: z.object({ found: z.boolean(), missingSince: isoTimestamp.nullable() }),
 	createdAt: isoTimestamp,
 	updatedAt: isoTimestamp
 });

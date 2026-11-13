@@ -201,6 +201,18 @@ describe('route scan: live route tree', () => {
 		expect(isSessionOnly('repo.connect')).toBe(true);
 	});
 
+	it('finds the preflight route as a public route with its own rate class', async () => {
+		const { routes } = await scanRoutes(API_ROOT);
+		const route = routes.find((found) => found.path === '/api/v1/preflight');
+		expect(route?.method).toBe('post');
+		expect(route?.meta).toMatchObject({
+			scope: 'public',
+			action: 'migrate.preflight',
+			rateClass: 'preflight'
+		});
+		expect(isPublicAction('migrate.preflight')).toBe(true);
+	});
+
 	it('lists the GitHub hook as a file outside the scan, beside the Stripe hook', () => {
 		expect(isAllowListed('hooks/github.post.ts')).toBe(true);
 		expect(listRouteFiles(API_ROOT)).toContain('hooks/github.post.ts');

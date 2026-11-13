@@ -258,6 +258,7 @@ describe('import_credentials and imported_from', () => {
 				'epoch',
 				'state',
 				'provider_id',
+				'ownership_epoch',
 				'created_at',
 				'updated_at'
 			].sort()

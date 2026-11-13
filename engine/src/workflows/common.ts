@@ -29,6 +29,8 @@ export interface Ctx {
 
 export type Outcome =
 	| { status: 'succeeded' }
+	// the work that can run has run and the rest waits on something the owner or the operator does
+	| { status: 'waiting'; reason: string }
 	| { status: 'rolled-back'; reason: string }
 	| { status: 'failed'; reason: string; leaked: string[] }
 	| { status: 'cancelled'; reason: string };

@@ -96,6 +96,17 @@ export const TEMPLATES: readonly Template[] = z.array(templateSchema).parse([
 		source: 'roadmap:451 class; roadmap:388; plan:37 greyed out'
 	},
 	{
+		id: 'import',
+		name: 'Import From a Server',
+		class: null,
+		category: 'cms',
+		free: true,
+		enabled: true,
+		comingSoon: null,
+		planGate: 'free',
+		source: 'plan: Onboarding list; the import routes; the plan decides at the start call'
+	},
+	{
 		id: 'gmux',
 		name: 'gmux',
 		class: null,

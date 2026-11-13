@@ -5,6 +5,7 @@
 		"version": "1.0.0",
 		"description": "The HTTP API behind the Drupflare dashboard. Every operation names the permission it checks in x-action and its rate class in x-rate-class."
 	},
+	"servers": [{ "url": "https://app.drupflare.com", "description": "Production" }],
 	"tags": [
 		{ "name": "auth", "description": "Sign-in, sign-out and passkey and provider flows." },
 		{ "name": "me", "description": "The signed-in account, its sessions and devices." },
@@ -1403,7 +1404,7 @@
 				"tags": ["billing"],
 				"x-action": "billing.manage",
 				"x-rate-class": "write",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -1522,7 +1523,7 @@
 				"tags": ["billing"],
 				"x-action": "account.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [{ "$ref": "#/components/parameters/ContractHeader" }],
 				"responses": {
 					"200": {
@@ -1592,7 +1593,7 @@
 				"tags": ["me"],
 				"x-action": "account.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [{ "$ref": "#/components/parameters/ContractHeader" }],
 				"responses": {
 					"200": {
@@ -1994,7 +1995,7 @@
 				"tags": ["me"],
 				"x-action": "account.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "cursor",
@@ -2765,6 +2766,2005 @@
 				}
 			}
 		},
+		"/api/v1/orgs/{orgId}/api-keys": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdApiKeys",
+				"summary": "List API keys",
+				"description": "Lists the API keys of the organisation in the path, newest first: the name, the public prefix, the permissions, and when each was created, last used and expires or was revoked. The secret is shown once, when the key is created, and never again.",
+				"tags": ["api-keys"],
+				"x-action": "key.read",
+				"x-rate-class": "read",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "cursor",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "pattern": "^\\d+$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"name": { "type": "string" },
+													"prefix": { "type": ["string", "null"] },
+													"scopes": {
+														"type": "array",
+														"items": { "type": "string" }
+													},
+													"createdAt": { "type": "string" },
+													"lastUsedAt": { "type": ["string", "null"] },
+													"expiresAt": { "type": ["string", "null"] },
+													"revokedAt": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"prefix",
+													"scopes",
+													"createdAt",
+													"lastUsedAt",
+													"expiresAt",
+													"revokedAt"
+												],
+												"additionalProperties": false
+											}
+										},
+										"nextCursor": { "type": ["string", "null"] }
+									},
+									"required": ["items", "nextCursor"],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			},
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdApiKeys",
+				"summary": "Create an API key",
+				"description": "Creates a key for the organisation in the path and returns its token once. The key can hold only permissions that you hold yourself and that a key can carry, and it loses any permission you lose. It needs a signed-in session with a fresh sign-in, so an API key is refused.",
+				"tags": ["api-keys"],
+				"x-action": "key.create",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": { "type": "string", "minLength": 1, "maxLength": 64 },
+									"scopes": {
+										"minItems": 1,
+										"maxItems": 200,
+										"type": "array",
+										"items": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 64
+										}
+									},
+									"expiry": {
+										"type": "string",
+										"enum": ["30d", "90d", "180d", "365d"]
+									}
+								},
+								"required": ["name", "scopes", "expiry"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": { "type": "string" },
+										"name": { "type": "string" },
+										"prefix": { "type": ["string", "null"] },
+										"scopes": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"createdAt": { "type": "string" },
+										"lastUsedAt": { "type": ["string", "null"] },
+										"expiresAt": { "type": ["string", "null"] },
+										"revokedAt": { "type": ["string", "null"] },
+										"token": { "type": "string" }
+									},
+									"required": [
+										"id",
+										"name",
+										"prefix",
+										"scopes",
+										"createdAt",
+										"lastUsedAt",
+										"expiresAt",
+										"revokedAt",
+										"token"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/api-keys/{keyId}/revoke": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdApiKeysKeyIdRevoke",
+				"summary": "Revoke an API key",
+				"description": "Stops a key from working at once. The next request that carries it is refused. Revoking a key that is already revoked changes nothing. It needs a signed-in session, so an API key is refused.",
+				"tags": ["api-keys"],
+				"x-action": "key.revoke",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "keyId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1, "maxLength": 64 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": { "type": "string" },
+										"name": { "type": "string" },
+										"prefix": { "type": ["string", "null"] },
+										"scopes": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"createdAt": { "type": "string" },
+										"lastUsedAt": { "type": ["string", "null"] },
+										"expiresAt": { "type": ["string", "null"] },
+										"revokedAt": { "type": ["string", "null"] }
+									},
+									"required": [
+										"id",
+										"name",
+										"prefix",
+										"scopes",
+										"createdAt",
+										"lastUsedAt",
+										"expiresAt",
+										"revokedAt"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/assessments": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdAssessments",
+				"summary": "List assessments",
+				"description": "Lists the estate assessments of the organisation, newest first.",
+				"tags": ["assessments"],
+				"x-action": "assessment.read",
+				"x-rate-class": "read",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "cursor",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "pattern": "^\\d+$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"operationId": { "type": "string" },
+													"state": {
+														"type": "string",
+														"enum": [
+															"preparing",
+															"running",
+															"finished",
+															"cancelled",
+															"failed"
+														]
+													},
+													"rowCount": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"rejectedTotal": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"progress": {
+														"type": "object",
+														"propertyNames": {
+															"type": "string",
+															"enum": [
+																"pending",
+																"checking",
+																"done",
+																"needs access",
+																"needs proof",
+																"could not check",
+																"skipped"
+															]
+														},
+														"additionalProperties": {
+															"type": "integer",
+															"minimum": 0,
+															"maximum": 9007199254740991
+														},
+														"required": [
+															"pending",
+															"checking",
+															"done",
+															"needs access",
+															"needs proof",
+															"could not check",
+															"skipped"
+														]
+													},
+													"classes": {
+														"type": "object",
+														"propertyNames": {
+															"type": "string",
+															"enum": [
+																"ready",
+																"automatic upgrade",
+																"needs decision",
+																"unsupported",
+																"information"
+															]
+														},
+														"additionalProperties": {
+															"type": "integer",
+															"minimum": 0,
+															"maximum": 9007199254740991
+														},
+														"required": [
+															"ready",
+															"automatic upgrade",
+															"needs decision",
+															"unsupported",
+															"information"
+														]
+													},
+													"report": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"counts": {
+																		"type": "object",
+																		"properties": {
+																			"sites": {
+																				"type": "integer",
+																				"minimum": 0,
+																				"maximum": 9007199254740991
+																			},
+																			"byClass": {
+																				"type": "object",
+																				"propertyNames": {
+																					"type": "string",
+																					"enum": [
+																						"ready",
+																						"automatic upgrade",
+																						"needs decision",
+																						"unsupported",
+																						"information"
+																					]
+																				},
+																				"additionalProperties": {
+																					"type": "integer",
+																					"minimum": 0,
+																					"maximum": 9007199254740991
+																				},
+																				"required": [
+																					"ready",
+																					"automatic upgrade",
+																					"needs decision",
+																					"unsupported",
+																					"information"
+																				]
+																			},
+																			"byState": {
+																				"type": "object",
+																				"propertyNames": {
+																					"type": "string",
+																					"enum": [
+																						"pending",
+																						"checking",
+																						"done",
+																						"needs access",
+																						"needs proof",
+																						"could not check",
+																						"skipped"
+																					]
+																				},
+																				"additionalProperties": {
+																					"type": "integer",
+																					"minimum": 0,
+																					"maximum": 9007199254740991
+																				},
+																				"required": [
+																					"pending",
+																					"checking",
+																					"done",
+																					"needs access",
+																					"needs proof",
+																					"could not check",
+																					"skipped"
+																				]
+																			},
+																			"notReconciled": {
+																				"type": "integer",
+																				"minimum": 0,
+																				"maximum": 9007199254740991
+																			},
+																			"sharedDatabases": {
+																				"type": "integer",
+																				"minimum": 0,
+																				"maximum": 9007199254740991
+																			},
+																			"duplicateDomains": {
+																				"type": "integer",
+																				"minimum": 0,
+																				"maximum": 9007199254740991
+																			},
+																			"surveyed": {
+																				"type": "integer",
+																				"minimum": 0,
+																				"maximum": 9007199254740991
+																			}
+																		},
+																		"required": [
+																			"sites",
+																			"byClass",
+																			"byState",
+																			"notReconciled",
+																			"sharedDatabases",
+																			"duplicateDomains",
+																			"surveyed"
+																		],
+																		"additionalProperties": false
+																	},
+																	"effort": {
+																		"type": "object",
+																		"properties": {
+																			"value": {
+																				"type": "null"
+																			},
+																			"label": {
+																				"type": "string",
+																				"const": "Not estimated"
+																			},
+																			"reason": {
+																				"type": "string"
+																			}
+																		},
+																		"required": [
+																			"value",
+																			"label",
+																			"reason"
+																		],
+																		"additionalProperties": false
+																	},
+																	"windows": {
+																		"type": "object",
+																		"properties": {
+																			"value": {
+																				"type": "null"
+																			},
+																			"label": {
+																				"type": "string",
+																				"const": "Not estimated"
+																			}
+																		},
+																		"required": [
+																			"value",
+																			"label"
+																		],
+																		"additionalProperties": false
+																	}
+																},
+																"required": [
+																	"counts",
+																	"effort",
+																	"windows"
+																],
+																"additionalProperties": false
+															},
+															{ "type": "null" }
+														]
+													},
+													"createdAt": { "type": "string" },
+													"updatedAt": { "type": "string" }
+												},
+												"required": [
+													"id",
+													"operationId",
+													"state",
+													"rowCount",
+													"rejectedTotal",
+													"progress",
+													"classes",
+													"report",
+													"createdAt",
+													"updatedAt"
+												]
+											}
+										},
+										"nextCursor": { "type": ["string", "null"] }
+									},
+									"required": ["items", "nextCursor"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			},
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdAssessments",
+				"summary": "Assess an estate",
+				"description": "Reads an inventory of sites, given as CSV with a header row or as JSON, and starts one read-only check for every site it names. Rows that cannot be read are counted and left out; a file that cannot be read at all is refused. A site is checked from the outside with the same public check as the preflight. Sites on a server whose key is listed in credentialIds are also surveyed over SSH, read only. Only a few sites on a domain whose ownership is not proven are checked. Send an Idempotency-Key header; a repeat returns the same assessment.",
+				"tags": ["assessments"],
+				"x-action": "assessment.manage",
+				"x-rate-class": "heavy",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"text": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 1048576
+									},
+									"credentialIds": {
+										"maxItems": 20,
+										"type": "array",
+										"items": {
+											"type": "string",
+											"pattern": "^imc_[a-z2-7]{26}$"
+										}
+									}
+								},
+								"required": ["text"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": { "type": "string" },
+										"operationId": { "type": "string" },
+										"state": {
+											"type": "string",
+											"enum": [
+												"preparing",
+												"running",
+												"finished",
+												"cancelled",
+												"failed"
+											]
+										},
+										"rowCount": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"rejectedTotal": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"progress": {
+											"type": "object",
+											"propertyNames": {
+												"type": "string",
+												"enum": [
+													"pending",
+													"checking",
+													"done",
+													"needs access",
+													"needs proof",
+													"could not check",
+													"skipped"
+												]
+											},
+											"additionalProperties": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 9007199254740991
+											},
+											"required": [
+												"pending",
+												"checking",
+												"done",
+												"needs access",
+												"needs proof",
+												"could not check",
+												"skipped"
+											]
+										},
+										"classes": {
+											"type": "object",
+											"propertyNames": {
+												"type": "string",
+												"enum": [
+													"ready",
+													"automatic upgrade",
+													"needs decision",
+													"unsupported",
+													"information"
+												]
+											},
+											"additionalProperties": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 9007199254740991
+											},
+											"required": [
+												"ready",
+												"automatic upgrade",
+												"needs decision",
+												"unsupported",
+												"information"
+											]
+										},
+										"report": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"counts": {
+															"type": "object",
+															"properties": {
+																"sites": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"byClass": {
+																	"type": "object",
+																	"propertyNames": {
+																		"type": "string",
+																		"enum": [
+																			"ready",
+																			"automatic upgrade",
+																			"needs decision",
+																			"unsupported",
+																			"information"
+																		]
+																	},
+																	"additionalProperties": {
+																		"type": "integer",
+																		"minimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"required": [
+																		"ready",
+																		"automatic upgrade",
+																		"needs decision",
+																		"unsupported",
+																		"information"
+																	]
+																},
+																"byState": {
+																	"type": "object",
+																	"propertyNames": {
+																		"type": "string",
+																		"enum": [
+																			"pending",
+																			"checking",
+																			"done",
+																			"needs access",
+																			"needs proof",
+																			"could not check",
+																			"skipped"
+																		]
+																	},
+																	"additionalProperties": {
+																		"type": "integer",
+																		"minimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"required": [
+																		"pending",
+																		"checking",
+																		"done",
+																		"needs access",
+																		"needs proof",
+																		"could not check",
+																		"skipped"
+																	]
+																},
+																"notReconciled": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"sharedDatabases": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"duplicateDomains": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"surveyed": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																}
+															},
+															"required": [
+																"sites",
+																"byClass",
+																"byState",
+																"notReconciled",
+																"sharedDatabases",
+																"duplicateDomains",
+																"surveyed"
+															],
+															"additionalProperties": false
+														},
+														"effort": {
+															"type": "object",
+															"properties": {
+																"value": { "type": "null" },
+																"label": {
+																	"type": "string",
+																	"const": "Not estimated"
+																},
+																"reason": { "type": "string" }
+															},
+															"required": [
+																"value",
+																"label",
+																"reason"
+															],
+															"additionalProperties": false
+														},
+														"windows": {
+															"type": "object",
+															"properties": {
+																"value": { "type": "null" },
+																"label": {
+																	"type": "string",
+																	"const": "Not estimated"
+																}
+															},
+															"required": ["value", "label"],
+															"additionalProperties": false
+														}
+													},
+													"required": ["counts", "effort", "windows"],
+													"additionalProperties": false
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": { "type": "string" },
+										"updatedAt": { "type": "string" }
+									},
+									"required": [
+										"id",
+										"operationId",
+										"state",
+										"rowCount",
+										"rejectedTotal",
+										"progress",
+										"classes",
+										"report",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/assessments/{id}": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdAssessmentsId",
+				"summary": "Read an assessment",
+				"description": "Returns one assessment with its state, the number of rows in each state and class, and the report once it has finished.",
+				"tags": ["assessments"],
+				"x-action": "assessment.read",
+				"x-rate-class": "read",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^asm_[a-z0-9]{26}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": { "type": "string" },
+										"operationId": { "type": "string" },
+										"state": {
+											"type": "string",
+											"enum": [
+												"preparing",
+												"running",
+												"finished",
+												"cancelled",
+												"failed"
+											]
+										},
+										"rowCount": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"rejectedTotal": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"progress": {
+											"type": "object",
+											"propertyNames": {
+												"type": "string",
+												"enum": [
+													"pending",
+													"checking",
+													"done",
+													"needs access",
+													"needs proof",
+													"could not check",
+													"skipped"
+												]
+											},
+											"additionalProperties": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 9007199254740991
+											},
+											"required": [
+												"pending",
+												"checking",
+												"done",
+												"needs access",
+												"needs proof",
+												"could not check",
+												"skipped"
+											]
+										},
+										"classes": {
+											"type": "object",
+											"propertyNames": {
+												"type": "string",
+												"enum": [
+													"ready",
+													"automatic upgrade",
+													"needs decision",
+													"unsupported",
+													"information"
+												]
+											},
+											"additionalProperties": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 9007199254740991
+											},
+											"required": [
+												"ready",
+												"automatic upgrade",
+												"needs decision",
+												"unsupported",
+												"information"
+											]
+										},
+										"report": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"counts": {
+															"type": "object",
+															"properties": {
+																"sites": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"byClass": {
+																	"type": "object",
+																	"propertyNames": {
+																		"type": "string",
+																		"enum": [
+																			"ready",
+																			"automatic upgrade",
+																			"needs decision",
+																			"unsupported",
+																			"information"
+																		]
+																	},
+																	"additionalProperties": {
+																		"type": "integer",
+																		"minimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"required": [
+																		"ready",
+																		"automatic upgrade",
+																		"needs decision",
+																		"unsupported",
+																		"information"
+																	]
+																},
+																"byState": {
+																	"type": "object",
+																	"propertyNames": {
+																		"type": "string",
+																		"enum": [
+																			"pending",
+																			"checking",
+																			"done",
+																			"needs access",
+																			"needs proof",
+																			"could not check",
+																			"skipped"
+																		]
+																	},
+																	"additionalProperties": {
+																		"type": "integer",
+																		"minimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"required": [
+																		"pending",
+																		"checking",
+																		"done",
+																		"needs access",
+																		"needs proof",
+																		"could not check",
+																		"skipped"
+																	]
+																},
+																"notReconciled": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"sharedDatabases": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"duplicateDomains": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"surveyed": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																}
+															},
+															"required": [
+																"sites",
+																"byClass",
+																"byState",
+																"notReconciled",
+																"sharedDatabases",
+																"duplicateDomains",
+																"surveyed"
+															],
+															"additionalProperties": false
+														},
+														"effort": {
+															"type": "object",
+															"properties": {
+																"value": { "type": "null" },
+																"label": {
+																	"type": "string",
+																	"const": "Not estimated"
+																},
+																"reason": { "type": "string" }
+															},
+															"required": [
+																"value",
+																"label",
+																"reason"
+															],
+															"additionalProperties": false
+														},
+														"windows": {
+															"type": "object",
+															"properties": {
+																"value": { "type": "null" },
+																"label": {
+																	"type": "string",
+																	"const": "Not estimated"
+																}
+															},
+															"required": ["value", "label"],
+															"additionalProperties": false
+														}
+													},
+													"required": ["counts", "effort", "windows"],
+													"additionalProperties": false
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": { "type": "string" },
+										"updatedAt": { "type": "string" }
+									},
+									"required": [
+										"id",
+										"operationId",
+										"state",
+										"rowCount",
+										"rejectedTotal",
+										"progress",
+										"classes",
+										"report",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/assessments/{id}/cancel": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdAssessmentsIdCancel",
+				"summary": "Cancel an assessment",
+				"description": "Stops an assessment that is still running. Sites already checked keep their results, and the rest are marked skipped. An assessment that has finished cannot be cancelled.",
+				"tags": ["assessments"],
+				"x-action": "assessment.manage",
+				"x-rate-class": "write",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^asm_[a-z0-9]{26}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": { "type": "string" },
+										"operationId": { "type": "string" },
+										"state": {
+											"type": "string",
+											"enum": [
+												"preparing",
+												"running",
+												"finished",
+												"cancelled",
+												"failed"
+											]
+										},
+										"rowCount": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"rejectedTotal": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"progress": {
+											"type": "object",
+											"propertyNames": {
+												"type": "string",
+												"enum": [
+													"pending",
+													"checking",
+													"done",
+													"needs access",
+													"needs proof",
+													"could not check",
+													"skipped"
+												]
+											},
+											"additionalProperties": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 9007199254740991
+											},
+											"required": [
+												"pending",
+												"checking",
+												"done",
+												"needs access",
+												"needs proof",
+												"could not check",
+												"skipped"
+											]
+										},
+										"classes": {
+											"type": "object",
+											"propertyNames": {
+												"type": "string",
+												"enum": [
+													"ready",
+													"automatic upgrade",
+													"needs decision",
+													"unsupported",
+													"information"
+												]
+											},
+											"additionalProperties": {
+												"type": "integer",
+												"minimum": 0,
+												"maximum": 9007199254740991
+											},
+											"required": [
+												"ready",
+												"automatic upgrade",
+												"needs decision",
+												"unsupported",
+												"information"
+											]
+										},
+										"report": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"counts": {
+															"type": "object",
+															"properties": {
+																"sites": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"byClass": {
+																	"type": "object",
+																	"propertyNames": {
+																		"type": "string",
+																		"enum": [
+																			"ready",
+																			"automatic upgrade",
+																			"needs decision",
+																			"unsupported",
+																			"information"
+																		]
+																	},
+																	"additionalProperties": {
+																		"type": "integer",
+																		"minimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"required": [
+																		"ready",
+																		"automatic upgrade",
+																		"needs decision",
+																		"unsupported",
+																		"information"
+																	]
+																},
+																"byState": {
+																	"type": "object",
+																	"propertyNames": {
+																		"type": "string",
+																		"enum": [
+																			"pending",
+																			"checking",
+																			"done",
+																			"needs access",
+																			"needs proof",
+																			"could not check",
+																			"skipped"
+																		]
+																	},
+																	"additionalProperties": {
+																		"type": "integer",
+																		"minimum": 0,
+																		"maximum": 9007199254740991
+																	},
+																	"required": [
+																		"pending",
+																		"checking",
+																		"done",
+																		"needs access",
+																		"needs proof",
+																		"could not check",
+																		"skipped"
+																	]
+																},
+																"notReconciled": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"sharedDatabases": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"duplicateDomains": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																"surveyed": {
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																}
+															},
+															"required": [
+																"sites",
+																"byClass",
+																"byState",
+																"notReconciled",
+																"sharedDatabases",
+																"duplicateDomains",
+																"surveyed"
+															],
+															"additionalProperties": false
+														},
+														"effort": {
+															"type": "object",
+															"properties": {
+																"value": { "type": "null" },
+																"label": {
+																	"type": "string",
+																	"const": "Not estimated"
+																},
+																"reason": { "type": "string" }
+															},
+															"required": [
+																"value",
+																"label",
+																"reason"
+															],
+															"additionalProperties": false
+														},
+														"windows": {
+															"type": "object",
+															"properties": {
+																"value": { "type": "null" },
+																"label": {
+																	"type": "string",
+																	"const": "Not estimated"
+																}
+															},
+															"required": ["value", "label"],
+															"additionalProperties": false
+														}
+													},
+													"required": ["counts", "effort", "windows"],
+													"additionalProperties": false
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": { "type": "string" },
+										"updatedAt": { "type": "string" }
+									},
+									"required": [
+										"id",
+										"operationId",
+										"state",
+										"rowCount",
+										"rejectedTotal",
+										"progress",
+										"classes",
+										"report",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/assessments/{id}/export": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdAssessmentsIdExport",
+				"summary": "Download an assessment as CSV",
+				"description": "Streams every row of the assessment as one CSV file. The inventory columns come first, so the file can be uploaded again as an inventory. Effort is written as Not estimated.",
+				"tags": ["assessments"],
+				"x-action": "assessment.read",
+				"x-rate-class": "read",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^asm_[a-z0-9]{26}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/assessments/{id}/rows": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdAssessmentsIdRows",
+				"summary": "List the rows of an assessment",
+				"description": "Lists the sites of an assessment in row order, with the class, state and findings of each. Filter by class, by state, or by text in the hostname.",
+				"tags": ["assessments"],
+				"x-action": "assessment.read",
+				"x-rate-class": "read",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^asm_[a-z0-9]{26}$" }
+					},
+					{
+						"name": "cursor",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string" }
+					},
+					{
+						"name": "limit",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "pattern": "^\\d+$" }
+					},
+					{
+						"name": "class",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"type": "string",
+							"enum": [
+								"ready",
+								"automatic upgrade",
+								"needs decision",
+								"unsupported",
+								"information"
+							]
+						}
+					},
+					{
+						"name": "state",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"type": "string",
+							"enum": [
+								"pending",
+								"checking",
+								"done",
+								"needs access",
+								"needs proof",
+								"could not check",
+								"skipped"
+							]
+						}
+					},
+					{
+						"name": "q",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "maxLength": 253 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"number": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"hostname": { "type": "string" },
+													"aliases": {
+														"type": "array",
+														"items": { "type": "string" }
+													},
+													"server": { "type": "string" },
+													"cms": {
+														"type": "string",
+														"enum": [
+															"drupal",
+															"wordpress",
+															"joomla",
+															"unknown"
+														]
+													},
+													"version": { "type": "string" },
+													"class": {
+														"anyOf": [
+															{
+																"type": "string",
+																"enum": [
+																	"ready",
+																	"automatic upgrade",
+																	"needs decision",
+																	"unsupported",
+																	"information"
+																]
+															},
+															{ "type": "null" }
+														]
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"checking",
+															"done",
+															"needs access",
+															"needs proof",
+															"could not check",
+															"skipped"
+														]
+													},
+													"basis": { "type": ["string", "null"] },
+													"reconciled": { "type": "boolean" },
+													"missing": { "type": ["string", "null"] },
+													"findings": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"status": {
+																	"type": "string",
+																	"enum": [
+																		"automatic",
+																		"requires choice",
+																		"unsupported",
+																		"information"
+																	]
+																},
+																"title": { "type": "string" },
+																"detail": { "type": "string" }
+															},
+															"required": [
+																"status",
+																"title",
+																"detail"
+															],
+															"additionalProperties": false
+														}
+													}
+												},
+												"required": [
+													"number",
+													"hostname",
+													"aliases",
+													"server",
+													"cms",
+													"version",
+													"class",
+													"state",
+													"basis",
+													"reconciled",
+													"missing",
+													"findings"
+												]
+											}
+										},
+										"nextCursor": { "type": ["string", "null"] }
+									},
+									"required": ["items", "nextCursor"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/assessments/check": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdAssessmentsCheck",
+				"summary": "Check an inventory file",
+				"description": "Reads the inventory in the body the way an assessment would and returns how many rows and sites it holds, which rows were left out and why, and which columns were ignored. Nothing is stored and no site is contacted.",
+				"tags": ["assessments"],
+				"x-action": "assessment.read",
+				"x-rate-class": "write",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"text": { "type": "string", "maxLength": 1048576 }
+								},
+								"required": ["text"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"fileError": { "type": ["string", "null"] },
+										"rows": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"sites": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"notReconciled": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"rejected": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"line": {
+														"type": "integer",
+														"exclusiveMinimum": 0,
+														"maximum": 9007199254740991
+													},
+													"reason": { "type": "string" }
+												},
+												"required": ["line", "reason"]
+											}
+										},
+										"rejectedTotal": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"ignoredColumns": {
+											"type": "array",
+											"items": { "type": "string" }
+										}
+									},
+									"required": [
+										"fileError",
+										"rows",
+										"sites",
+										"notReconciled",
+										"rejected",
+										"rejectedTotal",
+										"ignoredColumns"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/assessments/proofs": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdAssessmentsProofs",
+				"summary": "Get the record that proves a domain",
+				"description": "Returns the TXT record and the file text that prove the organisation controls a domain. The value belongs to this organisation and this domain, and is not a site record. A domain with a proof on file comes back with proven set.",
+				"tags": ["assessments"],
+				"x-action": "assessment.manage",
+				"x-rate-class": "write",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"domain": { "type": "string", "minLength": 3, "maxLength": 253 }
+								},
+								"required": ["domain"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"domain": { "type": "string" },
+										"proven": { "type": "boolean" },
+										"record": {
+											"type": "object",
+											"properties": {
+												"type": { "type": "string", "const": "TXT" },
+												"name": { "type": "string" },
+												"value": { "type": "string" }
+											},
+											"required": ["type", "name", "value"]
+										},
+										"file": {
+											"type": "object",
+											"properties": {
+												"path": { "type": "string" },
+												"content": { "type": "string" }
+											},
+											"required": ["path", "content"]
+										}
+									},
+									"required": ["domain", "proven", "record", "file"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/assessments/proofs/check": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdAssessmentsProofsCheck",
+				"summary": "Check a domain proof",
+				"description": "Looks for the proof of a domain, in DNS or in the file on the site, and records the domain as proven for the organisation when it finds it. The file is read from the domain over https through the public address guard.",
+				"tags": ["assessments"],
+				"x-action": "assessment.manage",
+				"x-rate-class": "heavy",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"domain": {
+										"type": "string",
+										"minLength": 3,
+										"maxLength": 253
+									},
+									"method": { "type": "string", "enum": ["dns", "http"] }
+								},
+								"required": ["domain", "method"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"domain": { "type": "string" },
+										"proven": { "type": "boolean" },
+										"method": { "type": "string", "enum": ["dns", "http"] },
+										"detail": { "type": "string" }
+									},
+									"required": ["domain", "proven", "method", "detail"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/orgs/{orgId}/entitlement": {
 			"get": {
 				"operationId": "getApiV1OrgsOrgIdEntitlement",
@@ -2773,7 +4773,7 @@
 				"tags": ["orgs"],
 				"x-action": "org.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -3742,7 +5742,7 @@
 				"tags": ["nodes"],
 				"x-action": "node.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -3843,7 +5843,7 @@
 				"tags": ["nodes"],
 				"x-action": "node.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -3927,7 +5927,7 @@
 				"tags": ["nodes"],
 				"x-action": "node.revoke",
 				"x-rate-class": "write",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -4002,6 +6002,341 @@
 										"revokedAt"
 									],
 									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/nodes/{id}/sites": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdNodesIdSites",
+				"summary": "Create a site on a node",
+				"description": "Asks a paired, connected node to add a Drupal site on a host name it will serve, and returns the operation. The box holds the request for its operator to approve, so the operation can wait. The site is listed once the box has added it. Send an Idempotency-Key header; a repeat returns the same operation.",
+				"tags": ["nodes"],
+				"x-action": "node.site.create",
+				"x-rate-class": "heavy",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^nod_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"kind": {
+										"type": "string",
+										"enum": ["drupal", "nuxtpress", "smoke", "mylora", "custom"]
+									},
+									"name": { "type": "string", "minLength": 1, "maxLength": 63 },
+									"host": { "type": "string", "minLength": 1, "maxLength": 253 }
+								},
+								"required": ["kind", "name", "host"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^op_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"type": {
+											"type": "string",
+											"enum": [
+												"site.create",
+												"site.adopt",
+												"site.import",
+												"import.survey",
+												"migration.cutover",
+												"estate.assess",
+												"site.upgrade",
+												"site.rollback",
+												"site.delete",
+												"site.restore",
+												"site.purge",
+												"site.transfer",
+												"config.apply",
+												"git.pull",
+												"git.preview",
+												"modify.apply",
+												"module.install",
+												"module.enable",
+												"domain.attach",
+												"backup.create",
+												"backup.verify",
+												"backup.restore",
+												"backup.export",
+												"env.create",
+												"env.fork",
+												"env.promote",
+												"env.delete",
+												"preview.create",
+												"preview.delete",
+												"repair.run",
+												"node.pair",
+												"node.command",
+												"fleet.upgrade",
+												"repo.install"
+											]
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"planned",
+												"awaiting-approval",
+												"running",
+												"verifying",
+												"succeeded",
+												"failed",
+												"cancelled",
+												"rolled-back"
+											]
+										},
+										"idempotencyKey": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 128
+										},
+										"targetIds": {
+											"type": "array",
+											"items": { "type": "string", "minLength": 1 }
+										},
+										"preconditions": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"planDigest": {
+											"type": "string",
+											"pattern": "^sha256:[0-9a-f]{64}$"
+										},
+										"fencingEpoch": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"blastRadius": {
+											"type": "object",
+											"properties": {
+												"sites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"destructiveSites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"productionDeploys": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											},
+											"required": [
+												"sites",
+												"destructiveSites",
+												"productionDeploys"
+											]
+										},
+										"rollbackPoint": { "type": ["string", "null"] },
+										"cursor": { "type": ["string", "null"] },
+										"steps": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"running",
+															"succeeded",
+															"failed",
+															"skipped"
+														]
+													},
+													"attempt": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"startedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"finishedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"error": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"state",
+													"attempt",
+													"startedAt",
+													"finishedAt",
+													"error"
+												]
+											}
+										},
+										"verification": {
+											"type": "string",
+											"enum": ["pending", "passed", "failed", "not-required"]
+										},
+										"finalObservation": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"at": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														"summary": { "type": "string" }
+													},
+													"required": ["at", "summary"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"budget": {
+											"type": "object",
+											"properties": {
+												"maxDestructiveSites": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"maxConcurrentProductionDeploys": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"elevated": { "type": "boolean" },
+												"bulkDeleteConfirmation": {
+													"type": ["string", "null"]
+												}
+											},
+											"required": [
+												"maxDestructiveSites",
+												"maxConcurrentProductionDeploys",
+												"elevated",
+												"bulkDeleteConfirmation"
+											]
+										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"type",
+										"status",
+										"idempotencyKey",
+										"targetIds",
+										"preconditions",
+										"planDigest",
+										"fencingEpoch",
+										"blastRadius",
+										"rollbackPoint",
+										"cursor",
+										"steps",
+										"verification",
+										"finalObservation",
+										"budget",
+										"createdAt",
+										"updatedAt"
+									]
 								}
 							}
 						}
@@ -4095,7 +6430,7 @@
 				"tags": ["operations"],
 				"x-action": "operation.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -4408,7 +6743,7 @@
 				"tags": ["operations"],
 				"x-action": "operation.retry",
 				"x-rate-class": "heavy",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -4885,7 +7220,7 @@
 				"tags": ["repos"],
 				"x-action": "repo.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -5110,7 +7445,7 @@
 				"tags": ["repos"],
 				"x-action": "repo.read",
 				"x-rate-class": "heavy",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -5384,7 +7719,7 @@
 				"tags": ["sites"],
 				"x-action": "org.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -5559,6 +7894,23 @@
 															"password"
 														]
 													},
+													"box": {
+														"type": "object",
+														"properties": {
+															"found": { "type": "boolean" },
+															"missingSince": {
+																"anyOf": [
+																	{
+																		"type": "string",
+																		"format": "date-time",
+																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+																	},
+																	{ "type": "null" }
+																]
+															}
+														},
+														"required": ["found", "missingSince"]
+													},
 													"createdAt": {
 														"type": "string",
 														"format": "date-time",
@@ -5585,6 +7937,7 @@
 													"hostnames",
 													"release",
 													"admin",
+													"box",
 													"createdAt",
 													"updatedAt"
 												]
@@ -5613,7 +7966,7 @@
 				"tags": ["sites"],
 				"x-action": "site.create",
 				"x-rate-class": "heavy",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -6261,7 +8614,7 @@
 				"tags": ["sites"],
 				"x-action": "site.backup",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -6372,7 +8725,7 @@
 				"tags": ["sites"],
 				"x-action": "site.backup",
 				"x-rate-class": "heavy",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -6754,7 +9107,7 @@
 				"tags": ["sites"],
 				"x-action": "site.restore",
 				"x-rate-class": "heavy",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -7093,7 +9446,7 @@
 				"tags": ["sites"],
 				"x-action": "site.cleanup",
 				"x-rate-class": "heavy",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -7408,7 +9761,7 @@
 				"tags": ["sites"],
 				"x-action": "site.cutover.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -7586,6 +9939,25 @@
 														"exportReference": {
 															"type": ["string", "null"]
 														},
+														"finalChanges": {
+															"anyOf": [
+																{
+																	"type": "string",
+																	"enum": [
+																		"waiting",
+																		"ready",
+																		"none",
+																		"unread"
+																	]
+																},
+																{ "type": "null" }
+															]
+														},
+														"finalStatements": {
+															"type": "integer",
+															"minimum": 0,
+															"maximum": 9007199254740991
+														},
 														"cannotCarry": {
 															"type": "array",
 															"items": { "type": "string" }
@@ -7658,6 +10030,8 @@
 														"observed",
 														"lastHealthy",
 														"exportReference",
+														"finalChanges",
+														"finalStatements",
 														"cannotCarry",
 														"refusal",
 														"reason",
@@ -8180,6 +10554,20 @@
 										},
 										"lastHealthy": { "type": ["boolean", "null"] },
 										"exportReference": { "type": ["string", "null"] },
+										"finalChanges": {
+											"anyOf": [
+												{
+													"type": "string",
+													"enum": ["waiting", "ready", "none", "unread"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"finalStatements": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
 										"cannotCarry": {
 											"type": "array",
 											"items": { "type": "string" }
@@ -8247,6 +10635,8 @@
 										"observed",
 										"lastHealthy",
 										"exportReference",
+										"finalChanges",
+										"finalStatements",
 										"cannotCarry",
 										"refusal",
 										"reason",
@@ -8263,6 +10653,53 @@
 					"403": { "$ref": "#/components/responses/Forbidden" },
 					"404": { "$ref": "#/components/responses/NotFound" },
 					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/cutover/changes": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdSitesIdCutoverChanges",
+				"summary": "Download the changes the new site took",
+				"description": "Streams the changes the new site accepted since the move as one SQL file, written for a MySQL or MariaDB database. It needs a signed-in session, so an API key is refused. Answers 404 until a move has saved its changes. An audit row is written before the download starts.",
+				"tags": ["sites"],
+				"x-action": "site.cutover.export",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
 					"426": { "$ref": "#/components/responses/ContractUnsupported" },
 					"429": { "$ref": "#/components/responses/RateLimited" },
 					"500": { "$ref": "#/components/responses/InternalError" }
@@ -8431,6 +10868,20 @@
 										},
 										"lastHealthy": { "type": ["boolean", "null"] },
 										"exportReference": { "type": ["string", "null"] },
+										"finalChanges": {
+											"anyOf": [
+												{
+													"type": "string",
+													"enum": ["waiting", "ready", "none", "unread"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"finalStatements": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
 										"cannotCarry": {
 											"type": "array",
 											"items": { "type": "string" }
@@ -8498,6 +10949,8 @@
 										"observed",
 										"lastHealthy",
 										"exportReference",
+										"finalChanges",
+										"finalStatements",
 										"cannotCarry",
 										"refusal",
 										"reason",
@@ -8528,7 +10981,7 @@
 				"tags": ["sites"],
 				"x-action": "site.delete",
 				"x-rate-class": "heavy",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -8856,7 +11309,7 @@
 				"tags": ["sites"],
 				"x-action": "site.domain.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -8890,6 +11343,7 @@
 									"type": "object",
 									"properties": {
 										"ready": { "type": "boolean" },
+										"enabled": { "type": "boolean" },
 										"attached": {
 											"type": "array",
 											"items": {
@@ -8916,6 +11370,7 @@
 															"type": "string",
 															"enum": [
 																"running",
+																"waiting",
 																"succeeded",
 																"failed"
 															]
@@ -8972,7 +11427,8 @@
 																		"enum": ["TXT", "CNAME"]
 																	},
 																	"name": { "type": "string" },
-																	"value": { "type": "string" }
+																	"value": { "type": "string" },
+																	"note": { "type": "string" }
 																},
 																"required": [
 																	"purpose",
@@ -8982,12 +11438,23 @@
 																]
 															}
 														},
+														"notice": { "type": ["string", "null"] },
 														"checks": {
 															"type": "integer",
 															"minimum": 0,
 															"maximum": 9007199254740991
 														},
 														"reason": { "type": ["string", "null"] },
+														"expiresAt": {
+															"anyOf": [
+																{
+																	"type": "integer",
+																	"minimum": 0,
+																	"maximum": 9007199254740991
+																},
+																{ "type": "null" }
+															]
+														},
 														"updatedAt": {
 															"type": "integer",
 															"minimum": 0,
@@ -9000,8 +11467,10 @@
 														"status",
 														"stages",
 														"records",
+														"notice",
 														"checks",
 														"reason",
+														"expiresAt",
 														"updatedAt"
 													]
 												},
@@ -9009,7 +11478,7 @@
 											]
 										}
 									},
-									"required": ["ready", "attached", "attach"]
+									"required": ["ready", "enabled", "attached", "attach"]
 								}
 							}
 						}
@@ -9356,6 +11825,242 @@
 				}
 			}
 		},
+		"/api/v1/orgs/{orgId}/sites/{id}/domain/check": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdSitesIdDomainCheck",
+				"summary": "Check the DNS records for a custom domain",
+				"description": "Lists the DNS records the owner adds for the domain in the body and reads each one live, without starting an attach. Each record is found, not found yet, found with a different value, or could not be checked right now; a DNS lookup that fails is never reported as a missing record. The answer also lists hazards: an alias record on a bare domain, other records that point the name elsewhere, CAA records that block the certificate, and a second ownership value. A domain under drupflare.app or drupflare.com is refused, and so is a wildcard. A domain another site holds comes back with held set and no records. Needs a signed-in session. Answers 422 when the site is not a live managed site or the domain is not valid.",
+				"tags": ["sites"],
+				"x-action": "site.domain.check",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"hostname": {
+										"type": "string",
+										"minLength": 3,
+										"maxLength": 253
+									}
+								},
+								"required": ["hostname"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"hostname": { "type": "string" },
+										"apex": { "type": "boolean" },
+										"held": { "type": "boolean" },
+										"routingKnown": { "type": "boolean" },
+										"records": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"purpose": {
+														"type": "string",
+														"enum": [
+															"ownership",
+															"certificate",
+															"traffic"
+														]
+													},
+													"type": {
+														"type": "string",
+														"enum": ["TXT", "CNAME"]
+													},
+													"name": { "type": "string" },
+													"value": { "type": "string" },
+													"note": { "type": "string" },
+													"status": {
+														"type": "string",
+														"enum": [
+															"ok",
+															"missing",
+															"wrong",
+															"unknown"
+														]
+													},
+													"statusText": { "type": "string" },
+													"found": {
+														"type": "array",
+														"items": { "type": "string" }
+													}
+												},
+												"required": [
+													"purpose",
+													"type",
+													"name",
+													"value",
+													"status",
+													"statusText",
+													"found"
+												]
+											}
+										},
+										"hazards": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"code": {
+														"type": "string",
+														"enum": [
+															"apex_cname",
+															"conflicting_records",
+															"caa_blocks",
+															"second_challenge"
+														]
+													},
+													"text": { "type": "string" }
+												},
+												"required": ["code", "text"]
+											}
+										},
+										"unknown": { "type": "boolean" }
+									},
+									"required": [
+										"hostname",
+										"apex",
+										"held",
+										"routingKnown",
+										"records",
+										"hazards",
+										"unknown"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/domain/release": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdSitesIdDomainRelease",
+				"summary": "Cancel a custom domain that is still waiting",
+				"description": "Gives up the domain in the body for the managed site in the path while it waits for the owner or is parked. A running attach stops at its next look and reads as cancelled. The name is free for any site to claim afterwards. A domain that is already set up cannot be cancelled here and answers 409. A repeat, or a domain this site does not hold, answers 200 with released false. Needs a signed-in session with a recent step-up.",
+				"tags": ["sites"],
+				"x-action": "site.domain.manage",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"hostname": {
+										"type": "string",
+										"minLength": 3,
+										"maxLength": 253
+									}
+								},
+								"required": ["hostname"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"hostname": { "type": "string" },
+										"released": { "type": "boolean" }
+									},
+									"required": ["hostname", "released"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/orgs/{orgId}/sites/{id}/first-run-secret": {
 			"get": {
 				"operationId": "getApiV1OrgsOrgIdSitesIdFirstRunSecret",
@@ -9364,7 +12069,7 @@
 				"tags": ["sites"],
 				"x-action": "site.create",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -9425,7 +12130,7 @@
 				"tags": ["sites"],
 				"x-action": "site.create",
 				"x-rate-class": "heavy",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -9487,7 +12192,7 @@
 				"tags": ["sites"],
 				"x-action": "site.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -9815,7 +12520,7 @@
 				"tags": ["repos"],
 				"x-action": "site.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -9917,7 +12622,7 @@
 				"tags": ["repos"],
 				"x-action": "site.remote.manage",
 				"x-rate-class": "write",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -10046,7 +12751,7 @@
 				"tags": ["repos"],
 				"x-action": "site.remote.manage",
 				"x-rate-class": "heavy",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -10359,6 +13064,239 @@
 				}
 			}
 		},
+		"/api/v1/orgs/{orgId}/sites/{id}/rename": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdSitesIdRename",
+				"summary": "Rename a site found on a box",
+				"description": "Changes the name of a site a box reported and the dashboard listed. It is the only kind of site that can be renamed, since the name of any other site is part of its address. The name is 1 to 100 characters and no other live site of the organisation holds it.",
+				"tags": ["sites"],
+				"x-action": "site.update",
+				"x-rate-class": "write",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": { "name": { "type": "string", "maxLength": 256 } },
+								"required": ["name"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^site_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"name": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 100
+										},
+										"kind": {
+											"type": "string",
+											"enum": [
+												"drupal",
+												"nuxtpress",
+												"smoke",
+												"mylora",
+												"custom"
+											]
+										},
+										"category": {
+											"type": "string",
+											"enum": ["cms", "workers"]
+										},
+										"plane": {
+											"type": "string",
+											"enum": ["managed", "self-managed", "self-hosted"]
+										},
+										"config": {
+											"type": "string",
+											"enum": ["managed", "canonical"]
+										},
+										"accountId": {
+											"anyOf": [
+												{ "type": "string", "pattern": "^[0-9a-f]{32}$" },
+												{ "type": "null" }
+											]
+										},
+										"state": {
+											"type": "string",
+											"enum": [
+												"active",
+												"suspended",
+												"tombstoned",
+												"purge-eligible",
+												"deleted"
+											]
+										},
+										"ring": {
+											"type": "string",
+											"enum": ["R0", "R1", "R2", "R3", "R4", "R5"]
+										},
+										"primaryHostname": {
+											"anyOf": [
+												{
+													"type": "string",
+													"maxLength": 253,
+													"pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+												},
+												{ "type": "null" }
+											]
+										},
+										"hostnames": {
+											"type": "array",
+											"items": {
+												"type": "string",
+												"maxLength": 253,
+												"pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+											}
+										},
+										"release": {
+											"type": "object",
+											"properties": {
+												"current": { "type": ["string", "null"] },
+												"available": { "type": ["string", "null"] }
+											},
+											"required": ["current", "available"]
+										},
+										"admin": {
+											"type": "object",
+											"properties": {
+												"username": {
+													"anyOf": [
+														{
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 255
+														},
+														{ "type": "null" }
+													]
+												},
+												"email": {
+													"anyOf": [
+														{
+															"type": "string",
+															"minLength": 1,
+															"maxLength": 320
+														},
+														{ "type": "null" }
+													]
+												},
+												"password": {
+													"type": "string",
+													"enum": [
+														"available",
+														"revealed",
+														"expired",
+														"unknown"
+													]
+												}
+											},
+											"required": ["username", "email", "password"]
+										},
+										"box": {
+											"type": "object",
+											"properties": {
+												"found": { "type": "boolean" },
+												"missingSince": {
+													"anyOf": [
+														{
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														{ "type": "null" }
+													]
+												}
+											},
+											"required": ["found", "missingSince"]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"name",
+										"kind",
+										"category",
+										"plane",
+										"config",
+										"accountId",
+										"state",
+										"ring",
+										"primaryHostname",
+										"hostnames",
+										"release",
+										"admin",
+										"box",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/orgs/{orgId}/sites/{id}/upgrade": {
 			"post": {
 				"operationId": "postApiV1OrgsOrgIdSitesIdUpgrade",
@@ -10367,7 +13305,7 @@
 				"tags": ["sites"],
 				"x-action": "site.upgrade",
 				"x-rate-class": "heavy",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "orgId",
@@ -10674,6 +13612,115 @@
 				}
 			}
 		},
+		"/api/v1/preflight": {
+			"post": {
+				"operationId": "postApiV1Preflight",
+				"summary": "Read what a site shows from outside",
+				"description": "Reads the home page of a public site and up to three small files on the same host, then reports the system and version the site discloses, where it appears to be hosted and what it could not tell. It never says a site is compatible. A refusal names the reason in details.reason.",
+				"tags": ["imports"],
+				"x-action": "migrate.preflight",
+				"x-rate-class": "preflight",
+				"security": [],
+				"parameters": [
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"url": { "type": "string", "minLength": 1, "maxLength": 2048 }
+								},
+								"required": ["url"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"url": { "type": "string" },
+										"reachable": { "type": "boolean" },
+										"cms": {
+											"type": "string",
+											"enum": ["drupal", "wordpress", "joomla", "unknown"]
+										},
+										"version": { "type": ["string", "null"] },
+										"versionSource": { "type": ["string", "null"] },
+										"hosting": { "type": ["string", "null"] },
+										"signals": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"kind": {
+														"type": "string",
+														"enum": [
+															"header",
+															"markup",
+															"file",
+															"robots",
+															"redirect",
+															"status"
+														]
+													},
+													"detail": { "type": "string" }
+												},
+												"required": ["kind", "detail"]
+											}
+										},
+										"verdict": {
+											"type": "string",
+											"enum": [
+												"candidate",
+												"needs upgrade",
+												"not yet supported",
+												"cannot tell"
+											]
+										},
+										"notes": { "type": "array", "items": { "type": "string" } }
+									},
+									"required": [
+										"url",
+										"reachable",
+										"cms",
+										"version",
+										"versionSource",
+										"hosting",
+										"signals",
+										"verdict",
+										"notes"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/sites/{id}": {
 			"get": {
 				"operationId": "getApiV1SitesId",
@@ -10682,7 +13729,7 @@
 				"tags": ["sites"],
 				"x-action": "site.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "id",
@@ -10825,6 +13872,23 @@
 											},
 											"required": ["username", "email", "password"]
 										},
+										"box": {
+											"type": "object",
+											"properties": {
+												"found": { "type": "boolean" },
+												"missingSince": {
+													"anyOf": [
+														{
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														{ "type": "null" }
+													]
+												}
+											},
+											"required": ["found", "missingSince"]
+										},
 										"createdAt": {
 											"type": "string",
 											"format": "date-time",
@@ -10851,6 +13915,7 @@
 										"hostnames",
 										"release",
 										"admin",
+										"box",
 										"createdAt",
 										"updatedAt"
 									]
@@ -10876,7 +13941,7 @@
 				"tags": ["operations"],
 				"x-action": "site.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [
 					{
 						"name": "id",
@@ -11217,7 +14282,7 @@
 				"tags": ["templates"],
 				"x-action": "account.read",
 				"x-rate-class": "read",
-				"security": [{ "session": [] }, { "apiKey": [] }],
+				"security": [{ "apiKey": [] }, { "session": [] }],
 				"parameters": [{ "$ref": "#/components/parameters/ContractHeader" }],
 				"responses": {
 					"200": {
@@ -11293,7 +14358,7 @@
 				"type": "http",
 				"scheme": "bearer",
 				"bearerFormat": "dfk_",
-				"description": "An API key that starts with dfk_. Session-only actions refuse keys."
+				"description": "An API key that starts with dfk_. An action that needs a signed-in session or a fresh sign-in refuses keys."
 			}
 		},
 		"schemas": {

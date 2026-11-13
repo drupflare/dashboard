@@ -8,6 +8,9 @@ import me from '../../../src/server/api/v1/me/index.get';
 import sessionsDelete from '../../../src/server/api/v1/me/sessions.delete';
 import sessionsGet from '../../../src/server/api/v1/me/sessions.get';
 import sessionDelete from '../../../src/server/api/v1/me/sessions/[id].delete';
+import keyRevoke from '../../../src/server/api/v1/orgs/[orgId]/api-keys/[keyId]/revoke.post';
+import keyList from '../../../src/server/api/v1/orgs/[orgId]/api-keys/index.get';
+import keyCreate from '../../../src/server/api/v1/orgs/[orgId]/api-keys/index.post';
 import { ensureCollegeDB } from '../../../src/server/db/collegedb';
 import { personalOrganizationId } from '../../../src/server/db/repos/accounts';
 import { createApiKeyWithLookup } from '../../../src/server/db/repos/api-key-lookup';
@@ -16,6 +19,7 @@ import { verify } from '../../../src/server/services/audit';
 import { authChain } from '../../../src/server/services/auth';
 import { buildServices, type BootEnv } from '../../../src/server/services/boot';
 import { setIdentityServices } from '../../../src/server/services/identities';
+import { setKeyServices } from '../../../src/server/services/key-admin';
 import { SESSION_COOKIE_NAME } from '../../../src/server/services/sessions';
 import { setAuthServices } from '../../../src/server/utils/auth';
 import { resetApiDeps, setApiDeps } from '../../../src/server/utils/define-api';
@@ -64,6 +68,7 @@ beforeEach(() => {
 		codeSecret: SECRET
 	});
 	setIdentityServices(built.identity);
+	setKeyServices(built.keys);
 	setApiDeps(built.api);
 });
 
@@ -71,6 +76,7 @@ afterEach(() => {
 	clock.stop();
 	setAuthServices(null);
 	setIdentityServices(null);
+	setKeyServices(null);
 	resetApiDeps();
 });
 
@@ -294,5 +300,86 @@ describe('API keys through the production stores', () => {
 			.bind(userId)
 			.run();
 		expect((await send(me, ROUTES.me, { headers })).status).toBe(401);
+	});
+
+	it('issues a key from a fresh session, accepts it, and refuses it the moment it is revoked', async () => {
+		const { email, token } = await signIn();
+		const userId = (
+			(await send(me, ROUTES.me, { headers: cookie(token) })).json as { id: string }
+		).id;
+		const orgId = personalOrganizationId(userId);
+		const collection = `/api/v1/orgs/${orgId}/api-keys`;
+		const route = '/api/v1/orgs/:orgId/api-keys';
+
+		clock.advance(61_000);
+		await send(codeRequest, ROUTES.request, { method: 'POST', json: { email } });
+		const stepped = await send(stepUpRoute, ROUTES.stepUp, {
+			method: 'POST',
+			headers: cookie(token),
+			json: { code: mail.lastCode() }
+		});
+		const session = cookie(sessionToken(stepped));
+
+		const made = await send(keyCreate, route, {
+			method: 'POST',
+			path: collection,
+			headers: session,
+			json: { name: 'ci', scopes: ['key.read'], expiry: '30d' }
+		});
+		expect(made.status).toBe(201);
+		const created = made.json as { id: string; token: string; prefix: string };
+		const asKey = { authorization: `Bearer ${created.token}` };
+
+		const stored = await rows<{
+			key_hash: string;
+			scopes: string;
+			last_used_at: number | null;
+		}>('SELECT key_hash, scopes, last_used_at FROM api_keys WHERE id = ?', created.id);
+		expect(stored[0]!.scopes).toBe('["key.read"]');
+		expect(stored[0]!.last_used_at).toBeNull();
+		expect(JSON.stringify(stored)).not.toContain(created.token);
+
+		const listed = await send(keyList, route, { path: collection, headers: asKey });
+		expect(listed.status).toBe(200);
+		expect(listed.text).not.toContain(created.token);
+		expect(listed.json).toMatchObject({
+			items: [{ id: created.id, name: 'ci', prefix: created.prefix, revokedAt: null }]
+		});
+		const used = await rows<{ last_used_at: number | null }>(
+			'SELECT last_used_at FROM api_keys WHERE id = ?',
+			created.id
+		);
+		expect(used[0]!.last_used_at).toBeGreaterThan(0);
+
+		const refused = await send(keyCreate, route, {
+			method: 'POST',
+			path: collection,
+			headers: asKey,
+			json: { name: 'child', scopes: ['key.read'], expiry: '30d' }
+		});
+		expect(refused.status).toBe(403);
+
+		const revoked = await send(keyRevoke, `${route}/:keyId/revoke`, {
+			method: 'POST',
+			path: `${collection}/${created.id}/revoke`,
+			headers: session,
+			json: {}
+		});
+		expect(revoked.status).toBe(200);
+		expect((await send(keyList, route, { path: collection, headers: asKey })).status).toBe(401);
+
+		const trail = await rows<{ action: string; target: string }>(
+			'SELECT action, target FROM audit_log WHERE organization_id = ? AND action LIKE ? ORDER BY seq',
+			orgId,
+			'key.%'
+		);
+		expect(trail.map((row) => row.action)).toEqual([
+			'key.create',
+			'key.issued',
+			'key.create.denied',
+			'key.revoke'
+		]);
+		expect(trail[1]!.target).toBe(created.id);
+		expect(await verify(db, orgId, buildServices(env as BootEnv).heads)).toBeNull();
 	});
 });

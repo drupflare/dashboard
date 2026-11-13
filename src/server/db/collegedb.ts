@@ -8,6 +8,7 @@ import {
 	SCHEMA_VERSION,
 	checkSchemaVersion
 } from './schema';
+import { isUniqueViolation } from './unique';
 
 // directory rows share one shard so the email and provider subject unique indexes hold
 export const DIRECTORY_KEY = 'directory';
@@ -37,9 +38,7 @@ export class DuplicateRowError extends Error {
 	}
 }
 
-export function isUniqueViolation(error: unknown): boolean {
-	return error instanceof Error && /UNIQUE constraint failed/.test(error.message);
-}
+export { isUniqueViolation } from './unique';
 
 export function wasChanged(result: { meta: { changes?: number } }): boolean {
 	return (result.meta.changes ?? 0) > 0;

@@ -4,6 +4,7 @@ import { CUTOVER_MISSING_CONTRACTS } from '../../../engine/src/adapters/cutover-
 import { CryptoError, loadKeyRing, type KeyRing } from '../../shared/custody/envelope';
 import { ApiError } from '../../shared/errors';
 import { PLATFORM_ROLE_PERMISSIONS } from '../../shared/permissions';
+import { nowUtc } from '../../shared/utils/time';
 import { ensureCollegeDB, type CollegeDBEnv } from '../db/collegedb';
 import { personalOrganizationId } from '../db/repos/accounts';
 import { withAtomicBatch } from '../db/repos/atomic-shards';
@@ -45,10 +46,12 @@ import {
 	type CapacityServices
 } from './capacity';
 import { collegeAttemptStore, consoleMailSender, type MailSender } from './email-codes';
+import { resetEstateServices, setEstateServices } from './estate';
 import { collegeFactsStore, factsLoader, type FactsDeps } from './facts';
 import { fleetConfigOf, resetFleetServices, setFleetServices, type FleetServices } from './fleet';
 import { startGitPull } from './git-pull';
 import { collegeIdentityStore, setIdentityServices, type IdentityServices } from './identities';
+import { setKeyServices, type KeyServices } from './key-admin';
 import {
 	resetCutoverServices,
 	setCutoverServices,
@@ -71,6 +74,12 @@ import {
 	type RepoConnectionDeps
 } from './repo-connections';
 import { collegeOnceStore } from './single-use';
+import {
+	domainServicesOf,
+	resetDomainServices,
+	setDomainServices,
+	type DomainServices
+} from './site-domain';
 import {
 	resetSiteHealthServices,
 	setSiteHealthServices,
@@ -342,6 +351,7 @@ export interface BuiltServices {
 	auth: AuthServices;
 	identity: IdentityServices;
 	organizations: OrganizationServices;
+	keys: KeyServices;
 	api: Partial<ApiDeps>;
 	ownerTokens: OwnerTokenStore;
 	sites: SiteServices;
@@ -352,6 +362,7 @@ export interface BuiltServices {
 	siteHealth: Partial<SiteHealthServices>;
 	capacity: Partial<CapacityServices>;
 	repoConnections: RepoConnectionDeps;
+	domain: DomainServices;
 	pendingSecrets: () => Promise<PendingSecretDeps>;
 	heads: HeadStore;
 }
@@ -416,6 +427,11 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			fetch: (input, init) => fetch(input, init)
 		},
 		organizations: { getDb },
+		keys: {
+			getDb,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			now: () => nowUtc().toMillis()
+		},
 		api: {
 			resolvePrincipal: createPrincipalResolver(),
 			idempotency: collegeIdempotencyStore(getDb),
@@ -435,10 +451,18 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 		},
 		ownerTokens,
 		sites: siteServices,
-		backups: backupServicesOf({ BLOB: env.BLOB }, { getDb, startOperation }, heads),
+		backups: backupServicesOf({ BLOB: env.BLOB }, { getDb, startOperation }, heads, {
+			pagedRestore: text(env, 'PAGED_RESTORE') === 'on'
+		}),
 		cutover: {
 			sendEvent: engineEventSender({ ...engineConfigOf(env), now: Date.now }),
 			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			blobs: {
+				async get(key) {
+					const object = await env.BLOB!.get(key);
+					return object === null ? null : new Uint8Array(await object.arrayBuffer());
+				}
+			},
 			adaptersBuilt: CUTOVER_MISSING_CONTRACTS.length === 0
 		},
 		fleet: {
@@ -499,6 +523,10 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 				);
 			}
 		},
+		domain: domainServicesOf({
+			secrets: env as Record<string, string | undefined>,
+			target: text(env, 'CUSTOM_HOSTNAME_TARGET')
+		}),
 		pendingSecrets,
 		heads
 	};
@@ -513,6 +541,7 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	setAuthServices(built.auth);
 	setIdentityServices(built.identity);
 	setOrganizationServices(built.organizations);
+	setKeyServices(built.keys);
 	setApiDeps(built.api);
 	setSiteServices(built.sites);
 	setBackupServices(built.backups);
@@ -522,6 +551,8 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	setSiteHealthServices(built.siteHealth);
 	setCapacityServices(built.capacity);
 	setRepoConnectionDeps(built.repoConnections);
+	setDomainServices(built.domain);
+	setEstateServices({ keys: built.domain.keys, dns: built.domain.resolver });
 	setPendingSecretDeps(built.pendingSecrets);
 	booted = built;
 	return built;
@@ -537,6 +568,7 @@ export function resetBoot(): void {
 	setAuthServices(null);
 	setIdentityServices(null);
 	setOrganizationServices(null);
+	setKeyServices(null);
 	resetApiDeps();
 	resetSiteServices();
 	resetBackupServices();
@@ -546,6 +578,8 @@ export function resetBoot(): void {
 	resetSiteHealthServices();
 	resetCapacityServices();
 	setRepoConnectionDeps(null);
+	resetDomainServices();
+	resetEstateServices();
 	resetPendingSecretDeps();
 }
 

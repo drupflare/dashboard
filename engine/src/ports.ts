@@ -1,7 +1,13 @@
+import type { EstateReport, RowVerdict } from '@contracts/estate';
 import type { AuthorityState } from '@contracts/site-auth';
 import type { SitePlane } from '@contracts/sites';
 import type { UploadMetadata } from '@drupflare/workforce';
+import type { DnsResolver } from '../../src/server/domain/dns-check';
 import type { ClaimRow, Observation } from '../../src/server/domain/domain-attach';
+import type { CommandRequest } from '../../src/server/domain/fleet';
+import type { Challenge, ChallengeInput } from '../../src/shared/custody/challenge';
+import type { EstateRowRecord } from '../../src/shared/estate-sql';
+import type { PreflightResult } from '../../src/shared/preflight';
 import type { BackupRecord, ExportPage } from './backup-parts';
 import type { BundleLimits, BundleManifest, BundleModule } from './bundle';
 import type { Custody, FirstRunAdmin, FirstRunReads, FirstRunSecrets } from './custody';
@@ -13,6 +19,7 @@ import type {
 	RemoteRecord
 } from './git-parts';
 import type { Granted, LeaseRefusal, Refused } from './lease';
+import type { CommandStatus, SendResult } from './node-link';
 import type { OperationStore, SiteRowState } from './operations/store';
 import type { ResourceLedger } from './ownership';
 import type { ResourceKind } from './provision-plan';
@@ -193,14 +200,89 @@ export interface BackupWorker {
 		hostname: string,
 		body: Uint8Array,
 		label: string,
-		auth: OwnerAuth
-	): Promise<{ chunks: number; statements: number }>;
+		auth: OwnerAuth,
+		// a mark id the site opens in the turn that applies the last chunk; echoed when it will
+		mark?: string
+	): Promise<{ chunks: number; statements: number; mark?: string }>;
 	importState(hostname: string, label: string, auth: OwnerAuth): Promise<ImportState>;
 	// where an import stopped and the site's reason, empty when it carries none
 	importReason(hostname: string, label: string, auth: OwnerAuth): Promise<string>;
 	adopting(hostname: string, auth: OwnerAuth): Promise<number>;
 	// files held only in R2, which an export does not carry
 	offloadedFiles(hostname: string, auth: OwnerAuth): Promise<number>;
+
+	// #region the paged restore: whether the site has the routes, then one call per step of the upload
+	pagedRestoreSupported(hostname: string, auth: OwnerAuth): Promise<boolean>;
+	beginRestore(
+		hostname: string,
+		declaration: RestoreDeclaration,
+		auth: OwnerAuth
+	): Promise<RestoreUpload>;
+	putRestorePart(
+		hostname: string,
+		upload: string,
+		part: number,
+		bytes: Uint8Array,
+		sha256: string,
+		auth: OwnerAuth
+	): Promise<void>;
+	// null when the site holds no such upload
+	restoreStatus(hostname: string, upload: string, auth: OwnerAuth): Promise<RestoreUpload | null>;
+	commitRestore(
+		hostname: string,
+		upload: string,
+		auth: OwnerAuth
+	): Promise<{ done: boolean; assembledParts: number; gone: boolean }>;
+	abortRestore(hostname: string, upload: string, auth: OwnerAuth): Promise<void>;
+	// #endregion
+
+	// #region files held only in R2; null when the site has no such route
+	offloadedPage(
+		hostname: string,
+		after: string | null,
+		limit: number,
+		auth: OwnerAuth
+	): Promise<OffloadedPage | null>;
+	offloadedStream(hostname: string, uri: string, auth: OwnerAuth): Promise<OffloadedStream>;
+	// #endregion
+}
+
+export interface RestoreDeclaration {
+	bytes: number;
+	parts: number;
+	// hex digest of the whole dump, the parts joined in order
+	sha256: string;
+	label: string;
+}
+
+export interface RestoreUpload {
+	upload: string;
+	// the part numbers the site already holds
+	receivedParts: number[];
+}
+
+export interface OffloadedFile {
+	uri: string;
+	size: number;
+	contentType: string | null;
+	// hex digest the site recorded, when it recorded one
+	sha256: string | null;
+	modified: number;
+}
+
+export interface OffloadedPage {
+	files: OffloadedFile[];
+	// the uri to pass as after for the next page, null on the last
+	next: string | null;
+	// on the first page only
+	total: { files: number; bytes: number } | null;
+}
+
+// the body is read once, as it arrives, and never held whole
+export interface OffloadedStream {
+	body: ReadableStream<Uint8Array>;
+	size: number;
+	sha256: string | null;
 }
 
 export interface BackupBlobs {
@@ -260,16 +342,79 @@ export interface CutoverSource {
 	restoreWrites(key: string): Promise<void>;
 }
 
+// #region the write count on the new site
+
+export type ChangeDialect = 'mysql' | 'pgsql';
+export type MarkIncomplete = 'journal_full' | 'capture_failed';
+
+export interface MarkCount {
+	mark: string;
+	writes: number;
+	incomplete: MarkIncomplete | null;
+}
+
+export interface ChangeManifest extends MarkCount {
+	through: number;
+	cannotCarry: string[];
+}
+
+// the changes as SQL, read once as they arrive; the site tells how far it read and whether it kept
+// every change
+export interface ChangeBody {
+	stream: ReadableStream<Uint8Array>;
+	through: number;
+	// the write number the list starts after; -1 when the site did not say, which is a site that
+	// ignores the field
+	since: number;
+	incomplete: MarkIncomplete | null;
+}
+
+// 'none' is a site that has the routes and no active mark; 'missing' is one that does not have them
+export interface WriteMarkWorker {
+	supported(hostname: string, auth: OwnerAuth): Promise<boolean>;
+	start(
+		hostname: string,
+		mark: string,
+		auth: OwnerAuth
+	): Promise<'started' | 'existing' | 'taken' | 'missing'>;
+	read(hostname: string, auth: OwnerAuth): Promise<MarkCount | 'none' | 'missing'>;
+	end(hostname: string, mark: string, auth: OwnerAuth): Promise<void>;
+	manifest(
+		hostname: string,
+		auth: OwnerAuth,
+		through?: number
+	): Promise<ChangeManifest | 'none' | 'missing'>;
+	body(hostname: string, through: number, auth: OwnerAuth, since?: number): Promise<ChangeBody>;
+}
+
+// #endregion
+
 export interface CutoverDestination {
 	// null when the snapshot plus the delta load and match, otherwise the plain problem
 	validate(key: string, snapshot: string, delta: string): Promise<string | null>;
-	promote(key: string, snapshot: string, delta: string): Promise<void>;
+	// counting is true when the new site opened the count with the copy, so no second call is owed
+	promote(key: string, snapshot: string, delta: string): Promise<{ counting: boolean }>;
 	// the address that moves, since the destination knows only its own
 	route(key: string, to: 'destination' | 'source', hostname: string): Promise<void>;
-	acceptedWrites(): Promise<number>;
-	observe(): Promise<{ healthy: boolean; writes: number }>;
-	// the changes accepted since promote, and what the path back to the source cannot carry
-	exportChanges(key: string): Promise<{ reference: string; cannotCarry: string[] }>;
+	// starts counting the writes the new site accepts; a repeat with the same key changes nothing
+	startCounting(key: string): Promise<void>;
+	// ends the count so the site stops recording each write
+	stopCounting(key: string): Promise<void>;
+	acceptedWrites(key: string): Promise<number>;
+	observe(key: string): Promise<{ healthy: boolean; writes: number }>;
+	// the changes accepted since the count started, and what the path back to the source cannot
+	// carry. The dialect is the one the old site's database speaks
+	exportChanges(
+		key: string,
+		dialect: ChangeDialect
+	): Promise<{ reference: string; cannotCarry: string[]; through: number }>;
+	// the changes accepted after the first file's `through`, added to the same saved file as its
+	// next parts. statements is 0 when nothing arrived since
+	exportFinalChanges(
+		key: string,
+		dialect: ChangeDialect,
+		since: number
+	): Promise<{ cannotCarry: string[]; statements: number }>;
 }
 
 export interface CutoverPorts {
@@ -311,11 +456,24 @@ export interface ConvertedChunk {
 }
 
 export interface SqlConverter {
+	// a mysqldump, one window at a time
 	convertChunk(bytes: Uint8Array, last: boolean): Promise<ConvertedChunk>;
+	// a pg_dump states a table across several statements and types a COPY row by its table, so it is
+	// read in two passes: scan finds each cut and the statements that are not data, schema turns
+	// those into the tables and the indexes, and data converts one cut with them
+	scanPg(bytes: Uint8Array, last: boolean): Promise<{ cut: number; ddl: string }>;
+	schemaPg(ddl: string): Promise<{ tables: string; indexes: string; lossy: string[] }>;
+	dataPg(bytes: Uint8Array, ddl: string): Promise<ConvertedChunk>;
 }
 
+export type DumpDialect = 'mysql' | 'pgsql';
+
 export interface DumpJob {
-	kind: 'database' | 'files';
+	kind: 'database' | 'files' | 'private';
+	// the private files folder as the server reports it, for a private job
+	path?: string;
+	// what the database job dumps; mysql when absent
+	dialect?: DumpDialect;
 	// every part of a job lives under this prefix and is keyed by its index
 	prefix: string;
 	partBytes: number;
@@ -457,26 +615,129 @@ export type DomainClaim =
 			// the claim another site held, when this one took the hostname over
 			previous: ClaimRow | null;
 	  }
-	| { ok: false };
+	// `unproven` means an unproven live claim holds the name and the challenger showed no proof
+	| { ok: false; unproven?: boolean };
+
+// whether the challenger's own ownership value is published for the epoch a takeover would use
+export type ClaimProof = (epoch: number) => Promise<boolean>;
 
 // one row per hostname that is never deleted, so its epoch only rises
 export interface DomainLedger {
 	site(siteId: string): Promise<DomainSite | null>;
+	// with a proof, an unproven claim can be contested and an expired one is released; without one the
+	// ledger behaves as it always did
 	claim(
 		hostname: string,
 		who: { organizationId: string; siteId: string; operationId: string },
-		now: number
+		now: number,
+		proof?: ClaimProof
 	): Promise<DomainClaim>;
 	current(hostname: string): Promise<ClaimRow | null>;
 	// each write names the epoch it was made under and does nothing when the hostname has moved on
 	setProvider(hostname: string, epoch: number, providerId: string): Promise<boolean>;
 	markRouted(hostname: string, epoch: number, siteId: string): Promise<boolean>;
 	release(hostname: string, epoch: number, siteId: string): Promise<boolean>;
+	// records that the owner proved the domain under this epoch
+	proveOwnership(hostname: string, epoch: number, siteId: string): Promise<boolean>;
+	// the claims a site holds that are not released
+	heldBy(siteId: string): Promise<ClaimRow[]>;
 }
 
 export interface DomainDeps extends EngineDeps {
 	hostnames: CustomHostnames;
 	domains: DomainLedger;
+	dns: DnsResolver;
+	// the ownership value for a claim, derived from the key ring and never stored
+	challenge(input: ChallengeInput): Promise<Challenge>;
+	// the name visitors point at; null while custom domains are off
+	target: string | null;
+}
+
+// #endregion
+
+// #region nodes
+
+// a paired box as the engine reads it, and the commands it takes through the node's session
+export interface NodeFacts {
+	id: string;
+	orgId: string;
+	state: 'active' | 'revoked';
+	lastSeenAt: number | null;
+}
+
+export interface NodeCommands {
+	node(nodeId: string): Promise<NodeFacts | null>;
+	// the same operation, step and key is one command, so a repeat sends nothing new
+	send(nodeId: string, request: CommandRequest): Promise<SendResult>;
+	status(
+		nodeId: string,
+		ref: { opId: string; stepId: string; idempotencyKey: string }
+	): Promise<CommandStatus>;
+}
+
+export interface NodeSiteRow {
+	organizationId: string;
+	plane: SitePlane;
+	state: SiteRowState;
+	readyAt: number | null;
+	nodeId: string | null;
+}
+
+export interface NodeSites {
+	get(siteId: string): Promise<NodeSiteRow | null>;
+	// makes the site ready on this node; a repeat changes nothing
+	bind(siteId: string, nodeId: string, releaseId: string, now: number): Promise<void>;
+	// the site of a create that ended without a box site
+	retire(siteId: string, now: number): Promise<void>;
+}
+
+export interface NodeSiteDeps extends EngineDeps {
+	nodes: NodeCommands;
+	sites: NodeSites;
+	domains: Pick<DomainLedger, 'claim' | 'current' | 'markRouted' | 'release'>;
+}
+
+// #endregion
+
+// #region estate
+
+export interface EstateAssessmentFacts {
+	state: string;
+	rowCount: number;
+	// JSON list of { server, credentialId }
+	access: string;
+}
+
+export interface EstateStore {
+	assessment(orgId: string, id: string): Promise<EstateAssessmentFacts | null>;
+	numbers(orgId: string, id: string): Promise<number[]>;
+	row(orgId: string, id: string, number: number): Promise<EstateRowRecord | null>;
+	page(orgId: string, id: string, after: number, count: number): Promise<EstateRowRecord[]>;
+	// moves the assessment from preparing to running; a repeat changes nothing
+	start(orgId: string, id: string, now: number): Promise<void>;
+	begin(orgId: string, id: string, number: number, now: number): Promise<void>;
+	finishRow(
+		orgId: string,
+		id: string,
+		number: number,
+		verdict: RowVerdict,
+		now: number
+	): Promise<void>;
+	// rows that never started or never finished become skipped
+	skip(orgId: string, id: string, now: number): Promise<void>;
+	finish(
+		orgId: string,
+		id: string,
+		report: EstateReport | null,
+		state: 'finished' | 'failed',
+		now: number
+	): Promise<void>;
+}
+
+export interface EstateDeps extends ImportDeps {
+	estate: EstateStore;
+	// the public URL-only check for one hostname
+	preflight(hostname: string): Promise<PreflightResult>;
 }
 
 // #endregion

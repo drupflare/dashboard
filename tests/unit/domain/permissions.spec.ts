@@ -44,6 +44,7 @@ describe('permissions table', () => {
 			'site.delete',
 			'site.domain.manage',
 			'site.domain.read',
+			'site.domain.check',
 			'site.domain.rename',
 			'site.grant.manage',
 			'site.owner-token.reveal'

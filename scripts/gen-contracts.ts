@@ -335,6 +335,46 @@ async function fleetLinkVectors(keys: Record<KeyLabel, SigningKey & { seed: stri
 		}
 	};
 
+	const siteAdd: Json = {
+		...base,
+		id: 'msg_command_0002',
+		type: 'command',
+		seq: 3,
+		body: {
+			nodeId: NODE,
+			opId: OP,
+			stepId: 'add',
+			idempotencyKey: 'op_testop000001:add',
+			expiresAt: VECTOR_NOW + 900_000,
+			class: 'stateful',
+			approval: 'local',
+			action: 'site.add',
+			params: {
+				host: 'www.example.org',
+				bundle: 'https://releases.example.org/payload-1.0.5.tar.gz',
+				checksum: `sha256:${'ab'.repeat(32)}`
+			}
+		}
+	};
+	const addResult = (name: string, seq: number, outcome: string, code: string | null): Json => ({
+		...base,
+		id: `msg_${name}_0001`,
+		type: 'command.result',
+		seq,
+		body: {
+			opId: OP,
+			stepId: 'add',
+			idempotencyKey: 'op_testop000001:add',
+			outcome,
+			code,
+			deploy: null
+		}
+	});
+	unsigned.siteAddQueued = addResult('addqueued', 7, 'queued', null);
+	unsigned.siteAddDone = addResult('adddone', 8, 'succeeded', null);
+	unsigned.siteAddExists = addResult('addexists', 9, 'failed', 'site_exists');
+	unsigned.siteAddUnsupported = addResult('addold', 10, 'rejected', 'unsupported_action');
+
 	const siteMap: Json = {
 		...base,
 		id: 'msg_sites_0001',
@@ -369,6 +409,16 @@ async function fleetLinkVectors(keys: Record<KeyLabel, SigningKey & { seed: stri
 		input: signedCommand,
 		context: serverCtx,
 		signing: signingInput(ENVELOPE_CONTEXT, omitSig(signedCommand as { sig: string }))
+	});
+	const signedAdd = await sign(siteAdd, keys.dashboard);
+	positive(cases, {
+		name: 'server-command-site-add',
+		kind: 'envelope',
+		description:
+			'A signed site.add command: a host, a bundle url and a checksum, nothing else.',
+		input: signedAdd,
+		context: serverCtx,
+		signing: signingInput(ENVELOPE_CONTEXT, omitSig(signedAdd as { sig: string }))
 	});
 	const signedSites = await sign(siteMap, keys.dashboard);
 	positive(cases, {

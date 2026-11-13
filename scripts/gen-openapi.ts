@@ -5,7 +5,8 @@ import { format } from 'prettier';
 import { z } from 'zod';
 import { COMMON_VERSION, errorEnvelope } from '../contracts/src/common';
 import { API_TAGS } from '../src/server/api-tags';
-import { isAction, isPublicAction, isSessionOnly } from '../src/shared/permissions';
+import { keyUsable } from '../src/server/domain/scopes';
+import { isAction, isPublicAction } from '../src/shared/permissions';
 
 const here = dirname(fileURLToPath(import.meta.url));
 export const API_ROOT = resolve(here, '../src/server/api');
@@ -13,6 +14,12 @@ export const OUTPUT = resolve(here, '../contracts/openapi.json');
 
 // mirrors the cookie name in the sessions service
 const SESSION_COOKIE_NAME = '__Host-drupflare_session';
+
+// the only host a client may send a credential to; an MCP gateway reads it from the servers list
+export const PRODUCTION_ORIGIN = 'https://app.drupflare.com';
+
+// MCP clients refuse a tool name longer than this, and the tool name is the operation id
+export const MAX_OPERATION_ID = 64;
 
 const METHODS = ['get', 'post', 'put', 'patch', 'delete'] as const;
 export type Method = (typeof METHODS)[number];
@@ -230,7 +237,8 @@ function components() {
 				type: 'http',
 				scheme: 'bearer',
 				bearerFormat: 'dfk_',
-				description: 'An API key that starts with dfk_. Session-only actions refuse keys.'
+				description:
+					'An API key that starts with dfk_. An action that needs a signed-in session or a fresh sign-in refuses keys.'
 			}
 		},
 		schemas: { Error: jsonSchema(errorEnvelope, 'output') },
@@ -311,10 +319,13 @@ function pascal(text: string): string {
 		.join('');
 }
 
+// a key can call only what keyUsable allows. The key comes first: a gateway that holds one
+// Authorization value would otherwise satisfy the cookie scheme with it and never send the bearer
 function security(action: string, scope: string): Record<string, string[]>[] {
 	if (scope === 'public') return [];
-	const sessionOnly = isAction(action) && isSessionOnly(action);
-	return sessionOnly ? [{ session: [] }] : [{ session: [] }, { apiKey: [] }];
+	return isAction(action) && keyUsable(action)
+		? [{ apiKey: [] }, { session: [] }]
+		: [{ session: [] }];
 }
 
 function operation(route: RouteEntry): Record<string, unknown> {
@@ -343,8 +354,14 @@ function operation(route: RouteEntry): Record<string, unknown> {
 	responses['429'] = ref('responses', 'RateLimited');
 	responses['500'] = ref('responses', 'InternalError');
 
+	const operationId = `${method}${pascal(path)}`;
+	if (operationId.length > MAX_OPERATION_ID) {
+		throw new Error(
+			`${operationId} is ${operationId.length} characters; the limit is ${MAX_OPERATION_ID}`
+		);
+	}
 	const op: Record<string, unknown> = {
-		operationId: `${method}${pascal(path)}`,
+		operationId,
 		summary: meta.summary,
 		...(meta.description ? { description: meta.description } : {}),
 		tags: [...meta.tags],
@@ -385,6 +402,7 @@ export function buildSpec(routes: readonly RouteEntry[]): Record<string, unknown
 			description:
 				'The HTTP API behind the Drupflare dashboard. Every operation names the permission it checks in x-action and its rate class in x-rate-class.'
 		},
+		servers: [{ url: PRODUCTION_ORIGIN, description: 'Production' }],
 		tags: API_TAGS.map(({ name, description }) => ({ name, description })),
 		paths,
 		components: components()

@@ -87,7 +87,7 @@ export const EFFORT: readonly EffortRow[] = [
 		mustKnowToday: [
 			'A restore replaces the target database, and the screen does not say what happens to its files or caches',
 			'A restore goes into another site only',
-			'A dump above 16 MiB cannot be restored',
+			'A dump above 16 MiB restores only into a site that has the paged restore, and one above 128 MiB cannot be restored',
 			'A dump leaves out hash_salt unless secrets are included',
 			'Point-in-time recovery covers 30 days'
 		],
@@ -377,5 +377,22 @@ export const EFFORT: readonly EffortRow[] = [
 		blockedBy: null,
 		leftAfter: 'When to run it.',
 		scheduled: 'Repair catalogue'
+	},
+	{
+		id: 'assess-estate',
+		task: 'Check a list of sites before a migration',
+		mustKnowToday: [
+			'Only the hostname column is required, and a row without one is left out with its line number',
+			'The public check reads each site address; an unproven domain gets five checks a run, and the rest stop at Needs Proof',
+			'Effort and the migration window are never estimated, and the report says so'
+		],
+		screens: 2,
+		workerRoute: 'POST /api/v1/orgs/{orgId}/assessments',
+		dashboardOperation: 'estate.assess',
+		state: 'partial',
+		blockedBy: null,
+		leftAfter:
+			'Proving a domain, and choosing the key for a server survey, which the page does not offer yet.',
+		scheduled: 'Migration'
 	}
 ];

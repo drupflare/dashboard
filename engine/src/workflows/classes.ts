@@ -5,8 +5,10 @@ import {
 	buildCutoverDeps,
 	buildDeps,
 	buildDomainDeps,
+	buildEstateDeps,
 	buildGitDeps,
 	buildImportDeps,
+	buildNodeSiteDeps,
 	type EngineEnv
 } from '../env';
 import { PermanentError, StepFailed, type StepRunner } from '../step';
@@ -14,6 +16,7 @@ import { runBackupCreate, type BackupCreateInput } from './backup-create';
 import { runBackupRestore, type BackupRestoreInput } from './backup-restore';
 import type { Outcome } from './common';
 import { runDomainAttach, type DomainAttachInput, type DomainRunner } from './domain-attach';
+import { runEstateAssess, type EstateAssessInput } from './estate-assess';
 import { runGitPull, type GitPullInput } from './git-pull';
 import { runImportSurvey, type ImportSurveyInput } from './import-survey';
 import {
@@ -21,6 +24,7 @@ import {
 	type CutoverRunner,
 	type MigrationCutoverInput
 } from './migration-cutover';
+import { runNodeSiteCreate, type NodeRunner, type NodeSiteCreateInput } from './node-site-create';
 import { runSiteAdopt, type SiteAdoptInput } from './site-adopt';
 import { runSiteCleanup, type SiteCleanupInput } from './site-cleanup';
 import { runSiteCreate, type SiteCreateInput } from './site-create';
@@ -96,7 +100,7 @@ export class SiteDelete extends WorkflowEntrypoint<EngineEnv, SiteDeleteInput> {
 		event: Readonly<WorkflowEvent<SiteDeleteInput>>,
 		step: WorkflowStep
 	): Promise<Outcome> {
-		return runSiteDelete(runnerOf(step), await buildDeps(this.env), event.payload);
+		return runSiteDelete(runnerOf(step), await buildDomainDeps(this.env), event.payload);
 	}
 }
 
@@ -193,6 +197,15 @@ export class MigrationCutover extends WorkflowEntrypoint<EngineEnv, MigrationCut
 	}
 }
 
+export class EstateAssess extends WorkflowEntrypoint<EngineEnv, EstateAssessInput> {
+	async run(
+		event: Readonly<WorkflowEvent<EstateAssessInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runEstateAssess(runnerOf(step), await buildEstateDeps(this.env), event.payload);
+	}
+}
+
 export class GitPull extends WorkflowEntrypoint<EngineEnv, GitPullInput> {
 	async run(event: Readonly<WorkflowEvent<GitPullInput>>, step: WorkflowStep): Promise<Outcome> {
 		return runGitPull(runnerOf(step), await buildGitDeps(this.env), event.payload);
@@ -219,6 +232,26 @@ export class DomainAttach extends WorkflowEntrypoint<EngineEnv, DomainAttachInpu
 	}
 }
 
+function nodeRunnerOf(step: WorkflowStep): NodeRunner {
+	return {
+		...runnerOf(step),
+		sleep: (name, ms) => step.sleep(name, ms)
+	};
+}
+
+export class NodeSiteCreate extends WorkflowEntrypoint<EngineEnv, NodeSiteCreateInput> {
+	async run(
+		event: Readonly<WorkflowEvent<NodeSiteCreateInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runNodeSiteCreate(
+			nodeRunnerOf(step),
+			await buildNodeSiteDeps(this.env),
+			event.payload
+		);
+	}
+}
+
 export class SiteCleanup extends WorkflowEntrypoint<EngineEnv, SiteCleanupInput> {
 	async run(
 		event: Readonly<WorkflowEvent<SiteCleanupInput>>,
@@ -233,6 +266,6 @@ export class SitePurge extends WorkflowEntrypoint<EngineEnv, SitePurgeInput> {
 		event: Readonly<WorkflowEvent<SitePurgeInput>>,
 		step: WorkflowStep
 	): Promise<Outcome> {
-		return runSitePurge(runnerOf(step), await buildDeps(this.env), event.payload);
+		return runSitePurge(runnerOf(step), await buildDomainDeps(this.env), event.payload);
 	}
 }

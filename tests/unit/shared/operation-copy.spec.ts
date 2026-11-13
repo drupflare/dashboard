@@ -15,9 +15,12 @@ import {
 	failureReason,
 	GENERIC_STEP_LABEL,
 	GENERIC_TYPE_LABEL,
+	IMPORT_ROUTE_REFUSALS,
 	importRefusalReason,
 	LARGER_RESTORE_TITLE,
 	needsLargerRestore,
+	nodeSiteFailureReason,
+	nodeSiteRefusalReason,
 	OPERATION_COPY,
 	operationTypeLabel,
 	pullRefusalReason,
@@ -40,7 +43,8 @@ const COVERED = [
 	'backup.create',
 	'backup.restore',
 	'git.pull',
-	'domain.attach'
+	'domain.attach',
+	'node.command'
 ];
 const WORKFLOWS = fileURLToPath(new URL('../../../engine/src/workflows/', import.meta.url));
 
@@ -50,7 +54,7 @@ function enginePlanSteps(): { type: string; id: string }[] {
 	for (const file of readdirSync(WORKFLOWS).filter((name) => name.endsWith('.ts'))) {
 		const text = readFileSync(WORKFLOWS + file, 'utf8');
 		const marks = [
-			...text.matchAll(/type: '((?:site|backup|migration|import|git|domain)\.[a-z-]+)'/g)
+			...text.matchAll(/type: '((?:site|backup|migration|import|git|domain|node)\.[a-z-]+)'/g)
 		];
 		marks.forEach((mark, i) => {
 			const type = mark[1] ?? '';
@@ -69,7 +73,7 @@ function enginePlanSteps(): { type: string; id: string }[] {
 const IDENTIFIER = /[a-z0-9]\.[a-z]|[a-z]-[a-z]|_/;
 
 describe('operation copy', () => {
-	it('covers the nine operations the progress screen names, and no other', () => {
+	it('covers the operations the progress screen names, and no other', () => {
 		expect(Object.keys(OPERATION_COPY).sort()).toEqual([...COVERED].sort());
 		for (const type of COVERED) expect(OPERATION_TYPES).toContain(type);
 	});
@@ -333,9 +337,9 @@ describe('adoption copy', () => {
 			failedStep: 'export',
 			failedError: failed
 		});
-		expect(reason).toContain('16 MiB');
+		expect(reason).toContain('larger than a managed site can restore');
 		expect(reason).toContain('Nothing was created');
-		expect(reason).toContain('paged restore');
+		expect(reason).not.toContain('MiB');
 		expect(reason).not.toContain('restore_too_large');
 	});
 
@@ -346,7 +350,12 @@ describe('adoption copy', () => {
 		['no_owner_token', 'no owner access'],
 		['site_not_ready', 'The site is not live'],
 		['unsupported_kind', 'cannot be adopted yet'],
-		['files_outside_database', 'live only in object storage']
+		['files_outside_database', 'live only in object storage'],
+		['files_unsupported', 'needs an update'],
+		['files_too_many', 'more files in object storage'],
+		['restore_too_large', 'larger than a managed site can restore'],
+		['restore_unsupported', 'too large for the version'],
+		['restore_stalled', 'stopped partway']
 	])('turns the %s code into a plain reason with no code in it', (code, text) => {
 		const reason = failureReason({
 			type: 'site.adopt',
@@ -547,7 +556,10 @@ describe('import copy', () => {
 		['dump_failed', 'did not finish'],
 		['unsupported_statement', 'cannot store'],
 		['no_statement_boundary', 'too large to copy'],
-		['restore_too_large', 'paged restore'],
+		['restore_too_large', 'larger than this site'],
+		['restore_unsupported', 'too large for the version'],
+		['restore_unaligned', 'too large to send in pieces'],
+		['restore_busy', 'already loading'],
 		['files_unreadable', 'files was cut short'],
 		['files_bad_path', 'name that cannot be carried'],
 		['files_too_many', 'more files'],
@@ -577,15 +589,48 @@ describe('import copy', () => {
 		).toBe('Stopped while sending the database to the new site.');
 	});
 
-	it('names the 16 MiB limit when the database is too large', () => {
+	it('names the site version and no number when the database is too large', () => {
+		const reason = failureReason({
+			type: 'site.import',
+			status: 'rolled-back',
+			failedStep: 'dump',
+			failedError: 'restore_too_large: the database is larger'
+		});
+		expect(reason).toContain("this site's version");
+		expect(reason).not.toMatch(/MiB|\d/);
+	});
+
+	it('counts the files that could not be copied and never lists a path', () => {
+		const reason = failureReason({
+			type: 'site.adopt',
+			status: 'rolled-back',
+			failedStep: 'files-copy',
+			failedError: 'files_copy_failed: 3 of 40 files could not be read from the site'
+		});
+		expect(reason).toBe(
+			'3 files could not be copied from the site. Nothing was left behind and the site was not changed. Try again.'
+		);
 		expect(
 			failureReason({
-				type: 'site.import',
+				type: 'site.adopt',
 				status: 'rolled-back',
-				failedStep: 'dump',
-				failedError: 'restore_too_large: the database is larger'
+				failedStep: 'files-copy',
+				failedError: 'files_copy_failed: 1 of 2 files could not be read from the site'
 			})
-		).toContain('16 MiB');
+		).toContain('1 file could not');
+		expect(
+			failureReason({
+				type: 'site.adopt',
+				status: 'failed',
+				failedStep: 'files-copy',
+				failedError: 'files_copy_failed: unreadable'
+			})
+		).toContain('Some files could not be copied');
+	});
+
+	it('gives the file copy step of an adoption a plain phrase', () => {
+		expect(stepLabel('site.adopt', 'files-copy')).not.toBe(GENERIC_STEP_LABEL);
+		expect(stepLabel('site.adopt', 'files-copy')).not.toMatch(/R2|worker|digest|route/i);
 	});
 
 	it.each([
@@ -610,6 +655,26 @@ describe('import copy', () => {
 		expect(
 			importRefusalReason({ details: { reason: 'new_thing' }, message: 'server words' })
 		).toBe('server words');
+	});
+
+	it('keeps every import route refusal free of internal terms and raw codes', () => {
+		for (const sentence of Object.values(IMPORT_ROUTE_REFUSALS)) {
+			expect(sentence).not.toMatch(/\b(worker|durable|workflow|container|namespace|kv)\b/i);
+			expect(sentence).not.toMatch(/\b[a-z]+_[a-z_]+\b/);
+		}
+	});
+
+	it('sends a failed import or check back to the import page, and names the Owner sign-in after an import', () => {
+		const operation = { targetIds: [] } as Parameters<OperationCopy['failureLink']>[0];
+		expect(copyFor('site.import').failureLink(operation)).toEqual({
+			to: '/new/import',
+			label: 'Back to Import'
+		});
+		expect(copyFor('import.survey').failureLink(operation)).toEqual({
+			to: '/new/import',
+			label: 'Back to Import'
+		});
+		expect(copyFor('site.import').success).toContain('Sign in as the Owner');
 	});
 });
 
@@ -790,6 +855,57 @@ describe('domain attach copy', () => {
 			/custom hostname/i,
 			/authority/i
 		]) {
+			expect(lines.join(' ')).not.toMatch(word);
+		}
+	});
+});
+
+describe('adding a site to a box', () => {
+	it('names the step a failure stopped at and the reason a box gave', () => {
+		expect(copyFor('node.command').title).toBe('Adding Your Site to Your Box');
+		expect(
+			failureReason({
+				type: 'node.command',
+				status: 'failed',
+				failedStep: 'wait',
+				failedError: 'site_exists: this host is already on the box'
+			})
+		).toBe(nodeSiteFailureReason('site_exists'));
+		expect(
+			failureReason({
+				type: 'node.command',
+				status: 'failed',
+				failedStep: 'wait',
+				failedError: 'something odd'
+			})
+		).toBe(
+			'Stopped while waiting for your box to add the site, which may need approval there.'
+		);
+	});
+
+	it('answers an unknown code with the generic box failure and a refusal with its sentence', () => {
+		expect(nodeSiteFailureReason('nope')).toBe(nodeSiteFailureReason('box_failed'));
+		expect(
+			nodeSiteRefusalReason({ details: { reason: 'node_offline' }, message: 'server text' })
+		).toBe(nodeSiteFailureReason('node_offline'));
+		expect(nodeSiteRefusalReason({ details: null, message: 'server text' })).toBe(
+			'server text'
+		);
+	});
+
+	it('keeps infrastructure words out of the lines the owner reads', () => {
+		const copy = copyFor('node.command');
+		const lines = [copy.title, copy.running, copy.success, copy.failure];
+		for (const code of [
+			'box_too_old',
+			'declined_at_box',
+			'not_approved',
+			'no_tenant',
+			'capacity_exceeded'
+		]) {
+			lines.push(nodeSiteFailureReason(code));
+		}
+		for (const word of [/workerd/i, /namespace/i, /durable object/i, /idempotency/i]) {
 			expect(lines.join(' ')).not.toMatch(word);
 		}
 	});

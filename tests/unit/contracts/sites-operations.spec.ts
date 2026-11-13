@@ -43,6 +43,7 @@ describe('sites', () => {
 		hostnames: ['campus.drupflare.app', 'www.example.edu'],
 		release: { current: 'v1.0.4', available: 'v1.0.5' },
 		admin: { username: 'admin', email: 'owner@example.edu', password: 'available' },
+		box: { found: false, missingSince: null },
 		createdAt: at,
 		updatedAt: at
 	};
@@ -97,8 +98,8 @@ describe('sites', () => {
 		expect(siteIdFromScript(`s-${site.id}`)).toBeNull();
 	});
 
-	it('is version 1.2 and lists the two categories and the two configs', () => {
-		expect(SITES_VERSION).toEqual({ major: 1, minor: 2 });
+	it('is version 1.3 and lists the two categories and the two configs', () => {
+		expect(SITES_VERSION).toEqual({ major: 1, minor: 3 });
 		expect(SITE_CATEGORIES).toEqual(['cms', 'workers']);
 		expect(SITE_CONFIGS).toEqual(['managed', 'canonical']);
 	});
@@ -111,14 +112,23 @@ describe('sites', () => {
 	});
 
 	it('parses a 1.0 document by giving it the category of its kind, the canonical config and no account', () => {
-		const { category: _c, config: _f, accountId: _a, release: _r, admin: _d, ...old } = site;
+		const {
+			category: _c,
+			config: _f,
+			accountId: _a,
+			release: _r,
+			admin: _d,
+			box: _b,
+			...old
+		} = site;
 		expect(siteSchema.parse(old)).toEqual({
 			...old,
 			category: 'cms',
 			config: 'canonical',
 			accountId: null,
 			release: { current: null, available: null },
-			admin: { username: null, email: null, password: 'unknown' }
+			admin: { username: null, email: null, password: 'unknown' },
+			box: { found: false, missingSince: null }
 		});
 		const worker = siteSchema.parse({ ...old, kind: 'nuxtpress' });
 		expect(worker).toMatchObject({ kind: 'nuxtpress', category: 'workers' });
@@ -132,6 +142,15 @@ describe('sites', () => {
 		const odd = { ...site, admin: { ...site.admin, password: 'shown' } };
 		expect(siteSchema.safeParse(odd).success).toBe(false);
 		expect(siteSchema.safeParse({ ...site, admin: { username: null } }).success).toBe(false);
+	});
+
+	it('keeps a stated box state and refuses a half-stated one', () => {
+		const gone = { ...site, box: { found: true, missingSince: at } };
+		expect(siteSchema.parse(gone)).toEqual(gone);
+		expect(siteSchema.safeParse({ ...site, box: { found: true } }).success).toBe(false);
+		expect(
+			siteSchema.safeParse({ ...site, box: { found: true, missingSince: 'x' } }).success
+		).toBe(false);
 	});
 
 	it('keeps a stated category, config and account over the defaults', () => {
