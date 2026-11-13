@@ -2,7 +2,7 @@ import { mountSuspended } from '@nuxt/test-utils/runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SitePage from '~/pages/sites/[id]/index.vue';
 import { useSessionStore } from '~/stores/session';
-import { clearBrowserState, registerApi, type Reply } from '../stores/store-support';
+import { calls, clearBrowserState, registerApi, type Reply } from '../stores/store-support';
 
 const me = {
 	id: 'usr_1',
@@ -36,6 +36,7 @@ let cleanup: () => void = () => undefined;
 let siteReply: () => Reply | Promise<Reply>;
 let opsReply: () => Reply | Promise<Reply>;
 let stateReply: () => Reply;
+let cutoverReply: () => Reply;
 const mounted: { unmount: () => void }[] = [];
 
 beforeEach(() => {
@@ -43,6 +44,15 @@ beforeEach(() => {
 	useSessionStore().$reset();
 	siteReply = () => ({ body: site('drupal') });
 	stateReply = () => ({ body: { kind: 'admin-password', state: 'revealed' } });
+	cutoverReply = () => ({
+		body: {
+			ready: false,
+			available: false,
+			policies: [],
+			observationOffsetsMs: [],
+			cutover: null
+		}
+	});
 	opsReply = () => ({
 		body: {
 			items: [
@@ -60,6 +70,7 @@ beforeEach(() => {
 		'GET /api/v1/me': { body: me },
 		'GET /api/v1/sites/site_1': () => siteReply(),
 		'GET /api/v1/sites/site_1/operations': () => opsReply(),
+		'GET /api/v1/orgs/org_personal/sites/site_1/cutover': () => cutoverReply(),
 		'GET /api/v1/orgs/org_personal/sites/site_1/first-run-secret': () => stateReply()
 	});
 });
@@ -129,11 +140,39 @@ describe('site page', () => {
 		expect(link.exists()).toBe(true);
 	});
 
-	it('links the cutover page from the site', async () => {
+	it('hides the cutover link while the server says a cutover cannot run', async () => {
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Open Admin'));
+		await vi.waitFor(() =>
+			expect(calls.some((call) => call.path.endsWith('/cutover'))).toBe(true)
+		);
+		expect(wrapper.text()).not.toContain('Cut Over');
+		expect(wrapper.find('a[href$="/cutover"]').exists()).toBe(false);
+	});
+
+	it('links the cutover page once a cutover can run', async () => {
+		cutoverReply = () => ({
+			body: {
+				ready: true,
+				available: true,
+				policies: [],
+				observationOffsetsMs: [],
+				cutover: null
+			}
+		});
 		const wrapper = await mountPage();
 
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Cut Over'));
 		expect(wrapper.find('a[href$="/cutover"]').exists()).toBe(true);
+	});
+
+	it('hides the cutover link when the cutover read fails', async () => {
+		cutoverReply = () => ({ status: 500, body: { code: 'internal', message: 'down' } });
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Open Admin'));
+		expect(wrapper.text()).not.toContain('Cut Over');
 	});
 
 	it('does not show Open Admin for a kind without a known admin path', async () => {

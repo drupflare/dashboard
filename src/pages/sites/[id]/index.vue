@@ -3,6 +3,7 @@ import type { Operation } from '@contracts/operations';
 import { ApiClientError, toApiClientError, useApi } from '~/composables/useApi';
 import { adminUrlFor } from '~/composables/useOnboarding';
 import { canRetry, operationTypeLabel, refusalReason } from '~/shared/operation-copy';
+import { useCutoverStore } from '~/stores/cutover';
 import { useOperationsStore } from '~/stores/operations';
 import type { SiteSummary } from '~/stores/sites';
 
@@ -29,6 +30,20 @@ async function loadSite(): Promise<void> {
 	}
 }
 
+// the link shows only once the server says a cutover can run, or one already exists
+const cutoverOffered = ref(false);
+
+async function loadCutover(): Promise<void> {
+	const org = site.value?.orgId;
+	if (!org) return;
+	try {
+		const plan = await useCutoverStore().read(org, siteId);
+		cutoverOffered.value = plan !== null && (plan.available || plan.cutover !== null);
+	} catch {
+		cutoverOffered.value = false;
+	}
+}
+
 async function loadOperations(): Promise<void> {
 	operationsError.value = null;
 	try {
@@ -43,7 +58,7 @@ async function loadOperations(): Promise<void> {
 }
 
 onMounted(() => {
-	void loadSite();
+	void loadSite().then(loadCutover);
 	void loadOperations();
 });
 
@@ -138,7 +153,7 @@ async function tryAgain(operation: Operation): Promise<void> {
 					</UButton>
 				</div>
 
-				<div>
+				<div v-if="cutoverOffered">
 					<UButton
 						color="neutral"
 						variant="outline"
