@@ -96,7 +96,7 @@ Organisation roles are `owner`, `admin`, `developer`, `billing`, `viewer`. Site 
 | `site.rollback`                  | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.upgrade`                   | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.cleanup`                   | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
-| `site.adopt`                     | site       | x         | x         | x             |             |            | x               | x               |             | session only, step-up             |
+| `site.adopt`                     | site       | x         | x         |               |             |            | x               |                 |             | session only, step-up             |
 | `site.pull`                      | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.modify`                    | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.heal`                      | site       | x         | x         | x             |             |            | x               | x               |             |                                   |

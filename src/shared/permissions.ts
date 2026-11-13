@@ -186,7 +186,7 @@ export const ACTION_DEFS = {
 	'site.rollback': { scope: 'site', org: DEV, site: SM },
 	'site.upgrade': { scope: 'site', org: DEV, site: SM },
 	'site.cleanup': { scope: 'site', org: DEV, site: SM },
-	'site.adopt': { scope: 'site', org: DEV, site: SM, sessionOnly: true, stepUp: true },
+	'site.adopt': { scope: 'site', org: ADM, site: SA, sessionOnly: true, stepUp: true },
 	'site.pull': { scope: 'site', org: DEV, site: SM },
 	'site.modify': { scope: 'site', org: DEV, site: SM },
 	'site.heal': { scope: 'site', org: DEV, site: SM },
