@@ -14,6 +14,7 @@ export const OPERATION_TYPES = [
 	'site.create',
 	'site.adopt',
 	'site.import',
+	'import.survey',
 	'migration.cutover',
 	'estate.assess',
 	'site.upgrade',

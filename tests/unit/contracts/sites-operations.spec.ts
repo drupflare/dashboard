@@ -173,9 +173,9 @@ describe('operations', () => {
 		rollbackPoint: 'bookmark-1'
 	};
 
-	it('lists the 33 operation types of the plan', () => {
-		expect(OPERATION_TYPES).toHaveLength(33);
-		expect(new Set(OPERATION_TYPES).size).toBe(33);
+	it('lists the 34 operation types of the plan', () => {
+		expect(OPERATION_TYPES).toHaveLength(34);
+		expect(new Set(OPERATION_TYPES).size).toBe(34);
 	});
 
 	it('round-trips a plan and a step, and rejects an empty plan', () => {

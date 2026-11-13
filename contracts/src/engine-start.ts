@@ -46,6 +46,8 @@ export const WORKFLOW_NAMES = [
 	'site-purge',
 	'site-cleanup',
 	'site-adopt',
+	'site-import',
+	'import-survey',
 	'backup-create',
 	'backup-restore',
 	'migration-cutover'
