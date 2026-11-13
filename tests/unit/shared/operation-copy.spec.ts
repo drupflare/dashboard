@@ -333,7 +333,8 @@ describe('adoption copy', () => {
 		['source_unreachable', 'Your site did not answer'],
 		['no_owner_token', 'no owner access'],
 		['site_not_ready', 'The site is not live'],
-		['unsupported_kind', 'cannot be adopted yet']
+		['unsupported_kind', 'cannot be adopted yet'],
+		['files_outside_database', 'live only in object storage']
 	])('turns the %s code into a plain reason with no code in it', (code, text) => {
 		const reason = failureReason({
 			type: 'site.adopt',

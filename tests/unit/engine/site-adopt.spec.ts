@@ -30,6 +30,7 @@ interface Options {
 	token?: boolean;
 	adoptedTo?: string | null;
 	probe?: number;
+	offloaded?: number;
 }
 
 async function adoptWorld(options: Options = {}) {
@@ -64,7 +65,7 @@ async function adoptWorld(options: Options = {}) {
 		.run(world.siteId, world.orgId, world.input.hostname, now, now);
 	if (options.token !== false) await world.deps.custody.sealOwnerToken(SRC, FAKE_OWNER_TOKEN);
 	const dump = dumpOf(options.dumpRows ?? 40);
-	worker.add(SRC_HOST, SRC, { sql: dump });
+	worker.add(SRC_HOST, SRC, { sql: dump, offloaded: options.offloaded ?? 0 });
 	worker.add(world.input.hostname, world.siteId, { sql: '' });
 	if (options.probe !== undefined) world.site.answers.probe = options.probe;
 	const deps: BackupDeps = {
@@ -282,6 +283,19 @@ describe('a refusal before anything is created', () => {
 	it('refuses a source that answers with a server error', async () => {
 		const aw = await adoptWorld({ probe: 503 });
 		expect(await refused(aw)).toBe('source_unreachable');
+	});
+
+	it('refuses a source that holds files only in R2 before it exports anything', async () => {
+		const aw = await adoptWorld({ offloaded: 3 });
+		expect(await refused(aw)).toBe('files_outside_database');
+		expect(aw.worker.calls.exports).toBe(0);
+		expect(aw.worker.calls.restores).toEqual([]);
+	});
+
+	it('adopts a source whose stats name no offloaded files', async () => {
+		const aw = await adoptWorld({ offloaded: 0 });
+		const { outcome } = await run(aw);
+		expect(outcome).toEqual({ status: 'succeeded' });
 	});
 
 	it('refuses a kind whose first run gives no owner token', async () => {

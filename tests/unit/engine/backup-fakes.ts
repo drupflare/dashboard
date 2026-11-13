@@ -29,6 +29,7 @@ interface FakeSite {
 	failImport: boolean;
 	adopting: number;
 	adoptOnApply: number;
+	offloaded: number;
 }
 
 export function fakeWorkers(log: string[], ceiling = 16 * MIB) {
@@ -50,6 +51,7 @@ export function fakeWorkers(log: string[], ceiling = 16 * MIB) {
 			failImport: false,
 			adopting: 0,
 			adoptOnApply: 0,
+			offloaded: 0,
 			...patch
 		};
 		sites.set(host, site);
@@ -109,7 +111,13 @@ export function fakeWorkers(log: string[], ceiling = 16 * MIB) {
 		}
 		if (url.pathname === '/serve-stats') {
 			log.push(`adopting:${site.siteId}:${site.adopting}`);
-			return Response.json({ storage: { files: 0, adopting: site.adopting } });
+			return Response.json({
+				storage: {
+					files: 0,
+					offloaded: { files: site.offloaded, bytes: 0 },
+					adopting: site.adopting
+				}
+			});
 		}
 		return new Response('unknown', { status: 404 });
 	};

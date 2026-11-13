@@ -10,7 +10,7 @@ Adopting a self-managed site makes a managed copy of it on a Drupflare address. 
 
 ## What it does
 
-Press Adopt on the site page and confirm. You need a signed-in session with a recent step-up, because the copy is a billable site. API keys cannot start an adoption.
+Press Adopt on the site page and confirm. You need a signed-in session with a recent step-up, because the copy is a billable site. API keys cannot start an adoption. Only organization owners and admins, and site admins, can start one; a maintainer or developer cannot.
 
 The adoption runs as one activity and takes a few minutes:
 
@@ -32,6 +32,7 @@ The adoption refuses before it creates anything, with a plain reason, in these c
 - Your plan has no room for another site. The original and the copy both count.
 - Drupflare has no owner access to the site, or the site does not answer.
 - The database is larger than one restore into a managed site accepts, 16 MiB by default. The activity shows "Needs a Larger Restore Path". A paged restore for larger databases is an open request to the worker project, so such a site cannot be adopted yet.
+- The site keeps some uploaded files only in object storage. The database export holds those files' rows and not their bytes, so the copy would point at files that do not exist. The adoption stops before it creates anything. Files the site holds in its own database are copied with it.
 
 ## If it fails part way
 
@@ -43,7 +44,7 @@ Built: the checks, the database copy, the managed copy, the restore, the link be
 
 Not built:
 
-- Uploaded files outside the database, such as images and documents, are not copied. The database refers to them, so they will be missing on the copy.
+- Copying files that live only in object storage. A site with any is refused, as above, until the worker can export their bytes (request 17 in the worker requests).
 - Attaching your own hostname to the copy, and the DNS instructions for it. The copy answers on its Drupflare address only.
 - The first-month credit.
 - A live run against a real Cloudflare account. The workflow is covered by tests with fakes.

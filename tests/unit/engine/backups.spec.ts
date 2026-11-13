@@ -843,6 +843,22 @@ describe('the worker adapter', () => {
 		await expect(
 			answering(200, '{"storage":{}}').adopting('h.app', { bearer: 't' })
 		).rejects.toThrow();
+		const stats = (storage: unknown) => answering(200, JSON.stringify({ storage }));
+		expect(
+			await stats({ offloaded: { files: 4, bytes: 9 } }).offloadedFiles('h.app', {
+				bearer: 't'
+			})
+		).toBe(4);
+		expect(await stats({}).offloadedFiles('h.app', { bearer: 't' })).toBe(0);
+		await expect(
+			stats({ offloaded: { files: 'many' } }).offloadedFiles('h.app', { bearer: 't' })
+		).rejects.toThrow('the stats answer was not readable');
+		await expect(answering(401).offloadedFiles('h.app', { bearer: 't' })).rejects.toMatchObject(
+			{ code: 'owner_token_rejected' }
+		);
+		await expect(
+			answering(503).offloadedFiles('h.app', { bearer: 't' })
+		).rejects.toBeInstanceOf(Error);
 		await expect(
 			answering(503).importState('h.app', 'l', { bearer: 't' })
 		).rejects.toBeInstanceOf(Error);

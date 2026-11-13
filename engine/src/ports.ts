@@ -190,6 +190,8 @@ export interface BackupWorker {
 	// where an import stopped and the site's reason, empty when it carries none
 	importReason(hostname: string, label: string, auth: OwnerAuth): Promise<string>;
 	adopting(hostname: string, auth: OwnerAuth): Promise<number>;
+	// files held only in R2, which an export does not carry
+	offloadedFiles(hostname: string, auth: OwnerAuth): Promise<number>;
 }
 
 export interface BackupBlobs {

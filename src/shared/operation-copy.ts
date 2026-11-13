@@ -250,7 +250,9 @@ const ADOPT_REFUSALS: Record<string, string> = {
 	no_owner_token:
 		'Drupflare has no owner access to this site, so it cannot copy it. Reconnect the site, then adopt it again.',
 	site_not_ready: 'The site is not live, so it cannot be adopted.',
-	unsupported_kind: 'This kind of site cannot be adopted yet.'
+	unsupported_kind: 'This kind of site cannot be adopted yet.',
+	files_outside_database:
+		'Some files on this site live only in object storage, and a copy cannot carry them yet. Nothing was created and your site was not changed.'
 };
 
 const LARGER_RESTORE_REASON = `This site's database is larger than the ${RESTORE_LIMIT_MIB} MiB a managed site accepts in one restore. Nothing was created and your site was not changed. Larger restores need a paged restore, which is not available yet.`;

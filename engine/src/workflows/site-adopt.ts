@@ -65,7 +65,8 @@ export const ADOPT_ERROR_CODES = [
 	'not_self_managed',
 	'already_adopted',
 	'source_unreachable',
-	'unsupported_kind'
+	'unsupported_kind',
+	'files_outside_database'
 ] as const;
 export type AdoptErrorCode = (typeof ADOPT_ERROR_CODES)[number];
 
@@ -166,6 +167,18 @@ async function preflight(ctx: Ctx, deps: BackupDeps, input: SiteAdoptInput): Pro
 		}
 		if (status >= 500) {
 			throw new AdoptError('source_unreachable', `${source.id} answered ${status}`);
+		}
+		// an export carries file rows and no bytes held only in R2, so the copy would point at nothing
+		const offloaded = await deps.custody.withOwnerToken(
+			source.id,
+			opened.ownerTokenId,
+			(bearer) => deps.worker.offloadedFiles(opened.hostname, { bearer })
+		);
+		if (offloaded > 0) {
+			throw new AdoptError(
+				'files_outside_database',
+				`${source.id} holds ${offloaded} files only in R2`
+			);
 		}
 	});
 }

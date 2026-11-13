@@ -219,6 +219,12 @@ const statsAnswer = z.looseObject({
 	storage: z.looseObject({ adopting: z.number().int().nonnegative() })
 });
 
+const offloadedAnswer = z.looseObject({
+	storage: z.looseObject({
+		offloaded: z.looseObject({ files: z.number().int().nonnegative() }).optional()
+	})
+});
+
 const bearer = (token: string) => ({ authorization: `Bearer ${token}` });
 
 // a refusal of the token is never retried: the worker counts failures against one budget
@@ -253,6 +259,17 @@ export function backupWorkerOf(fetcher: typeof fetch, timeoutMs: number): Backup
 		refusedToken(status);
 		if (status !== 200) throw new SiteAnswered(hostname, '/health', status);
 		return parseBody(text, healthAnswer, 'the health answer').import;
+	};
+	const readStats = async (hostname: string, auth: { bearer: string }) => {
+		const { status, text } = await fetchSite(
+			hostname,
+			'/serve-stats',
+			{ method: 'GET', headers: bearer(auth.bearer) },
+			(code) => code === 200
+		);
+		refusedToken(status);
+		if (status !== 200) throw new SiteAnswered(hostname, '/serve-stats', status);
+		return text;
 	};
 	return {
 		async exportPage(hostname, cursor, auth) {
@@ -317,15 +334,17 @@ export function backupWorkerOf(fetcher: typeof fetch, timeoutMs: number): Backup
 		},
 
 		async adopting(hostname, auth) {
-			const { status, text } = await fetchSite(
-				hostname,
-				'/serve-stats',
-				{ method: 'GET', headers: bearer(auth.bearer) },
-				(code) => code === 200
+			return parseBody(await readStats(hostname, auth), statsAnswer, 'the stats answer')
+				.storage.adopting;
+		},
+
+		async offloadedFiles(hostname, auth) {
+			const answer = parseBody(
+				await readStats(hostname, auth),
+				offloadedAnswer,
+				'the stats answer'
 			);
-			refusedToken(status);
-			if (status !== 200) throw new SiteAnswered(hostname, '/serve-stats', status);
-			return parseBody(text, statsAnswer, 'the stats answer').storage.adopting;
+			return answer.storage.offloaded?.files ?? 0;
 		}
 	};
 }
