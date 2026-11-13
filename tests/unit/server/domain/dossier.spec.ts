@@ -64,6 +64,29 @@ describe('dossierFor', () => {
 		);
 	});
 
+	it('refuses a PostgreSQL site for the driver only once its size is read', () => {
+		const dossier = dossierFor(
+			{ ...healthy(), database: { driver: 'pgsql', bytes: 107_191_319 } },
+			CEILING
+		);
+
+		expect(dossier.refusals).toEqual(['A pgsql database cannot be imported']);
+		expect(dossier.estimate.bytes).toBe(107_191_319 + 28 * 1024);
+	});
+
+	it('still refuses a PostgreSQL site on size when the database is over the ceiling', () => {
+		const ceiling = 16 * 1024 * 1024;
+		const dossier = dossierFor(
+			{ ...healthy(), database: { driver: 'pgsql', bytes: ceiling + 1 } },
+			ceiling
+		);
+
+		expect(dossier.refusals).toEqual([
+			'A pgsql database cannot be imported',
+			'The database is larger than the 16 MiB a new site accepts in one restore. A paged restore is needed for a larger database and is not available yet'
+		]);
+	});
+
 	it('refuses a database that did not answer, and one that was not checked', () => {
 		expect(dossierFor({ ...healthy(), dbAlive: false }, CEILING).refusals).toContain(
 			'The database did not answer a query'

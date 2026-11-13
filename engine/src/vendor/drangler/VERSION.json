@@ -7,7 +7,7 @@
 		},
 		"survey.ts": {
 			"source": "src/migrate/survey.ts",
-			"sha256": "a95f080b93a5293616520cc2cd377a3e47e10eae2c12b33d422c365bba1f586d"
+			"sha256": "74ead76ac8e509437a33cbd5f247cbe16288175a479c95a3d782ad2bc55b21c9"
 		},
 		"errors.ts": {
 			"source": "src/errors.ts",

@@ -146,12 +146,12 @@ export function fakeSource(patch: Partial<FakeSource> = {}) {
 	return { source, connector, sessions, lookups: names };
 }
 
-const SURVEY_ANSWERS = (command: string): string | null => {
+const SURVEY_ANSWERS = (command: string, driver: string): string | null => {
 	if (command === 'php -v') return 'PHP 8.3.6 (cli) (built: Jan 1 2026)\n';
 	if (command.includes('status --format=json')) {
 		return JSON.stringify({
 			'drupal-version': '11.4.8',
-			'db-driver': 'mysql',
+			'db-driver': driver,
 			'db-name': 'site',
 			uri: 'http://site.example',
 			root: ROOT
@@ -160,7 +160,8 @@ const SURVEY_ANSWERS = (command: string): string | null => {
 	if (command.includes('pm:list')) return '["node","system"]';
 	if (command.startsWith('du -sk')) return `2048\t${ROOT}/sites/default/files\n`;
 	if (command.includes('-type f | wc -l')) return '0\n';
-	if (command.includes('information_schema')) return '123456\n';
+	if (command.includes('information_schema')) return driver === 'mysql' ? '123456\n' : null;
+	if (command.includes('pg_database_size')) return driver === 'pgsql' ? '1048576\n' : null;
 	if (command.includes('SELECT 1')) return '1\n';
 	if (command.includes('file_managed')) return '0\n';
 	if (command.includes('FROM node')) return '12\n';
@@ -169,7 +170,8 @@ const SURVEY_ANSWERS = (command: string): string | null => {
 
 export function fakeSurveyConnector(
 	failWith: Error | null = null,
-	answers: string[][] = [[PUBLIC_IP]]
+	answers: string[][] = [[PUBLIC_IP]],
+	driver = 'mysql'
 ) {
 	const sessions: StreamSession[] = [];
 	const names = lookups(...answers);
@@ -188,7 +190,7 @@ export function fakeSurveyConnector(
 			return {
 				async exec(command) {
 					record.commands.push(command);
-					const out = SURVEY_ANSWERS(command);
+					const out = SURVEY_ANSWERS(command, driver);
 					return { code: out === null ? 1 : 0, stdoutText: out ?? '', stderrText: '' };
 				},
 				async close() {

@@ -18,7 +18,9 @@ import {
 	sealCredential
 } from './import-fakes';
 
-async function surveyWorld(options: { fingerprint?: string | null; failWith?: Error } = {}) {
+async function surveyWorld(
+	options: { fingerprint?: string | null; failWith?: Error; driver?: string } = {}
+) {
 	const world = await makeWorld();
 	const now = world.clock.now();
 	const credentialId = await sealCredential(world, {
@@ -26,7 +28,7 @@ async function surveyWorld(options: { fingerprint?: string | null; failWith?: Er
 		now,
 		...(options.fingerprint === undefined ? {} : { fingerprint: options.fingerprint })
 	});
-	const surveyor = fakeSurveyConnector(options.failWith ?? null);
+	const surveyor = fakeSurveyConnector(options.failWith ?? null, undefined, options.driver);
 	const built = importDepsOf(world, {
 		connector: fakeSource().connector,
 		survey: surveyor.connector
@@ -73,6 +75,14 @@ describe('a survey', () => {
 		expect(record).toMatchObject({ v: 1, root: ROOT });
 		expect(record!.dossier.verdict).toBe('ready');
 		expect(record!.dossier.importable).toBe(true);
+	});
+
+	it('reads the size of a PostgreSQL site, so the refusal is for the driver alone', async () => {
+		const sw = await surveyWorld({ driver: 'pgsql' });
+		expect(await run(sw)).toEqual({ status: 'succeeded' });
+		const record = readSurveyCursor((await operationOf(sw)).cursor);
+		expect(record!.dossier.refusals).toEqual(['A pgsql database cannot be imported']);
+		expect(record!.dossier.estimate.bytes).toBe(1048576 + 2048 * 1024);
 	});
 
 	it('keeps the key, so the import that follows can use it', async () => {
