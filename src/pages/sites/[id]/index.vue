@@ -164,6 +164,17 @@ async function tryAgain(operation: Operation): Promise<void> {
 					</UButton>
 				</div>
 
+				<div v-if="site.plane === 'managed' && site.state === 'active'">
+					<UButton
+						color="neutral"
+						variant="outline"
+						icon="i-lucide-globe"
+						:to="`/sites/${encodeURIComponent(site.id)}/domain`"
+					>
+						Custom Domain
+					</UButton>
+				</div>
+
 				<SiteAdmin
 					v-if="adminUrl"
 					:org-id="site.orgId"
