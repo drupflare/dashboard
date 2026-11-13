@@ -5,6 +5,7 @@ import {
 	IMPORT_CREDENTIAL_SQL,
 	importCredentialAad
 } from '../../../src/shared/custody/import-credentials';
+import { IMPORT_RUN_SQL } from '../../../src/shared/import-hours';
 import { ImportError } from '../import-parts';
 import type { ImportStore } from '../ports';
 
@@ -91,6 +92,20 @@ export function importStoreOf(options: ImportStoreOptions): ImportStore {
 
 		async discard(credentialId) {
 			await db.prepare(IMPORT_CREDENTIAL_SQL.discard).bind(credentialId).run();
+		},
+
+		async beginRun(operationId, orgId, at) {
+			await db.prepare(IMPORT_RUN_SQL.begin).bind(operationId, orgId, at).run();
+			const row = await db
+				.prepare(IMPORT_RUN_SQL.started)
+				.bind(operationId)
+				.first<{ started_at: number }>();
+			if (row === null) throw new Error('the import run was not recorded');
+			return row.started_at;
+		},
+
+		async endRun(operationId, at) {
+			await db.prepare(IMPORT_RUN_SQL.end).bind(at, at, operationId).run();
 		},
 
 		async markImported(siteId, credentialId, accountId, at) {

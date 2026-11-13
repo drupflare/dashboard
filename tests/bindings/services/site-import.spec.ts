@@ -73,20 +73,22 @@ let startFails = false;
 let counter = 0;
 const key = () => `import-key-${++counter}-${Date.now()}`;
 
-const freeEntitlement = () => {
-	const result = derive(FREE_PLAN_ID);
+const entitlementOf = (planId: string) => {
+	const result = derive(planId);
 	if (!result.ok) throw new Error(result.reason);
 	return result.entitlement;
 };
+const freeEntitlement = () => entitlementOf(FREE_PLAN_ID);
 
-function install(options: { allow?: boolean } = {}) {
+function install(options: { allow?: boolean; planId?: string } = {}) {
+	const entitlement = () => entitlementOf(options.planId ?? FREE_PLAN_ID);
 	setSiteServices({
 		getDb,
 		entitlements: {
 			check: async () =>
 				options.allow === false
 					? { allow: false, reason: 'site_limit' }
-					: { allow: true, entitlement: freeEntitlement() }
+					: { allow: true, entitlement: entitlement() }
 		},
 		planOf: async () => freeEntitlement(),
 		startOperation: async (request) => {
@@ -604,6 +606,18 @@ describe('POST the survey', () => {
 });
 
 describe('POST the import', () => {
+	beforeEach(async () => {
+		await env.DB.prepare('DELETE FROM import_runs WHERE organization_id = ?').bind(ORG).run();
+	});
+	// the engine is faked, so a start leaves its operation open; one open import per org is the rule under test
+	beforeEach(async () => {
+		await env.DB.prepare(
+			"UPDATE operations SET status = 'failed' WHERE organization_id = ? AND type = 'site.import' AND status IN ('planned', 'running')"
+		)
+			.bind(ORG)
+			.run();
+	});
+
 	const importBody = (credentialId: string, surveyId: string) => ({
 		credentialId,
 		surveyId,
@@ -823,6 +837,85 @@ describe('POST the import', () => {
 		const reply = await post(importStart, '', importBody(id, surveyId), { idem: key() });
 		expect(reply.status).toBe(422);
 		expect(reply.json).toMatchObject({ details: { reason: 'credential_expired' } });
+		expect(started).toHaveLength(0);
+	});
+
+	it('refuses a second import while one is open, and writes no operation for it', async () => {
+		asRole('owner');
+		const one = await confirmedCredential();
+		const two = await confirmedCredential();
+		const surveyOne = await surveyed(one);
+		const surveyTwo = await surveyed(two);
+		started.length = 0;
+		expect(
+			(await post(importStart, '', importBody(one, surveyOne), { idem: key() })).status
+		).toBe(202);
+		const reply = await post(importStart, '', importBody(two, surveyTwo), { idem: key() });
+		expect(reply.status).toBe(422);
+		expect(reply.json).toMatchObject({ details: { reason: 'import_busy' } });
+		expect(started).toHaveLength(1);
+		const count = await env.DB.prepare(
+			"SELECT COUNT(*) AS n FROM operations WHERE organization_id = ? AND type = 'site.import' AND status = 'planned'"
+		)
+			.bind(ORG)
+			.first<{ n: number }>();
+		expect(count!.n).toBe(1);
+	});
+
+	it('lets one of two simultaneous starts win and answers the other import_busy', async () => {
+		asRole('owner');
+		const one = await confirmedCredential();
+		const two = await confirmedCredential();
+		const surveyOne = await surveyed(one);
+		const surveyTwo = await surveyed(two);
+		started.length = 0;
+		const siteCount = async () =>
+			(await env.DB.prepare('SELECT COUNT(*) AS n FROM sites WHERE organization_id = ?')
+				.bind(ORG)
+				.first<{ n: number }>())!.n;
+		const sitesBefore = await siteCount();
+		const replies = await Promise.all([
+			post(importStart, '', importBody(one, surveyOne), { idem: key() }),
+			post(importStart, '', importBody(two, surveyTwo), { idem: key() })
+		]);
+		expect(replies.map((reply) => reply.status).sort()).toEqual([202, 422]);
+		const refused = replies.find((reply) => reply.status === 422)!;
+		expect(refused.json).toMatchObject({ details: { reason: 'import_busy' } });
+		expect(started).toHaveLength(1);
+		const count = await env.DB.prepare(
+			"SELECT COUNT(*) AS n FROM operations WHERE organization_id = ? AND type = 'site.import' AND status = 'planned'"
+		)
+			.bind(ORG)
+			.first<{ n: number }>();
+		expect(count!.n).toBe(1);
+		expect(await siteCount()).toBe(sitesBefore + 1);
+	});
+
+	it('refuses a start that could take the plan past its hours today, and starts nothing', async () => {
+		asRole('owner');
+		const id = await confirmedCredential();
+		const surveyId = await surveyed(id);
+		started.length = 0;
+		await env.DB.prepare(
+			'INSERT INTO import_runs (operation_id, organization_id, started_at, ended_at, wall_ms) VALUES (?, ?, ?, ?, ?)'
+		)
+			.bind('op_earlier_run', ORG, NOW, NOW + 10 * 60_000, 10 * 60_000)
+			.run();
+		const reply = await post(importStart, '', importBody(id, surveyId), { idem: key() });
+		expect(reply.status).toBe(422);
+		expect(reply.json).toMatchObject({ details: { reason: 'import_hours_today' } });
+		expect(started).toHaveLength(0);
+	});
+
+	it('refuses an institution plan until an approval step exists, and starts nothing', async () => {
+		asRole('owner');
+		const id = await confirmedCredential();
+		const surveyId = await surveyed(id);
+		started.length = 0;
+		install({ planId: 'institution-standard' });
+		const reply = await post(importStart, '', importBody(id, surveyId), { idem: key() });
+		expect(reply.status).toBe(422);
+		expect(reply.json).toMatchObject({ details: { reason: 'import_approval_needed' } });
 		expect(started).toHaveLength(0);
 	});
 

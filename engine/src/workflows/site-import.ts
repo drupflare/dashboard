@@ -1,8 +1,10 @@
 import { utf8 } from '@contracts/common';
 import type { Plan } from '@contracts/operations';
+import { HOUR_MS, type ImportCap } from '../../../src/shared/import-hours';
 import { DEFAULT_RESTORE_CEILING_BYTES, joinParts, restorable } from '../backup-parts';
 import { convertFiles, filesArchiveLimit } from '../files-convert';
 import {
+	CACHE_STRUCTURE_ONLY,
 	DUMP_LIMIT_FACTOR,
 	FILES_LIMIT_BYTES,
 	ImportError,
@@ -59,11 +61,23 @@ export interface SiteImportInput {
 	partBytes?: number;
 }
 
-// unreviewed placeholders, not read by the workflow: the plan sets free at 5 jobs a month and 2 a
-// day and leaves each paid plan open, so only the free plan has numbers
-export const IMPORT_JOB_CAPS: Readonly<Record<string, { perMonth: number; perDay: number }>> = {
-	'managed-free': { perMonth: 5, perDay: 2 }
+// assumptions until Gregory sets them; no route or screen reads these numbers
+export const ASSUMED_IMPORT_HOUR_CAPS: {
+	jobHours: number;
+	plans: Readonly<Record<string, ImportCap>>;
+} = {
+	jobHours: 0.5,
+	plans: {
+		'managed-free': { perMonthHours: 1, perDayHours: 0.5 },
+		'managed-site': { perMonthHours: 3, perDayHours: 1 },
+		'managed-studio': { perMonthHours: 6, perDayHours: 2 },
+		'managed-agency': { perMonthHours: 15, perDayHours: 4 },
+		'institution-starter': 'approval',
+		'institution-standard': 'approval'
+	}
 };
+
+export const IMPORT_JOB_MS = ASSUMED_IMPORT_HOUR_CAPS.jobHours * HOUR_MS;
 
 const RESTORE_IDS = { restore: 'restore', apply: 'apply', verify: 'verify' };
 
@@ -120,8 +134,8 @@ const partBytesOf = (input: SiteImportInput) => input.partBytes ?? PART_BYTES;
 
 // #region the source
 
-async function preflight(ctx: Ctx, deps: ImportDeps, input: SiteImportInput): Promise<void> {
-	await runStep(ctx, 'preflight', 'preflight', async () => {
+async function preflight(ctx: Ctx, deps: ImportDeps, input: SiteImportInput): Promise<number> {
+	return runStep(ctx, 'preflight', 'preflight', async () => {
 		await fenced(ctx);
 		if (input.create.firstRun.reads?.ownerToken === undefined) {
 			throw new ImportError(
@@ -135,8 +149,11 @@ async function preflight(ctx: Ctx, deps: ImportDeps, input: SiteImportInput): Pr
 				'the survey found a reason this site is not imported'
 			);
 		}
+		// the clock starts at the first connection to the server
+		const startedAt = await deps.imports.beginRun(input.operationId, input.orgId, deps.now());
 		// the key opens and the host key is confirmed; no command is sent to the server
 		await deps.imports.withTarget(input.credentialId, input.orgId, input.root, async () => {});
+		return startedAt;
 	});
 }
 
@@ -173,6 +190,7 @@ async function stream(
 							kind,
 							prefix,
 							partBytes: partBytesOf(input),
+							...(database ? { structureOnly: CACHE_STRUCTURE_ONLY } : {}),
 							maxBytes: database
 								? ceilingOf(input) * DUMP_LIMIT_FACTOR
 								: Math.min(FILES_LIMIT_BYTES, filesArchiveLimit(ceilingOf(input)))
@@ -373,6 +391,7 @@ async function applyDatabase(
 					`${sent.target.siteId} had not applied the database in time`
 				);
 			}
+			await fenced(ctx);
 			await deps.sleep(input.pollMs);
 		}
 	});
@@ -394,6 +413,7 @@ async function verifySite(
 		);
 		const { status } = await deps.site.probe(sent.target.hostname, '/', 200);
 		if (status !== 200) throw new Error(`the probe answered ${status}, wanted 200`);
+		await deps.imports.endRun(ctx.operationId, deps.now());
 		await deps.store.mutate(ctx.operationId, (operation) =>
 			operation.verification === 'passed'
 				? operation
@@ -430,6 +450,7 @@ async function rollback(
 		await releaseLease(ctx);
 		return { status: 'cancelled', reason };
 	}
+	await plainStep(ctx, 'rollback.run', () => deps.imports.endRun(ctx.operationId, deps.now()));
 	const leaked: string[] = [];
 	const live = await plainStep(ctx, 'rollback.live', () => deps.store.siteLive(create.site.id));
 	const actions: [string, () => Promise<unknown>][] = [
@@ -508,7 +529,8 @@ export async function runSiteImport(
 	try {
 		await startOperation(ctx);
 		await acquireLease(ctx, 'lease');
-		await preflight(ctx, deps, input);
+		const startedAt = await preflight(ctx, deps, input);
+		ctx.deadlineMs = startedAt + IMPORT_JOB_MS;
 
 		const dump = await stream(ctx, deps, input, 'database');
 		const archive = carriesFiles ? await stream(ctx, deps, input, 'files') : null;

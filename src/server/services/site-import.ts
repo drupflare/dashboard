@@ -1,13 +1,19 @@
 import { newId } from '@contracts/common';
 import { computePlanDigest, DEFAULT_CHANGE_BUDGET } from '@contracts/operations';
 import { categoryOfKind } from '@contracts/sites';
+import type { CollegeDBClient } from '@earth-app/collegedb';
 import { z } from 'zod';
 import { readSurveyCursor } from '../../../engine/src/import-parts';
 import {
 	planImportSurvey,
 	type ImportSurveyInput
 } from '../../../engine/src/workflows/import-survey';
-import { planSiteImport, type SiteImportInput } from '../../../engine/src/workflows/site-import';
+import {
+	ASSUMED_IMPORT_HOUR_CAPS,
+	IMPORT_JOB_MS,
+	planSiteImport,
+	type SiteImportInput
+} from '../../../engine/src/workflows/site-import';
 import { encryptRecord, type KeyRing } from '../../shared/custody/envelope';
 import {
 	credentialRefusal,
@@ -16,8 +22,11 @@ import {
 	newImportCredentialId
 } from '../../shared/custody/import-credentials';
 import { ApiError } from '../../shared/errors';
+import { admitHours, utcMonthStart } from '../../shared/import-hours';
+import { IMPORT_ROUTE_REFUSALS } from '../../shared/operation-copy';
 import { recipeFor } from '../../shared/recipes';
 import { nowUtc } from '../../shared/utils/time';
+import { BatchFailedError } from '../db/repos/accounts';
 import { createOperationRecord } from '../db/repos/backups';
 import { getUserById } from '../db/repos/identity';
 import {
@@ -26,8 +35,10 @@ import {
 	insertImportCredential,
 	type ImportCredentialRow
 } from '../db/repos/import-credentials';
+import { listImportRunsSince } from '../db/repos/import-runs';
 import {
 	createSiteOperation,
+	findOpenImport,
 	getOperation,
 	getOperationByKey,
 	type StoredOperation
@@ -369,6 +380,25 @@ export interface StartImportInput {
 	idempotencyKey: string;
 }
 
+// one import runs at a time, and a start that could take the plan past its hours is refused before
+// anything is written or any server is reached
+async function admitImport(
+	db: CollegeDBClient,
+	custody: ImportServices,
+	orgId: string,
+	planId: string
+): Promise<void> {
+	if ((await findOpenImport(db, orgId)) !== null) {
+		throw refusal('import_busy', IMPORT_ROUTE_REFUSALS.import_busy!);
+	}
+	const cap = ASSUMED_IMPORT_HOUR_CAPS.plans[planId];
+	if (cap === undefined) throw refusal('plan_not_capped', IMPORT_ROUTE_REFUSALS.plan_not_capped!);
+	const now = custody.now();
+	const runs = await listImportRunsSince(db, orgId, utcMonthStart(now));
+	const reason = admitHours(runs, cap, now, IMPORT_JOB_MS);
+	if (reason !== null) throw refusal(reason, IMPORT_ROUTE_REFUSALS[reason]!);
+}
+
 export async function startSiteImport(
 	services: SiteServices,
 	custody: ImportServices,
@@ -416,6 +446,7 @@ export async function startSiteImport(
 		kind
 	});
 	if (!decision.allow) throw entitlementRefusal(decision.reason);
+	await admitImport(db, custody, input.orgId, decision.entitlement.planId);
 
 	const targetId = newId('site');
 	const operationId = newId('op');
@@ -506,7 +537,13 @@ export async function startSiteImport(
 			inputs: params,
 			now
 		}
-	);
+	).catch(async (error: unknown) => {
+		// a second start that passed the check at the same moment loses to the unique index
+		if (error instanceof BatchFailedError && (await findOpenImport(db, input.orgId)) !== null) {
+			throw refusal('import_busy', IMPORT_ROUTE_REFUSALS.import_busy!);
+		}
+		throw error;
+	});
 	if (!created) return operation;
 	await custody.audit(input.orgId, {
 		actor: input.actor,

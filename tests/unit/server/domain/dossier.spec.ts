@@ -19,6 +19,18 @@ const healthy = (): SurveyInput => ({
 	errors: []
 });
 
+describe('the owner connection line', () => {
+	it('tells the owner to connect as the account that owns the files, on every survey', () => {
+		expect(dossierFor(healthy(), CEILING).findings).toContainEqual(
+			expect.objectContaining({
+				status: 'information',
+				title: 'Connect as the Owner',
+				detail: expect.stringContaining('not root')
+			})
+		);
+	});
+});
+
 const statuses = (dossier: ReturnType<typeof dossierFor>) =>
 	dossier.findings.map((finding) => finding.status);
 

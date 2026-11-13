@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { importKeys } from '../../../engine/src/import-parts';
 import { freezePlan, newOperation } from '../../../engine/src/operations/state';
 import {
+	IMPORT_JOB_MS,
 	planSiteImport,
 	runSiteImport,
 	type SiteImportInput
@@ -170,12 +171,12 @@ describe('a successful import', () => {
 		expect(iw.world.leases.stateOf(iw.world.siteId).holder ?? null).toBeNull();
 	});
 
-	it('sends the server one read-only dump command and nothing else', async () => {
+	it('sends the server one read-only dump command that keeps cache rows off the wire', async () => {
 		const iw = await importWorld();
 		await run(iw);
 		expect(iw.source.sessions).toHaveLength(1);
 		expect(iw.source.sessions[0]!.commands).toEqual([
-			`cd '${ROOT}' && drush sql:dump --extra-dump=--hex-blob`
+			`cd '${ROOT}' && drush sql:dump --extra-dump=--hex-blob --structure-tables-list='cache*','key_value_expire'`
 		]);
 		expect(iw.source.sessions[0]!.closed).toBe(true);
 	});
@@ -482,6 +483,52 @@ describe('a failure at each step', () => {
 		expect(outcome).toMatchObject({ status: 'failed' });
 		expect(outcome.status === 'failed' ? outcome.leaked : []).toContain('credential');
 		iw.deps.imports.discard = original;
+	});
+});
+
+describe('the job limit and the clock', () => {
+	const runRowOf = (iw: Iw) =>
+		iw.world.sqlite
+			.prepare('SELECT started_at, ended_at, wall_ms FROM import_runs WHERE operation_id = ?')
+			.get(iw.world.operationId) as { started_at: number; ended_at: number; wall_ms: number };
+
+	it('stops a job past its limit at its next heartbeat, closes it, and keeps the time it ran', async () => {
+		const iw = await importWorld();
+		const { dump } = iw.deps;
+		iw.deps.dump = {
+			run: async (...args) => {
+				iw.world.clock.advance(IMPORT_JOB_MS + 60_000);
+				return dump.run(...args);
+			}
+		};
+		const { outcome } = await run(iw);
+		expect(outcome.status === 'rolled-back' ? codeOf(outcome.reason) : null).toBe(
+			'job_timeout'
+		);
+		expect(credentialRows(iw.world)).toEqual([]);
+		expect(runRowOf(iw).wall_ms).toBe(IMPORT_JOB_MS + 60_000);
+	});
+
+	it('records the clock from the first connection to the verified restore', async () => {
+		const iw = await importWorld();
+		const started = iw.world.clock.now();
+		const { outcome } = await run(iw);
+		expect(outcome.status).toBe('succeeded');
+		const row = runRowOf(iw);
+		expect(row.started_at).toBe(started);
+		expect(row.wall_ms).toBe(row.ended_at - started);
+		expect(row.wall_ms).toBeLessThan(IMPORT_JOB_MS);
+	});
+
+	it('keeps the first start and the first end of a run, so a retried step reports the same clock', async () => {
+		const iw = await importWorld();
+		const { imports } = iw.deps;
+		const { operationId, orgId } = iw.world;
+		expect(await imports.beginRun(operationId, orgId, 1_000)).toBe(1_000);
+		expect(await imports.beginRun(operationId, orgId, 5_000)).toBe(1_000);
+		await imports.endRun(operationId, 3_000);
+		await imports.endRun(operationId, 9_000);
+		expect(runRowOf(iw)).toEqual({ started_at: 1_000, ended_at: 3_000, wall_ms: 2_000 });
 	});
 });
 

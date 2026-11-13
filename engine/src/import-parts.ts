@@ -39,6 +39,9 @@ export const PART_BYTES = 8 * 1024 * 1024;
 // a stop for a runaway stream, not a measurement
 export const DUMP_LIMIT_FACTOR = 2;
 
+// a stock Drupal cache row runs to nearly a megabyte, over what a site holds in a statement
+export const CACHE_STRUCTURE_ONLY = ['cache*', 'key_value_expire'];
+
 // unreviewed: the most a files archive may carry before the stream stops
 export const FILES_LIMIT_BYTES = 1024 * 1024 * 1024;
 

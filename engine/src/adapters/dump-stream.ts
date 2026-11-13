@@ -24,9 +24,19 @@ export interface StreamConnector {
 const shq = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 // both commands only read: a dump to stdout and a tar to stdout, so nothing is written on the source
-export function dumpCommand(kind: DumpJob['kind'], root: string): string {
+export function dumpCommand(
+	kind: DumpJob['kind'],
+	root: string,
+	tables?: string[],
+	structureOnly?: string[]
+): string {
+	const only =
+		(tables === undefined ? '' : ` --tables-list=${tables.map(shq).join(',')}`) +
+		(structureOnly === undefined
+			? ''
+			: ` --structure-tables-list=${structureOnly.map(shq).join(',')}`);
 	return kind === 'database'
-		? `cd ${shq(root)} && drush sql:dump --extra-dump=--hex-blob`
+		? `cd ${shq(root)} && drush sql:dump --extra-dump=--hex-blob${only}`
 		: `tar -C ${shq(`${root}/sites/default/files`)} -cf - .`;
 }
 
@@ -40,7 +50,9 @@ export function createDumpStream(
 			try {
 				// a retry starts over, so the parts of an earlier attempt never mix with these
 				await blobs.deletePrefix(job.prefix);
-				const channel = await session.stream(dumpCommand(job.kind, target.root));
+				const channel = await session.stream(
+					dumpCommand(job.kind, target.root, job.tables, job.structureOnly)
+				);
 				void channel.stderr.pipeTo(new WritableStream()).catch(() => undefined);
 				const ext = job.kind === 'database' ? 'sql' : 'tar';
 				const buffer = new Uint8Array(job.partBytes);

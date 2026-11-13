@@ -130,6 +130,12 @@ export function dossierFor(survey: SurveyInput, ceilingBytes: number): Dossier {
 		});
 	}
 
+	findings.push({
+		status: 'information',
+		title: 'Connect as the Owner',
+		detail: "Connect as the account that owns the site's files, not root, because Drush run as root creates root-owned files in that tree."
+	});
+
 	const redis = survey.redis;
 	if (redis === undefined || redis === null) {
 		findings.push({

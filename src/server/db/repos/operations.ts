@@ -315,6 +315,21 @@ export async function findOpenSiteOperation(
 	);
 }
 
+// an import of the organisation that has not ended; the import route admits one at a time
+export async function findOpenImport(
+	db: CollegeDBClient,
+	organizationId: string
+): Promise<{ id: string } | null> {
+	return db.first<{ id: string }>(
+		organizationId,
+		`SELECT id FROM operations
+		 WHERE organization_id = ? AND type = 'site.import'
+		 AND status IN ('planned', 'awaiting-approval', 'running', 'verifying')
+		 LIMIT 1`,
+		[organizationId]
+	);
+}
+
 // what the organisation's running operations already use of the change budget
 export async function openBlastRadius(
 	db: CollegeDBClient,
