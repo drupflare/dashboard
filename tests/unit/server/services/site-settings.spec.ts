@@ -3,9 +3,7 @@ import { composeDrupalDiscovery } from '../../../../src/server/integrations/site
 import {
 	readSiteSettings,
 	SETTINGS_CACHE_MS,
-	type SiteSettingsServices,
-	UNKNOWN_RELEASE_VERSION,
-	UNKNOWN_SCHEMA_VERSION
+	type SiteSettingsServices
 } from '../../../../src/server/services/site-settings';
 import { ApiError } from '../../../../src/shared/errors';
 import type { Action } from '../../../../src/shared/permissions';
@@ -158,24 +156,35 @@ describe('a live read', () => {
 		});
 	});
 
-	it('marks an unregistered release and an unknown data schema with the sentinels', async () => {
+	it('stores null for an unregistered release and an unknown data schema', async () => {
 		await call();
 
 		expect(rows.discovery?.document).toMatchObject({
-			version: UNKNOWN_RELEASE_VERSION,
+			version: null,
 			releaseId: 'rel_1',
-			schemaVersion: UNKNOWN_SCHEMA_VERSION
+			schemaVersion: null
 		});
 	});
 
-	it('marks only the data schema unknown when the release is registered', async () => {
+	it('stores null only for the data schema when the release is registered', async () => {
 		rows.release = { version: '2026.11.1' };
 		await call();
 
 		expect(rows.discovery?.document).toMatchObject({
 			version: '2026.11.1',
-			schemaVersion: UNKNOWN_SCHEMA_VERSION
+			schemaVersion: null
 		});
+	});
+
+	it('still reads a document stored with the old placeholder values', async () => {
+		await call();
+		const stored = rows.discovery?.document as Record<string, unknown>;
+		rows.discovery = {
+			...rows.discovery!,
+			document: { ...stored, version: 'unknown', schemaVersion: Number.MAX_SAFE_INTEGER }
+		};
+
+		expect((await call()).state).toBe('ready');
 	});
 
 	it('shows the plan read-only with the platform reason', async () => {

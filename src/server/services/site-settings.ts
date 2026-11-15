@@ -38,10 +38,6 @@ export interface SiteSettingsServices {
 // unreviewed: a settings page reread within a minute shows the stored document, not a fresh read
 export const SETTINGS_CACHE_MS = 60_000;
 
-// discoveryDocumentSchema requires a value, so an unregistered release or an unknown data schema gets these
-export const UNKNOWN_RELEASE_VERSION = 'unknown';
-export const UNKNOWN_SCHEMA_VERSION = Number.MAX_SAFE_INTEGER;
-
 const notBuilt = (what: string) => async (): Promise<never> => {
 	throw new ApiError('not_built', `${what} is not available yet`);
 };
@@ -190,9 +186,9 @@ async function releaseOf(
 ): Promise<DiscoveryRelease> {
 	const registered = await getRelease(db, releaseId);
 	return {
-		version: registered?.version ?? UNKNOWN_RELEASE_VERSION,
+		version: registered?.version ?? null,
 		releaseId,
-		schemaVersion: dataSchemaVersion ?? UNKNOWN_SCHEMA_VERSION
+		schemaVersion: dataSchemaVersion
 	};
 }
 
