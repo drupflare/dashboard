@@ -147,6 +147,7 @@ export const ACTION_DEFS = {
 	'plane.read': { scope: 'org', org: NOBILL },
 	'plane.manage': { scope: 'org', org: ADM },
 	'plane.connect': { scope: 'department', org: DEV, sessionOnly: true },
+	'plane.revoke': { scope: 'org', org: ADM, sessionOnly: true, stepUp: true },
 	'node.read': { scope: 'org', org: NOBILL },
 	'node.pair': { scope: 'org', org: ADM, sessionOnly: true, stepUp: true },
 	'node.revoke': { scope: 'org', org: ADM, stepUp: true },

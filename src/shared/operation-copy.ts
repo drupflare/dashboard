@@ -47,6 +47,13 @@ function modulesOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
 		: { to: `/sites/${encodeURIComponent(id)}/modules`, label: 'Back to Modules' };
 }
 
+function codeHistoryOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
+	const id = operation.targetIds[0];
+	return id === undefined
+		? sites
+		: { to: `/sites/${encodeURIComponent(id)}/code-history`, label: 'Back to Code History' };
+}
+
 // an adoption names the new site first and the one it came from second
 function adoptedSiteOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
 	const id = operation.targetIds[0];
@@ -266,6 +273,15 @@ export const OPERATION_COPY = {
 		link: domainOf,
 		failureLink: domainOf
 	},
+	'modify.apply': {
+		title: 'Delivering an Edit',
+		running:
+			'A restore point is taken first, so the site can go back. Leaving this page does not stop the change.',
+		success: 'The edit is on the site and in the code history.',
+		failure: 'Could Not Deliver the Edit',
+		link: codeHistoryOf,
+		failureLink: codeHistoryOf
+	},
 	'module.install': {
 		title: 'Installing a Module',
 		running:
@@ -344,6 +360,7 @@ const TYPE_LABELS: Record<string, string> = {
 	'site.repair': 'Repair',
 	'domain.attach': 'Domain',
 	'node.command': 'Add to Box',
+	'modify.apply': 'Edit',
 	'module.install': 'Install',
 	'module.enable': 'Enable',
 	'module.remove': 'Remove',
@@ -382,7 +399,10 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		route: 'connecting the site address',
 		'first-run': 'setting up the first admin account',
 		verify: 'checking that the site answers',
-		activate: 'marking the site ready'
+		activate: 'marking the site ready',
+		'template-restore': 'sending the template database',
+		'template-apply': 'waiting for the site to apply the template',
+		'template-code': 'installing the template code'
 	},
 	'site.adopt': {
 		lease: 'locking your site for this change',
@@ -575,6 +595,16 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		install: 'installing the module',
 		verify: 'checking that the site holds the module'
 	},
+	'modify.apply': {
+		lease: 'locking the site for this change',
+		preflight: 'checking the site and the files',
+		export: 'copying the site database into a restore point',
+		'restore-point-verify': 'checking every part of the restore point',
+		'restore-point-record': 'saving the restore point',
+		deliver: 'sending the files to the site',
+		verify: 'checking that the site runs the new files',
+		record: 'adding the edit to the code history'
+	},
 	'module.enable': {
 		lease: 'locking the site for this change',
 		preflight: 'checking the site and the module',
@@ -582,7 +612,9 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		'restore-point-verify': 'checking every part of the restore point',
 		'restore-point-record': 'saving the restore point',
 		enable: 'turning the module on',
-		verify: 'checking that the module is on'
+		verify: 'checking that the module is on',
+		'strata-store': 'setting up private storage for Strata',
+		strata: 'setting how much of the allowance Strata may use'
 	},
 	'module.remove': {
 		lease: 'locking the site for this change',
@@ -668,6 +700,42 @@ function moduleReason(error: string | null | undefined): string | null {
 	if (MODULE_MESSAGE_CODES.has(match[1] ?? '')) return match[2] ?? null;
 	if (match[1] === 'restore_too_large') {
 		return 'The site database is too large to take a restore point, so nothing was changed.';
+	}
+	return null;
+}
+
+// the engine writes the site's refusal of an edit as a plain sentence after the code
+const MODIFY_MESSAGE_CODES: ReadonlySet<string> = new Set([
+	'modify_refused',
+	'modify_unavailable',
+	'modify_too_large',
+	'modify_unverified',
+	'bundle_missing'
+]);
+
+// the engine writes a template lock failure as the site's sentence after the code
+const TEMPLATE_CODE_CODES: ReadonlySet<string> = new Set([
+	'template_code_failed',
+	'template_code_refused',
+	'template_code_stalled',
+	'template_code_unsupported'
+]);
+
+function templateCodeReason(error: string | null | undefined): string | null {
+	const match = /^([a-z_]+): (.+)$/s.exec(error ?? '');
+	if (match === null || !TEMPLATE_CODE_CODES.has(match[1] ?? '')) return null;
+	return `${sentence(match[2] ?? '')}.`;
+}
+
+function modifyReason(error: string | null | undefined): string | null {
+	const match = /^([a-z_]+): (.+)$/s.exec(error ?? '');
+	if (match === null) return null;
+	if (MODIFY_MESSAGE_CODES.has(match[1] ?? '')) return match[2] ?? null;
+	if (match[1] === 'restore_too_large') {
+		return 'The site database is too large to take a restore point, so nothing was changed.';
+	}
+	if (match[1] === 'no_owner_token') {
+		return 'Drupflare holds no access for this site, so it cannot deliver files to it.';
 	}
 	return null;
 }
@@ -872,6 +940,14 @@ export function failureReason(operation: {
 	if (needsLargerRestore(operation)) return LARGER_RESTORE_REASON;
 	if (MODULE_TYPES.has(operation.type ?? '')) {
 		const reason = moduleReason(operation.failedError);
+		if (reason !== null) return reason;
+	}
+	if (operation.type === 'modify.apply') {
+		const reason = modifyReason(operation.failedError);
+		if (reason !== null) return reason;
+	}
+	if (operation.type === 'site.create') {
+		const reason = templateCodeReason(operation.failedError);
 		if (reason !== null) return reason;
 	}
 	if (operation.type === 'site.adopt') {

@@ -339,9 +339,9 @@ export const EFFORT: readonly EffortRow[] = [
 			'A refused commit stays stored and the old revision stays active',
 			'Rollback returns to the previous revision'
 		],
-		screens: 0,
+		screens: 1,
 		workerRoute: '/modify',
-		dashboardOperation: 'none',
+		dashboardOperation: 'modify.apply',
 		state: 'partial',
 		blockedBy: null,
 		leftAfter: 'Whether a patch still applies to the new core, which is a judgement.',

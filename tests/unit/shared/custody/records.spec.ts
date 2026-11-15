@@ -1,16 +1,27 @@
 import { DatabaseSync } from 'node:sqlite';
 import { describe, expect, it } from 'vitest';
+import { toBase64Url } from '../../../../contracts/src/common';
 import { SCHEMA_STATEMENTS } from '../../../../src/server/db/schema';
+import {
+	CryptoError,
+	decryptRecordText,
+	encryptRecord,
+	loadKeyRing
+} from '../../../../src/shared/custody/envelope';
 import {
 	adminPasswordState,
 	expiredPendingSecrets,
+	newPlaneConnectionId,
 	OWNER_TOKEN_SQL,
 	ownerTokenAad,
 	ownerTokenIdOf,
 	PENDING_SECRET_KINDS,
 	PENDING_SECRET_SQL,
 	pendingSecretAad,
-	pendingSecretIdOf
+	pendingSecretIdOf,
+	PLANE_CONNECTION_ID,
+	PLANE_CONNECTION_SQL,
+	planeConnectionAad
 } from '../../../../src/shared/custody/records';
 
 describe('associated data', () => {
@@ -21,6 +32,60 @@ describe('associated data', () => {
 			purpose: 'pending-secret:admin-password'
 		});
 		expect(pendingSecretAad('site_1', 'admin-password')).not.toEqual(ownerTokenAad('site_1'));
+	});
+});
+
+describe('plane connection custody', () => {
+	const ringOf = () => loadKeyRing({ KEK_V1: toBase64Url(new Uint8Array(32).fill(7)) });
+
+	it('binds a sealed token to its connection, so another row cannot open it', async () => {
+		const ring = await ringOf();
+		const sealed = await encryptRecord('cf-token-value', planeConnectionAad('pcn_a'), ring);
+		expect(await decryptRecordText(sealed, planeConnectionAad('pcn_a'), ring)).toBe(
+			'cf-token-value'
+		);
+		await expect(
+			decryptRecordText(sealed, planeConnectionAad('pcn_b'), ring)
+		).rejects.toBeInstanceOf(CryptoError);
+		await expect(
+			decryptRecordText(sealed, { siteId: 'pcn_a', purpose: 'owner-token' }, ring)
+		).rejects.toBeInstanceOf(CryptoError);
+	});
+
+	it('keeps the token out of the sealed text', async () => {
+		const sealed = await encryptRecord(
+			'cf-token-value',
+			planeConnectionAad('pcn_a'),
+			await ringOf()
+		);
+		expect(JSON.stringify(sealed)).not.toContain('cf-token-value');
+	});
+
+	it('makes ids that match the pattern and differ per call', () => {
+		const ids = new Set(Array.from({ length: 20 }, newPlaneConnectionId));
+		expect(ids.size).toBe(20);
+		for (const id of ids) expect(id).toMatch(PLANE_CONNECTION_ID);
+	});
+
+	it('reads only a non-revoked connection of the site organisation and account', () => {
+		const db = new DatabaseSync(':memory:');
+		for (const statement of SCHEMA_STATEMENTS) db.exec(statement);
+		db.prepare(
+			`INSERT INTO sites (id, organization_id, name, plane, state, ready_at, created_at, updated_at)
+				VALUES ('site_1', 'org_1', 's', 'self-managed', 'active', 1, 1, 1)`
+		).run();
+		const insert = db.prepare(
+			`INSERT INTO plane_connections (id, organization_id, provider, account_id, account_name,
+				token_kind, minted, credential_envelope, capabilities, state, created_at, last_validated_at)
+				VALUES (?, ?, 'cloudflare', ?, 'A', 'user', 0, 'sealed', '[]', ?, 1, 1)`
+		);
+		insert.run('pcn_1', 'org_1', 'acct', 'revoked');
+		insert.run('pcn_2', 'org_2', 'acct', 'active');
+		const read = db.prepare(PLANE_CONNECTION_SQL.forSite);
+		expect(read.get('site_1', 'acct')).toBeUndefined();
+		insert.run('pcn_3', 'org_1', 'acct', 'active');
+		expect(read.get('site_1', 'acct')).toMatchObject({ id: 'pcn_3', organization_id: 'org_1' });
+		expect(read.get('site_1', 'other')).toBeUndefined();
 	});
 });
 

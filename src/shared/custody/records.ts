@@ -82,6 +82,35 @@ export function adminPasswordState(
 
 // #endregion
 
+// #region plane connection
+
+export const PLANE_CONNECTION_PURPOSE = 'plane-connection';
+
+export const PLANE_CONNECTION_ID = /^pcn_[a-z2-7]{26}$/;
+
+const CONNECTION_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+
+export function newPlaneConnectionId(): string {
+	const bytes = crypto.getRandomValues(new Uint8Array(26));
+	let body = '';
+	for (const byte of bytes) body += CONNECTION_ALPHABET[byte & 31];
+	return `pcn_${body}`;
+}
+
+// the sealed token is bound to its row, so an envelope copied onto another connection fails to open
+export function planeConnectionAad(connectionId: string): Aad {
+	return { siteId: connectionId, purpose: PLANE_CONNECTION_PURPOSE };
+}
+
+// the engine opens the token with these; the dashboard writes the same row format
+export const PLANE_CONNECTION_SQL = {
+	forSite: `SELECT c.id, c.organization_id, c.account_id, c.credential_envelope, c.token_kind, c.state
+		FROM plane_connections c JOIN sites s ON s.organization_id = c.organization_id
+		WHERE s.id = ? AND c.account_id = ? AND c.provider = 'cloudflare' AND c.state <> 'revoked'`
+} as const;
+
+// #endregion
+
 // #region ids
 
 // ids name a sealed record and carry no secret; the first-run step returns these and nothing else

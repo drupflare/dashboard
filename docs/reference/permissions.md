@@ -74,6 +74,7 @@ Organisation roles are `owner`, `admin`, `developer`, `billing`, `viewer`. Site 
 | `plane.read`                     | org        | x         | x         | x             |             | x          |                 |                 |             |                                   |
 | `plane.manage`                   | org        | x         | x         |               |             |            |                 |                 |             |                                   |
 | `plane.connect`                  | department | x         | x         | x             |             |            |                 |                 |             | session only                      |
+| `plane.revoke`                   | org        | x         | x         |               |             |            |                 |                 |             | session only, step-up             |
 | `node.read`                      | org        | x         | x         | x             |             | x          |                 |                 |             |                                   |
 | `node.pair`                      | org        | x         | x         |               |             |            |                 |                 |             | session only, step-up             |
 | `node.revoke`                    | org        | x         | x         |               |             |            |                 |                 |             | step-up                           |
@@ -189,6 +190,7 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `repo.connect`
 - `billing.portal`
 - `plane.connect`
+- `plane.revoke`
 - `node.pair`
 - `site.adopt`
 - `site.import.credential`
@@ -209,6 +211,7 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `org.delete`
 - `key.create`
 - `repo.connect`
+- `plane.revoke`
 - `node.pair`
 - `node.revoke`
 - `fleet.bulk-destructive`

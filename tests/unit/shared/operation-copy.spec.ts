@@ -55,6 +55,7 @@ const COVERED = [
 	'node.command',
 	'module.install',
 	'module.enable',
+	'modify.apply',
 	'module.remove',
 	'theme.default'
 ];
@@ -67,7 +68,7 @@ function enginePlanSteps(): { type: string; id: string }[] {
 		const text = readFileSync(WORKFLOWS + file, 'utf8');
 		const marks = [
 			...text.matchAll(
-				/type: '((?:site|backup|config|env|migration|import|git|domain|node|module|theme|access)\.[a-z-]+)'/g
+				/type: '((?:site|backup|config|env|migration|import|git|domain|node|module|modify|theme|access)\.[a-z-]+)'/g
 			)
 		];
 		marks.forEach((mark, i) => {
@@ -258,6 +259,13 @@ describe('operation copy', () => {
 		expect(operationTypeLabel('site.upgrade')).toBe('Update');
 	});
 
+	it('names the template steps of a site create in plain words', () => {
+		for (const id of ['template-restore', 'template-apply', 'template-code']) {
+			expect(stepLabel('site.create', id), id).not.toBe(GENERIC_STEP_LABEL);
+		}
+		expect(stepLabel('site.create', 'template-code')).toBe('Installing the template code');
+	});
+
 	it('falls back to generic labels for an unknown step or type, never the raw id', () => {
 		expect(stepLabel('site.create', 'made-up-step')).toBe(GENERIC_STEP_LABEL);
 		expect(stepLabel('backup.create', 'verify')).toBe('Checking every backup part');
@@ -279,6 +287,18 @@ describe('operation copy', () => {
 				failedStep: 'resource.CONFIG_KV'
 			})
 		).toBe('Stopped while creating the site storage.');
+	});
+
+	it('says which package stopped a template create, in plain words', () => {
+		expect(
+			failureReason({
+				type: 'site.create',
+				status: 'failed',
+				failedStep: 'template-code',
+				failedError:
+					'template_code_failed: the site could not install drupal/token: its download did not match its checksum'
+			})
+		).toBe('The site could not install drupal/token: its download did not match its checksum.');
 	});
 
 	it('explains a failure with no known step, and a cancelled operation, without a step name', () => {

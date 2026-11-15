@@ -127,9 +127,6 @@ describe('the run path', () => {
 	const verified = CATALOGUE_ROWS.filter(
 		(row) => isAutomatic(row) && REPAIR_HANDLES[row.repairId]!.verified
 	);
-	const unverified = CATALOGUE_ROWS.filter(
-		(row) => isAutomatic(row) && !REPAIR_HANDLES[row.repairId]!.verified
-	);
 
 	it('evaluates the success predicate after every handler that runs', async () => {
 		const predicate = await import('../../../../src/shared/health/predicate');
@@ -156,12 +153,25 @@ describe('the run path', () => {
 		const predicate = await import('../../../../src/shared/health/predicate');
 		const spy = vi.spyOn(predicate, 'evaluatePredicate');
 		try {
-			for (const row of unverified) {
-				const rw = await repairWorld();
-				await runRepair(rw, inputOf(rw, row.repairId));
-				expect(rw.records()[0]!.status, row.repairId).toBe('refused');
-				expect(rw.site.state.calls, row.repairId).toEqual([]);
-			}
+			const rw = await repairWorld();
+			const row: CatalogueRow = {
+				...CATALOGUE.get('render.empty')!,
+				repairId: 'test.unrouted'
+			};
+			const registries = {
+				catalogue: new Map([...CATALOGUE, [row.repairId, row]]),
+				handles: {
+					...REPAIR_HANDLES,
+					[row.repairId]: {
+						verified: false,
+						run: async () => ({ ok: false, detail: '' })
+					}
+				},
+				undo: {}
+			};
+			await runRepair(rw, inputOf(rw, row.repairId), { registries });
+			expect(rw.records()[0]!.status).toBe('refused');
+			expect(rw.site.state.calls).toEqual([]);
 			expect(spy).not.toHaveBeenCalled();
 		} finally {
 			spy.mockRestore();

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, formatDuration, formatMoney } from '../../../../src/shared/utils/format';
+import {
+	formatBytes,
+	formatCount,
+	formatDollars,
+	formatDuration,
+	formatHours,
+	formatMoney
+} from '../../../../src/shared/utils/format';
 import { thrownBy } from '../../server/utils/support';
 
 describe('formatBytes', () => {
@@ -34,6 +41,54 @@ describe('formatDuration', () => {
 
 	it('refuses a negative duration', () => {
 		expect(() => formatDuration(-5)).toThrow(RangeError);
+	});
+});
+
+describe('formatCount', () => {
+	it.each([
+		[0, '0'],
+		[250, '250'],
+		[100000, '100 thousand'],
+		[1000000, '1 million'],
+		[1500000, '1.5 million'],
+		[20000000, '20 million']
+	])('formats %i as %j', (value, expected) => {
+		expect(formatCount(value)).toBe(expected);
+	});
+
+	it('refuses a negative or non-finite count', () => {
+		expect(() => formatCount(-1)).toThrow(RangeError);
+		expect(() => formatCount(Number.NaN)).toThrow(RangeError);
+	});
+});
+
+describe('formatHours', () => {
+	it.each([
+		[0, '0 hours'],
+		[0.5, '30 minutes'],
+		[1, '1 hour'],
+		[2, '2 hours'],
+		[1.5, '1.5 hours'],
+		[192, '192 hours']
+	])('formats %d as %j', (hours, expected) => {
+		expect(formatHours(hours)).toBe(expected);
+	});
+
+	it('refuses a negative or non-finite number of hours', () => {
+		expect(() => formatHours(-1)).toThrow(RangeError);
+		expect(() => formatHours(Number.POSITIVE_INFINITY)).toThrow(RangeError);
+	});
+});
+
+describe('formatDollars', () => {
+	it.each([
+		[0, '$0'],
+		[35, '$35'],
+		[0.5, '$0.50'],
+		[1249, '$1,249'],
+		[11.67, '$11.67']
+	])('formats %d as %j', (dollars, expected) => {
+		expect(formatDollars(dollars)).toBe(expected);
 	});
 });
 

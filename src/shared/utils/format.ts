@@ -35,6 +35,34 @@ export function formatDuration(ms: number): string {
 	return parts.join(' ');
 }
 
+const COUNT_FORMAT = new Intl.NumberFormat('en-US', {
+	notation: 'compact',
+	compactDisplay: 'long',
+	maximumFractionDigits: 1
+});
+
+export function formatCount(value: number): string {
+	if (!Number.isFinite(value) || value < 0) {
+		throw new RangeError('count must be a non-negative number');
+	}
+	return COUNT_FORMAT.format(value);
+}
+
+export function formatHours(hours: number): string {
+	if (!Number.isFinite(hours) || hours < 0) {
+		throw new RangeError('hours must be a non-negative number');
+	}
+	if (hours > 0 && hours < 1) return `${Math.round(hours * 60)} minutes`;
+	return `${Number(hours.toFixed(1))} ${hours === 1 ? 'hour' : 'hours'}`;
+}
+
+// catalogue prices are dollars, with cents only where they are not whole
+export function formatDollars(dollars: number): string {
+	const cents = Math.round(dollars * 100);
+	const text = formatMoney(cents, 'USD');
+	return cents % 100 === 0 ? text.replace(/\.00$/, '') : text;
+}
+
 // amounts stay integer cents; the decimal string goes to Intl as text so no float is ever built
 export function formatMoney(cents: number, currency: string): string {
 	if (!Number.isSafeInteger(cents)) throw new RangeError('money must be integer cents');
