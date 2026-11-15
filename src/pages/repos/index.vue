@@ -22,7 +22,7 @@ const orgView = computed(() => {
 
 const tab = ref<'corpus' | 'connected'>('corpus');
 const tabs = [
-	{ label: 'Verified Corpus', value: 'corpus' },
+	{ label: 'Codebases We Have Run', value: 'corpus' },
 	{ label: 'Connected Repositories', value: 'connected' }
 ];
 
@@ -60,6 +60,7 @@ function retryCorpus(): void {
 
 const picked = ref<CorpusResult | null>(null);
 const dialogOpen = ref(false);
+const ownOpen = ref(false);
 
 function inspect(item: CorpusResult): void {
 	picked.value = item;
@@ -153,8 +154,14 @@ const repoColumns: TableColumn<RepoRow>[] = [
 		<div class="flex flex-col gap-8">
 			<UiPageHeader
 				title="Repositories"
-				text="Check which verified Drupal codebases can be installed, and see the repositories your organization can use."
-			/>
+				text="See which Drupal codebases we have run, and bring code of your own."
+			>
+				<UButton
+					icon="i-lucide-plus"
+					@click="ownOpen = true"
+					>Add Your Own Code</UButton
+				>
+			</UiPageHeader>
 
 			<UiErrorState
 				v-if="orgView === 'org-error'"
@@ -220,12 +227,11 @@ const repoColumns: TableColumn<RepoRow>[] = [
 						v-else-if="corpusView === 'empty'"
 						icon="i-lucide-search-x"
 						title="No Codebases Match"
-						text="Try another name, or choose All Statuses."
+						text="Try another name, or choose All Statuses. Code that is not on this list can still be added."
 					/>
-					<RepoCorpusTable
+					<RepoCorpusList
 						v-else-if="list"
 						:items="list.items"
-						:rows="list.rows"
 						@inspect="inspect"
 					/>
 				</section>
@@ -316,6 +322,8 @@ const repoColumns: TableColumn<RepoRow>[] = [
 		<RepoInstallDialog
 			v-model:open="dialogOpen"
 			:entry="picked"
+			:rows="list?.rows ?? []"
 		/>
+		<RepoOwnDialog v-model:open="ownOpen" />
 	</ClientOnly>
 </template>

@@ -1,0 +1,492 @@
+{
+	"entity_reference_integrity": {
+		"repo": "https://github.com/victorstack-ai/drupal-entity-reference-integrity",
+		"shape": "module",
+		"core": "^10 || ^11",
+		"legacy": null
+	},
+	"activity_finder": {
+		"repo": "https://github.com/YCloudYUSA/yusaopeny_activity_finder",
+		"shape": "suite",
+		"core": "^10 || ^11",
+		"legacy": null
+	},
+	"simple_oauth_21": {
+		"repo": "https://github.com/e0ipso/simple_oauth_21",
+		"shape": "suite",
+		"core": "^11",
+		"legacy": null
+	},
+	"mantle2": {
+		"repo": "https://github.com/earth-app/mantle2",
+		"shape": "module",
+		"core": "^11.3",
+		"legacy": null
+	},
+	"webcms": {
+		"repo": "https://github.com/USEPA/webcms",
+		"shape": "project",
+		"core": "10.6.15",
+		"legacy": {
+			"sha": "0d7d615044ca2352bb7393b9089badf6793f0bc5",
+			"date": "2026-11-08",
+			"rows": {
+				"install": {
+					"state": "unsupported",
+					"note": "14 failed: briancherne/jquery-hoverintent 1.10.1: briancherne/jquery-hoverintent: metadata 404 for briancherne/jquery-hoverintent | ckeditor-plugin/fakeobjects 4.15.0: ckeditor-plugin/fakeobjects: metadata 404 for ckeditor-plugin/fakeobjects | ckeditor-plugin/iframe 4.15.0: ckeditor-plugin/iframe: metadata 404 for ckeditor-plugin/iframe | ckeditor/resize 4.13.0: ckeditor/resize: metadata 404 for ckeditor/resize; 149/158 registry packages; 27/27 custom uploaded; 220/225 modules enabled; 106 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid"
+				},
+				"container build": {
+					"state": "inline",
+					"note": "the container was rebuilt by the enables"
+				},
+				"anon render": {
+					"state": "inline"
+				},
+				"auth render": {
+					"state": "inline"
+				},
+				"entity crud": {
+					"state": "inline"
+				},
+				"form submit": {
+					"state": "inline"
+				},
+				"file rw": {
+					"state": "inline",
+					"note": "a multipart image upload through the media form was stored and read back byte for byte"
+				},
+				"queue cron": {
+					"state": "inline",
+					"note": "cron ran from the administration form and the log records Cron run completed"
+				},
+				"outbound http": {
+					"state": "unsupported",
+					"note": "ion_provider\\\".\",\"path\":\"/admin/reports/updates\"}"
+				},
+				"update": {
+					"state": "unsupported",
+					"note": "the run halted: unit-aborted: maint_on aborted: Symfony\\Component\\DependencyInjection\\Exception\\ServiceNotFoundException: The service \"group.relation_handler.permission_provider.group_node\" has a dependency on a non-existent service \"group.relation_handler.permission_pr"
+				},
+				"cache rebuild": {
+					"state": "unknown",
+					"note": "the performance page carried no system_clear_cache form"
+				},
+				"config import": {
+					"state": "unsupported",
+					"note": "the single export answered 500 without the item; log: \u001b[31m✘ \u001b[41;31m[\u001b[41;97mERROR\u001b[41;31m]\u001b[0m \u001b[1mcfw render failed: /admin/config/development/configuration/single/export/system.simple/system.site: Symfony\\Component\\DependencyInjection\\Exception\\ServiceNotFoundException: The service \"group.relation_handler.permission_provider.group_node\" has a depen"
+				},
+				"module workflow": {
+					"state": "unsupported",
+					"note": "/admin/reports/status answered 500; /admin/config answered 500; log: \u001b[31m✘ \u001b[41;31m[\u001b[41;97mERROR\u001b[41;31m]\u001b[0m \u001b[1mcfw render failed: /admin/config: Symfony\\Component\\DependencyInjection\\Exception\\ServiceNotFoundException: The service \"group.relation_handler.permission_provider.group_node\" has a dependency on a non-existent service \"group.relation_handler.permission"
+				}
+			}
+		}
+	},
+	"farmos": {
+		"repo": "https://github.com/farmOS/farmOS",
+		"shape": "profile",
+		"core": "11.4.10",
+		"legacy": null
+	},
+	"open_social": {
+		"repo": "https://github.com/goalgorilla/open_social",
+		"shape": "profile",
+		"core": "^10.5.6",
+		"legacy": {
+			"sha": "dc52b9ad9779d33933828245002fcf494ea712e4",
+			"date": "2026-11-08",
+			"rows": {
+				"install": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"container build": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"anon render": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"auth render": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"entity crud": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"form submit": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"file rw": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"queue cron": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"outbound http": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"update": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"cache rebuild": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"config import": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				},
+				"module workflow": {
+					"state": "unsupported",
+					"note": "native install of profile social failed: Problem 1 | - Root composer.json requires goalgorilla/open_social @dev -> satisfiable by goalgorilla/open_social[dev-dc52b9ad9779d33933828245002fcf494ea712e4]. | - goalgorilla/open_social dev-dc52b9ad9779d33933828245002fcf494ea712e4 requires drupal/core-composer-scaffold ^11 -> found drupal/core-composer-scaffold[11.0.0-alpha1, ..., 11.x-dev] but it conflicts with your root composer.json require (^10.6)."
+				}
+			}
+		}
+	},
+	"yusaopeny": {
+		"repo": "https://github.com/YCloudYUSA/yusaopeny",
+		"shape": "profile",
+		"core": "^11.4",
+		"legacy": null
+	},
+	"thunder": {
+		"repo": "https://github.com/thunder/thunder-distribution",
+		"shape": "profile",
+		"core": "~11.4.0",
+		"legacy": null
+	},
+	"varbase": {
+		"repo": "https://github.com/Vardot/varbase",
+		"shape": "profile",
+		"core": "~11.4.0",
+		"legacy": null
+	},
+	"govcms": {
+		"repo": "https://github.com/govCMS/GovCMS",
+		"shape": "profile",
+		"core": "11.4.10",
+		"legacy": null
+	},
+	"herbie": {
+		"repo": "https://github.com/unlcms/project-herbie",
+		"shape": "project",
+		"core": "^11",
+		"legacy": null
+	},
+	"openculturas": {
+		"repo": "https://github.com/openculturas/openculturas-distribution",
+		"shape": "project",
+		"core": "~11.4.8",
+		"legacy": null
+	},
+	"droopler": {
+		"repo": "https://github.com/droptica/droopler",
+		"shape": "profile",
+		"core": "^11",
+		"legacy": null
+	},
+	"localgov_microsites": {
+		"repo": "https://github.com/localgovdrupal/localgov_microsites_project",
+		"shape": "project",
+		"core": "^10.0",
+		"legacy": {
+			"sha": "4de8403b60f8c9c91d8966a65ff4ebb0537582bc",
+			"date": "2026-11-08",
+			"rows": {
+				"install": {
+					"state": "inline",
+					"note": "1/1 registry packages; 0/0 custom uploaded; 0/0 modules enabled; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid"
+				},
+				"container build": {
+					"state": "inline",
+					"note": "the project enables no module, so the container is the one the first boot built"
+				},
+				"anon render": {
+					"state": "inline"
+				},
+				"auth render": {
+					"state": "inline"
+				},
+				"entity crud": {
+					"state": "inline"
+				},
+				"form submit": {
+					"state": "inline"
+				},
+				"file rw": {
+					"state": "inline",
+					"note": "a multipart image upload through the media form was stored and read back byte for byte"
+				},
+				"queue cron": {
+					"state": "inline",
+					"note": "cron ran from the administration form and the log records Cron run completed"
+				},
+				"outbound http": {
+					"state": "parked",
+					"note": "the update check fetched from the registry through the parked fetch"
+				},
+				"update": {
+					"state": "inline",
+					"note": "prepared run rmw88i8jj; drained to phase complete"
+				},
+				"cache rebuild": {
+					"state": "inline"
+				},
+				"config import": {
+					"state": "inline",
+					"note": "system.site was imported from YAML and read back"
+				},
+				"module workflow": {
+					"state": "inline",
+					"note": "/admin/reports/status, /admin/config"
+				}
+			}
+		}
+	},
+	"essex": {
+		"repo": "https://github.com/essexcountycouncil/essex-intranet-drupal",
+		"shape": "project",
+		"core": "10.3.13",
+		"legacy": {
+			"sha": "34f325e784fa72a7485404434f9e806a28b57cef",
+			"date": "2026-11-08",
+			"rows": {
+				"install": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"container build": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"anon render": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"auth render": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"entity crud": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"form submit": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"file rw": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"queue cron": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"outbound http": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"update": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"cache rebuild": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"config import": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				},
+				"module workflow": {
+					"state": "unsupported",
+					"note": "native install of project localgov failed: - Downloading symfony/error-handler (v6.4.18) | - Downloading pear/pear_exception (v1.0.2) | patches/drupal-core-claro.patch (LP-67 - Claro error when table header is missing) | patches/geo_entity.patch (Drupal 10 install error)"
+				}
+			}
+		}
+	},
+	"openintranet": {
+		"repo": "https://github.com/droptica/openintranet",
+		"shape": "profile",
+		"core": "~11.3.0",
+		"legacy": null
+	},
+	"drupalx": {
+		"repo": "https://github.com/nextagencyio/drupalx-project",
+		"shape": "project",
+		"core": "^11.3.10",
+		"legacy": null
+	},
+	"atelier": {
+		"repo": "https://github.com/aincient-labs/atelier-cms",
+		"shape": "project",
+		"core": "^11.4.7",
+		"legacy": null
+	},
+	"lagoon_cachebackend": {
+		"repo": "https://github.com/lagoon-examples/drupal-cachebackend",
+		"shape": "project",
+		"core": "11.3.13",
+		"legacy": null
+	},
+	"islandora": {
+		"repo": "https://github.com/Islandora/islandora",
+		"shape": "suite",
+		"core": "^10 || ^11",
+		"legacy": null
+	},
+	"ymca360": {
+		"repo": "https://github.com/YCloudYUSA/yusaopeny_ymca360",
+		"shape": "suite",
+		"core": "^10 || ^11",
+		"legacy": null
+	},
+	"strawberryfield": {
+		"repo": "https://github.com/esmero/strawberryfield",
+		"shape": "module",
+		"core": "^10.3 || ^11",
+		"legacy": null
+	},
+	"fairwell": {
+		"repo": "https://github.com/sealionking/fairwell-drupal",
+		"shape": "modules",
+		"core": "^10 || ^11",
+		"legacy": null
+	},
+	"migration_example": {
+		"repo": "https://github.com/jigarius/drupal-migration-example",
+		"shape": "module",
+		"core": "8.x",
+		"legacy": {
+			"sha": "171af0727375ff663da3e4b235e966b7f9e0b1fc",
+			"date": "2026-11-08",
+			"rows": {
+				"install": {
+					"state": "unsupported",
+					"note": "enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</em> at /drupal/core/lib/Drupal/Core/Config/UnmetDependenciesException.php:100; override for the anachron run: the verified corpus records install none for this repository"
+				},
+				"container build": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				},
+				"anon render": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				},
+				"auth render": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				},
+				"entity crud": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				},
+				"form submit": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				},
+				"file rw": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				},
+				"queue cron": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				},
+				"outbound http": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				},
+				"update": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				},
+				"cache rebuild": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				},
+				"config import": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				},
+				"module workflow": {
+					"state": "unsupported",
+					"note": "blocked by install: enabling c11n_migrate was refused: Configuration objects provided by <em class=\"placeholder\">c11n_migrate</em> have unmet dependencies: <em class=\"placeholder\">field.field.node.program.field_image (field.storage.node.field_image), field.field.node.program.field_tags (field.storage.node.field_tags)</"
+				}
+			}
+		}
+	},
+	"fflch": {
+		"repo": "https://github.com/fflch/drupal",
+		"shape": "project",
+		"core": "9.1.0",
+		"legacy": {
+			"sha": "75fc28a784560ba8b044043603870a7d9acc42a2",
+			"date": "2026-11-08",
+			"rows": {
+				"install": {
+					"state": "unsupported",
+					"note": "11 failed: bower-asset/ckeditor-dev 4.14.1: bower-asset/ckeditor-dev: metadata 404 for bower-asset/ckeditor-dev | bower-asset/colorbox 1.6.4: bower-asset/colorbox: metadata 404 for bower-asset/colorbox | bower-asset/jquery.cycle : bower-asset/jquery.cycle: metadata 404 for bower-asset/jquery.cycle | bower-asset/jquery.hoverintent : bower-asset/jquery.hoverintent: metadata 404 for bower-asset/jquery.hoverintent; 135/148 registry packages; 0/0 custom uploaded; 0/0 modules enabled; 8 composer patches not applied; 0 rows written by the delivery (free allows 100,000 a day); run with PLAN=paid; override for the anachron run: the verified corpus records install none for this repository"
+				},
+				"container build": {
+					"state": "inline",
+					"note": "the project enables no module, so the container is the one the first boot built"
+				},
+				"anon render": {
+					"state": "inline"
+				},
+				"auth render": {
+					"state": "inline"
+				},
+				"entity crud": {
+					"state": "inline"
+				},
+				"form submit": {
+					"state": "inline"
+				},
+				"file rw": {
+					"state": "inline",
+					"note": "a multipart image upload through the media form was stored and read back byte for byte"
+				},
+				"queue cron": {
+					"state": "inline",
+					"note": "cron ran from the administration form and the log records Cron run completed"
+				},
+				"outbound http": {
+					"state": "parked",
+					"note": "the update check fetched from the registry through the parked fetch"
+				},
+				"update": {
+					"state": "inline",
+					"note": "prepared run rmw88jqgr; drained to phase complete"
+				},
+				"cache rebuild": {
+					"state": "inline"
+				},
+				"config import": {
+					"state": "inline",
+					"note": "system.site was imported from YAML and read back"
+				},
+				"module workflow": {
+					"state": "inline",
+					"note": "/admin/reports/status, /admin/config"
+				}
+			}
+		}
+	},
+	"varbase_patches": {
+		"repo": "https://github.com/Vardot/varbase-patches",
+		"shape": "composer-plugin",
+		"core": "n/a",
+		"legacy": null
+	}
+}

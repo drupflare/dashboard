@@ -12,21 +12,31 @@ const owner = { id: ORG, name: 'Personal', personal: true, role: 'owner' };
 const corpusPath = `/api/v1/orgs/${ORG}/corpus`;
 const listPath = `/api/v1/orgs/${ORG}/repo-connections`;
 
+const common = { summary: '', repo: null, core: null, shape: null, legacy: null };
+
 const list = {
 	rows: ['install', 'file rw'],
 	items: [
 		{
+			...common,
 			id: 'good',
 			name: 'good',
+			title: 'Good Site',
 			status: 'verified',
 			install: { allowed: true },
+			checks: { passed: 2, total: 2, unchecked: 0 },
+			blockers: [],
 			cells: { install: { state: 'inline' }, 'file rw': { state: 'inline' } }
 		},
 		{
+			...common,
 			id: 'half',
 			name: 'half',
+			title: 'Half Site',
 			status: 'partial',
-			install: { allowed: false, reason: 'half is partial in the corpus' },
+			install: { allowed: false, reason: 'Half Site passes some checks and fails others.' },
+			checks: { passed: 1, total: 2, unchecked: 0 },
+			blockers: [{ checks: ['File Read and Write'], reason: 'A file upload did not save.' }],
 			cells: { install: { state: 'inline' }, 'file rw': { state: 'unsupported' } }
 		}
 	]
@@ -104,36 +114,47 @@ afterEach(() => {
 });
 
 describe('repositories page', () => {
-	it('shows a verified codebase as allowed and a refused one with its reason', async () => {
+	it('lists each codebase by title with its status and how many checks pass', async () => {
 		setup({ body: list });
 
 		const wrapper = await mountPage();
 
-		await vi.waitFor(() => expect(wrapper.text()).toContain('half is partial in the corpus'));
-		expect(wrapper.text()).toContain('Allowed');
-		expect(wrapper.text()).toContain('Refused');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Half Site'));
+		expect(wrapper.text()).toContain('Good Site');
+		expect(wrapper.text()).toContain('Verified');
+		expect(wrapper.text()).toContain('Partial');
+		expect(wrapper.text()).toContain('1 of 2 checks pass');
 	});
 
-	it('opens the install options for the picked codebase with its refusal reason and the four modes', async () => {
+	it('opens the details for the picked codebase with what failed and how to use it', async () => {
 		setup({ body: list });
 		const wrapper = await mountPage();
-		await vi.waitFor(() => expect(buttonNamed(wrapper, 'Install Options')).toHaveLength(2));
+		await vi.waitFor(() => expect(buttonNamed(wrapper, 'Details')).toHaveLength(2));
 
-		await buttonNamed(wrapper, 'Install Options')[1]!.trigger('click');
+		await buttonNamed(wrapper, 'Details')[1]!.trigger('click');
 
 		await vi.waitFor(() => {
 			const text = document.body.textContent ?? '';
-			expect(text).toContain('Change a Module');
-			expect(text).toContain('half is partial in the corpus');
+			expect(text).toContain('A file upload did not save.');
+			expect(text).toContain('Ways to Use It');
 		});
+	});
+
+	it('opens the ways to add code that is not on the list', async () => {
+		setup({ body: list });
+		const wrapper = await mountPage();
+
+		await buttonNamed(wrapper, 'Add Your Own Code')[0]!.trigger('click');
+
+		await vi.waitFor(() => expect(document.body.textContent).toContain('Attach a Repository'));
 	});
 
 	it('shows the empty state when no codebase matches the search', async () => {
 		setup((call) => (call.query.q ? { body: { rows: list.rows, items: [] } } : { body: list }));
 		const wrapper = await mountPage();
-		await vi.waitFor(() => expect(wrapper.text()).toContain('good'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Good Site'));
 
-		await wrapper.find('input[placeholder="Search by codebase name"]').setValue('zzz');
+		await wrapper.find('input[placeholder="Search by name or repository"]').setValue('zzz');
 
 		await vi.waitFor(() => expect(wrapper.text()).toContain('No Codebases Match'));
 	});

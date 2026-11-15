@@ -1,23 +1,7 @@
 <script setup lang="ts">
-import type { CorpusResult } from '~/shared/corpus';
+import { checkLabel, type CorpusResult } from '~/shared/corpus';
 
 const props = defineProps<{ rows: string[]; cells: CorpusResult['cells'] }>();
-
-const LABELS: Record<string, string> = {
-	install: 'Install',
-	'container build': 'Build Step',
-	'anon render': 'Public Pages',
-	'auth render': 'Signed-In Pages',
-	'entity crud': 'Content Records',
-	'form submit': 'Form Submit',
-	'file rw': 'File Read and Write',
-	'queue cron': 'Queues and Cron',
-	'outbound http': 'Outbound Requests',
-	update: 'Updates',
-	'cache rebuild': 'Cache Rebuild',
-	'config import': 'Config Import',
-	'module workflow': 'Module Steps'
-};
 
 const STATES: Record<string, { label: string; icon: string }> = {
 	inline: { label: 'Works', icon: 'i-lucide-circle-check' },
@@ -27,7 +11,6 @@ const STATES: Record<string, { label: string; icon: string }> = {
 };
 const NOT_CHECKED = { label: 'Not Checked', icon: 'i-lucide-circle-help' };
 
-const labelOf = (row: string) => LABELS[row] ?? row;
 const stateOf = (row: string) => STATES[props.cells[row]?.state ?? ''] ?? NOT_CHECKED;
 </script>
 
@@ -43,7 +26,7 @@ const stateOf = (row: string) => STATES[props.cells[row]?.state ?? ''] ?? NOT_CH
 				class="size-4 shrink-0"
 				aria-hidden="true"
 			/>
-			<span class="text-muted">{{ labelOf(row) }}</span>
+			<span class="text-muted">{{ checkLabel(row) }}</span>
 			<span class="font-medium text-highlighted">{{ stateOf(row).label }}</span>
 		</li>
 	</ul>

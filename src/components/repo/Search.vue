@@ -16,7 +16,7 @@ const statusItems = [
 			<UInput
 				v-model="q"
 				icon="i-lucide-search"
-				placeholder="Search by codebase name"
+				placeholder="Search by name or repository"
 				class="w-full"
 			/>
 		</UFormField>

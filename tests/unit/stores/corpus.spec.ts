@@ -12,8 +12,16 @@ const list: CorpusList = {
 		{
 			id: 'good',
 			name: 'good',
+			title: 'Good',
+			summary: '',
+			repo: null,
+			core: null,
+			shape: null,
 			status: 'verified',
 			install: { allowed: true },
+			checks: { passed: 1, total: 1, unchecked: 0 },
+			blockers: [],
+			legacy: null,
 			cells: { install: { state: 'inline' } }
 		}
 	]

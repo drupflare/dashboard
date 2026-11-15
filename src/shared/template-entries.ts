@@ -1,5 +1,3 @@
-import corpus from './corpus.json';
-
 export const TEMPLATE_ENTRY_IDS = ['thunder', 'govcms', 'farmos'] as const;
 export type TemplateEntryId = (typeof TEMPLATE_ENTRY_IDS)[number];
 
@@ -8,6 +6,7 @@ export interface TemplateEntry {
 	name: string;
 	summary: string;
 	repo: string;
+	commit: string;
 	profile: string;
 	mode: 'template' | 'profile';
 	template: string;
@@ -25,6 +24,7 @@ export const TEMPLATE_ENTRIES: Record<TemplateEntryId, TemplateEntry> = {
 		name: 'Thunder',
 		summary: 'A publishing distribution for news and magazine sites.',
 		repo: 'https://github.com/thunder/thunder-distribution',
+		commit: '50686db3e03c3749588dc9aa7a65cf8cea8b0879',
 		profile: 'thunder',
 		mode: 'template',
 		template: 'thunder/thunder-project',
@@ -39,9 +39,10 @@ export const TEMPLATE_ENTRIES: Record<TemplateEntryId, TemplateEntry> = {
 		name: 'GovCMS',
 		summary: 'A distribution for government websites.',
 		repo: 'https://github.com/govCMS/GovCMS',
+		commit: 'b68803ff8d0f71d62a58a747b3dfac3a992f3991',
 		profile: 'govcms',
 		mode: 'profile',
-		template: 'drupal/recommended-project:11.4.5',
+		template: 'drupal/recommended-project:11.4.10',
 		package: 'govcms/govcms',
 		extra: ['drush/drush'],
 		auditOff: true,
@@ -53,6 +54,7 @@ export const TEMPLATE_ENTRIES: Record<TemplateEntryId, TemplateEntry> = {
 		name: 'farmOS',
 		summary: 'Farm management and record keeping.',
 		repo: 'https://github.com/farmOS/farmOS',
+		commit: '414a671338bebc22eea7dd942108092cfebb8c4a',
 		profile: 'farm',
 		mode: 'template',
 		template: 'farmos/project:4.x-dev',
@@ -67,16 +69,12 @@ export const TEMPLATE_ENTRIES: Record<TemplateEntryId, TemplateEntry> = {
 export const isTemplateEntryId = (id: string): id is TemplateEntryId =>
 	(TEMPLATE_ENTRY_IDS as readonly string[]).includes(id);
 
-// the commit is the corpus pin; "latest" is never offered
-export function templateCommit(id: TemplateEntryId): string {
-	const repo = (corpus.repos as Record<string, { sha: string }>)[id];
-	if (repo === undefined) throw new Error(`the corpus has no entry ${id}`);
-	return repo.sha;
-}
+// "latest" is never offered
+export const templateCommit = (id: TemplateEntryId): string => TEMPLATE_ENTRIES[id].commit;
 
 export function templateSpec(id: TemplateEntryId) {
-	const { name: _name, summary: _summary, ...entry } = TEMPLATE_ENTRIES[id];
-	return { ...entry, sha: templateCommit(id) };
+	const { name: _name, summary: _summary, commit, ...entry } = TEMPLATE_ENTRIES[id];
+	return { ...entry, sha: commit };
 }
 
 // Workers Free plan, Durable Objects pricing page: rows written per day. Unreviewed placeholder

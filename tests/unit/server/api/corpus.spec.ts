@@ -44,12 +44,19 @@ describe('GET corpus', () => {
 		}
 	});
 
-	it('matches part of the name without regard to case', async () => {
+	it('matches part of the name, title, summary or repository without regard to case', async () => {
 		setup({ role: 'viewer' });
 		const reply = await send(corpusList, ROUTE, { path: `${BASE}?q=DRUPAL`, headers: asUser });
-		const body = reply.json as { items: { name: string }[] };
+		const body = reply.json as {
+			items: { name: string; title: string; summary: string; repo: string | null }[];
+		};
 		expect(body.items.length).toBeGreaterThan(0);
-		for (const item of body.items) expect(item.name.toLowerCase()).toContain('drupal');
+		for (const item of body.items) {
+			const haystack = [item.name, item.title, item.summary, item.repo ?? '']
+				.join(' ')
+				.toLowerCase();
+			expect(haystack).toContain('drupal');
+		}
 	});
 
 	it('refuses an unknown status with a validation error', async () => {
