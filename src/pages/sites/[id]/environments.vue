@@ -110,12 +110,11 @@ async function remove(environment: SiteEnvironment): Promise<void> {
 						</h1>
 						<p class="text-sm text-default">
 							A staging or dev copy lets you try a change before it reaches the live
-							site.
+							site. A preview is a temporary copy that deletes itself.
 						</p>
 					</div>
 					<UButton
 						icon="i-lucide-plus"
-						:disabled="taken.has('staging') && taken.has('dev')"
 						@click="creating = true"
 						>Create Environment</UButton
 					>

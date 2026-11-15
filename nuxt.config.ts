@@ -101,7 +101,9 @@ export default defineNuxtConfig({
 				'pending-secrets-purge',
 				'single-use-purge',
 				'ladder-tick',
-				'import-credentials-purge'
+				'import-credentials-purge',
+				'environment-ttl-sweep',
+				'restore-drill'
 			]
 		},
 		publicAssets: [

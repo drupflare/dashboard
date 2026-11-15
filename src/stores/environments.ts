@@ -96,6 +96,21 @@ export const useEnvironmentsStore = defineStore('environments', {
 			this.lists.delete(keyOf(orgId, siteId));
 			return reply.operation;
 		},
+		async createPreview(
+			orgId: string,
+			siteId: string,
+			ttlHours: number,
+			idempotencyKey: string
+		): Promise<Operation> {
+			const reply = await call<{ operation: Operation }>(
+				'POST',
+				`/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/previews`,
+				{ ttlHours },
+				idempotencyKey
+			);
+			this.lists.delete(keyOf(orgId, siteId));
+			return reply.operation;
+		},
 		async remove(
 			orgId: string,
 			siteId: string,

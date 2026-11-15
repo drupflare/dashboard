@@ -118,6 +118,39 @@ export async function listEnvironments(
 	return results.map(toEnvironment);
 }
 
+export class ExpiredScanFailedError extends Error {
+	readonly code = 'EXPIRED_SCAN_FAILED';
+
+	constructor() {
+		super('a shard failed while reading expired environments');
+		this.name = 'ExpiredScanFailedError';
+	}
+}
+
+// every shard; only a ready or failed environment can be deleted, so a busy one waits for its turn
+export async function listExpiredEnvironments(
+	db: CollegeDBClient,
+	now: number,
+	limit = 50
+): Promise<EnvironmentRecord[]> {
+	const shards = await db.allAllShards<EnvironmentRow>(
+		`SELECT ${COLUMNS} FROM site_environments
+		 WHERE deleted_at IS NULL AND ttl_at IS NOT NULL AND ttl_at <= ?
+		 AND status IN ('ready', 'failed')
+		 ORDER BY ttl_at, id LIMIT ?`,
+		[now, limit]
+	);
+	const rows: EnvironmentRow[] = [];
+	for (const shard of shards) {
+		if (!shard.success) throw new ExpiredScanFailedError();
+		rows.push(...shard.results);
+	}
+	return rows
+		.sort((a, b) => (a.ttl_at ?? 0) - (b.ttl_at ?? 0) || a.id.localeCompare(b.id))
+		.slice(0, limit)
+		.map(toEnvironment);
+}
+
 export async function getEnvironment(
 	db: CollegeDBClient,
 	organizationId: string,

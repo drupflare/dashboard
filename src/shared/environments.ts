@@ -3,6 +3,39 @@ import { hashName, isValidName, suffixOwner } from './names';
 export const ENVIRONMENT_KINDS = ['staging', 'dev', 'preview'] as const;
 export type EnvironmentKind = (typeof ENVIRONMENT_KINDS)[number];
 
+// placeholders until the plan numbers are reviewed: a site holds this many previews at once, and a
+// preview expires after the default unless the owner picks a time inside the ceiling
+export const PREVIEW_LIMIT = 3;
+export const HOUR_MS = 3_600_000;
+export const PREVIEW_TTL_DEFAULT_MS = 72 * HOUR_MS;
+export const PREVIEW_TTL_MAX_MS = 336 * HOUR_MS;
+
+export function clampPreviewTtl(ttlMs: number | undefined): number {
+	if (ttlMs === undefined) return PREVIEW_TTL_DEFAULT_MS;
+	return Math.min(Math.max(ttlMs, HOUR_MS), PREVIEW_TTL_MAX_MS);
+}
+
+export function expiryText(ttlAt: number, now: number): string {
+	const left = ttlAt - now;
+	if (left <= 0) return 'Deleted soon';
+	const hours = Math.ceil(left / HOUR_MS);
+	if (hours < 48) return `Deleted in ${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+	return `Deleted in ${Math.ceil(hours / 24)} days`;
+}
+
+// the lowest preview number a site is not using, or null when it is at its limit
+export function freePreviewNumber(taken: readonly number[], limit = PREVIEW_LIMIT): number | null {
+	for (let number = 1; number <= limit; number++) {
+		if (!taken.includes(number)) return number;
+	}
+	return null;
+}
+
+export function previewNumberOf(name: string): number | null {
+	const match = /-preview-(\d+)$/.exec(name);
+	return match === null ? null : Number(match[1]);
+}
+
 export const ENVIRONMENT_STATUSES = ['creating', 'ready', 'failed', 'deleting', 'deleted'] as const;
 export type EnvironmentStatus = (typeof ENVIRONMENT_STATUSES)[number];
 

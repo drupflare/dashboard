@@ -77,6 +77,21 @@ describe('environment switcher', () => {
 		expect(items[2]!.text()).toContain('Creating');
 	});
 
+	it('says when a preview will be deleted and says nothing for a staging copy', async () => {
+		const wrapper = await mountSwitcher([
+			environment({
+				id: 'env_p',
+				kind: 'preview',
+				name: 'quiet-river-preview-1',
+				host: 'quiet-river-preview-1.drupflare.app',
+				ttlAt: Date.now() + 5 * 3_600_000
+			}),
+			environment()
+		]);
+		expect(wrapper.text()).toMatch(/Deleted in [45] hours/);
+		expect(wrapper.text().match(/Deleted/g)).toHaveLength(1);
+	});
+
 	it('opens a ready environment and not one that is still being made', async () => {
 		const wrapper = await mountSwitcher([
 			environment(),
@@ -127,6 +142,33 @@ describe('create environment dialog', () => {
 		expect(radios.find((radio) => radio.value === 'dev')?.checked).toBe(true);
 	});
 
+	it('keeps Preview open when the site has a staging and a dev copy, and starts on it', async () => {
+		await openCreate(['staging', 'dev', 'preview']);
+		const radios = [...document.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
+		expect(radios.find((radio) => radio.value === 'preview')?.disabled).toBe(false);
+		expect(radios.find((radio) => radio.value === 'preview')?.checked).toBe(true);
+		expect(document.querySelector('select')).not.toBeNull();
+	});
+
+	it('posts a preview with its lifetime in hours to the preview route', async () => {
+		cleanups.push(
+			registerApi({
+				[`POST /api/v1/orgs/${ORG}/sites/${SITE}/previews`]: {
+					status: 202,
+					body: { environmentId: 'env_2', ttlAt: 1, operation: { id: 'op_4' } }
+				}
+			})
+		);
+		await openCreate(['staging', 'dev']);
+
+		submit();
+
+		await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/new/progress/op_4'));
+		const post = calls.find((call) => call.method === 'POST');
+		expect(post?.body).toEqual({ ttlHours: 72 });
+		expect(post?.headers['idempotency-key']).toMatch(UUID);
+	});
+
 	it('posts the kind with a fresh key and follows the operation', async () => {
 		cleanups.push(
 			registerApi({
@@ -154,7 +196,7 @@ describe('create environment dialog', () => {
 					body: {
 						code: 'forbidden',
 						message: 'Your plan does not include staging and dev copies',
-						details: { unlockedBy: { id: 'managed-site', name: 'Managed Site' } },
+						details: { unlockedBy: { id: 'managed-pro', name: 'Managed Pro' } },
 						requestId: 'req_test'
 					}
 				}
@@ -164,7 +206,7 @@ describe('create environment dialog', () => {
 
 		submit();
 
-		await vi.waitFor(() => expect(document.body.textContent).toContain('Managed Site plan'));
+		await vi.waitFor(() => expect(document.body.textContent).toContain('Managed Pro plan'));
 		expect(navigate).not.toHaveBeenCalled();
 	});
 });

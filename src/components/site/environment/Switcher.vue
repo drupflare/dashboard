@@ -2,6 +2,7 @@
 import {
 	ENVIRONMENT_KIND_LABELS,
 	ENVIRONMENT_STATUS_LABELS,
+	expiryText,
 	type EnvironmentStatus
 } from '~/shared/environments';
 import type { SiteEnvironment } from '~/stores/environments';
@@ -18,15 +19,17 @@ const busyStatuses: readonly EnvironmentStatus[] = ['creating', 'deleting'];
 
 const siteUrl = computed(() => (props.siteHost ? `https://${props.siteHost}` : undefined));
 
-const rows = computed(() =>
-	props.environments.map((environment) => ({
+const rows = computed(() => {
+	const now = Date.now();
+	return props.environments.map((environment) => ({
 		environment,
 		url: `https://${environment.host}`,
 		kind: ENVIRONMENT_KIND_LABELS[environment.kind],
 		status: ENVIRONMENT_STATUS_LABELS[environment.status],
-		busy: busyStatuses.includes(environment.status)
-	}))
-);
+		busy: busyStatuses.includes(environment.status),
+		expiry: environment.ttlAt === null ? null : expiryText(environment.ttlAt, now)
+	}));
+});
 </script>
 
 <template>
@@ -59,6 +62,11 @@ const rows = computed(() =>
 				<span class="font-medium text-highlighted">{{ row.kind }}</span>
 				<span class="text-sm text-muted"
 					>{{ row.environment.host }} - {{ row.status }}</span
+				>
+				<span
+					v-if="row.expiry"
+					class="text-sm text-muted"
+					>{{ row.expiry }}</span
 				>
 			</div>
 			<div class="flex flex-wrap items-center gap-2">

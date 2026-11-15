@@ -9,9 +9,23 @@ const emit = defineEmits<{ close: [] }>();
 const store = useEnvironmentsStore();
 const kinds = [
 	{ value: 'staging', label: 'Staging' },
-	{ value: 'dev', label: 'Dev' }
+	{ value: 'dev', label: 'Dev' },
+	{ value: 'preview', label: 'Preview' }
 ] as const;
-const kind = ref<'staging' | 'dev'>(props.taken.has('staging') ? 'dev' : 'staging');
+type Kind = (typeof kinds)[number]['value'];
+const lifetimes = [
+	{ hours: 24, label: '1 day' },
+	{ hours: 72, label: '3 days' },
+	{ hours: 168, label: '7 days' },
+	{ hours: 336, label: '14 days' }
+] as const;
+
+// a site holds one staging and one dev copy, and several previews
+const isTaken = (value: Kind) => value !== 'preview' && props.taken.has(value);
+const kind = ref<Kind>(
+	!props.taken.has('staging') ? 'staging' : !props.taken.has('dev') ? 'dev' : 'preview'
+);
+const hours = ref<number>(72);
 const busy = ref(false);
 const error = ref<string | null>(null);
 const unlockedBy = ref<string | null>(null);
@@ -28,12 +42,11 @@ async function create(): Promise<void> {
 	unlockedBy.value = null;
 	busy.value = true;
 	try {
-		const operation = await store.create(
-			props.orgId,
-			props.siteId,
-			kind.value,
-			crypto.randomUUID()
-		);
+		const key = crypto.randomUUID();
+		const operation =
+			kind.value === 'preview'
+				? await store.createPreview(props.orgId, props.siteId, hours.value, key)
+				: await store.create(props.orgId, props.siteId, kind.value, key);
 		await navigateTo(`/new/progress/${operation.id}`);
 	} catch (cause) {
 		const failure = toApiClientError(cause);
@@ -75,18 +88,40 @@ function onOpenChange(value: boolean): void {
 							name="environment-kind"
 							class="size-4 accent-primary"
 							:value="option.value"
-							:disabled="taken.has(option.value)"
+							:disabled="isTaken(option.value)"
 						/>
 						<span
 							>{{ option.label }}
 							<span
-								v-if="taken.has(option.value)"
+								v-if="isTaken(option.value)"
 								class="text-muted"
 								>(this site already has one)</span
 							></span
 						>
 					</label>
 				</fieldset>
+
+				<label
+					v-if="kind === 'preview'"
+					class="flex flex-col gap-1 text-sm text-default"
+				>
+					<span class="font-medium text-highlighted">Keep it for</span>
+					<select
+						v-model.number="hours"
+						class="rounded-md border border-default bg-default px-3 py-2"
+					>
+						<option
+							v-for="option in lifetimes"
+							:key="option.hours"
+							:value="option.hours"
+						>
+							{{ option.label }}
+						</option>
+					</select>
+					<span class="text-muted"
+						>A preview is deleted on its own when this time runs out.</span
+					>
+				</label>
 
 				<div class="flex flex-col gap-2 text-sm text-default">
 					<p class="font-medium text-highlighted">What stays behind</p>
@@ -121,7 +156,7 @@ function onOpenChange(value: boolean): void {
 					<UButton
 						type="submit"
 						:loading="busy"
-						:disabled="busy || taken.has(kind)"
+						:disabled="busy || isTaken(kind)"
 						>Create Environment</UButton
 					>
 					<UButton

@@ -3,6 +3,7 @@ import verify from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/backup
 import environmentDelete from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/environments/[envId].delete';
 import environments from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/environments/index.get';
 import environmentCreate from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/environments/index.post';
+import previewCreate from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/previews/index.post';
 import pitr from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/restore-points/pitr.post';
 import { createEnvironment } from '../../../../src/server/db/repos/environments';
 import { resetSiteServices, setSiteServices } from '../../../../src/server/services/sites';
@@ -122,9 +123,30 @@ describe('who may change environments, verify a backup or restore to a moment', 
 				path: `${site}/restore-points/pitr`,
 				headers: { ...asUser, ...idem },
 				json: { at: 1_700_000_000_000 }
+			}),
+			send(previewCreate, '/api/v1/orgs/:orgId/sites/:id/previews', {
+				method: 'POST',
+				path: `${site}/previews`,
+				headers: { ...asUser, ...idem },
+				json: {}
 			})
 		]);
-		expect(replies.map((reply) => reply.status)).toEqual([403, 403, 403, 403]);
+		expect(replies.map((reply) => reply.status)).toEqual([403, 403, 403, 403, 403]);
+	});
+
+	it('rejects a preview lifetime outside one hour to two weeks and extra fields', async () => {
+		setup({ role: 'admin' });
+		const post = (json: unknown) =>
+			send(previewCreate, '/api/v1/orgs/:orgId/sites/:id/previews', {
+				method: 'POST',
+				path: `${site}/previews`,
+				headers: { ...asUser, ...idem },
+				json
+			});
+		expect((await post({ ttlHours: 0 })).status).toBe(400);
+		expect((await post({ ttlHours: 337 })).status).toBe(400);
+		expect((await post({ ttlHours: 1.5 })).status).toBe(400);
+		expect((await post({ kind: 'preview' })).status).toBe(400);
 	});
 
 	it('rejects a preview kind, extra fields and a malformed environment id', async () => {

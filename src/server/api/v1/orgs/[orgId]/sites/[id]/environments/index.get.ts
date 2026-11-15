@@ -23,7 +23,7 @@ export default defineApi(
 		tags: ['sites'],
 		summary: 'List the environments of a site',
 		description:
-			'Lists the staging, dev and preview environments of the site, newest first. Environments are not created yet, so the list is empty.',
+			'Lists the staging, dev and preview environments of the site, newest first. A preview carries the time it is deleted at; a staging or dev copy carries none.',
 		params: z.object({ orgId: z.string().min(1), id: siteId }),
 		response: z.object({ items: z.array(environmentSchema) })
 	},
