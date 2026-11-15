@@ -87,7 +87,7 @@ function toRecord(row: SiteRow): SiteRecord {
 		boxFoundAs: row.box_found_as,
 		boxMissingSince: row.box_missing_since,
 		readyAt: row.ready_at,
-		dataSchemaVersion: row.data_schema_version,
+		dataSchemaVersion: row.data_schema_version ?? null,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
 	};
@@ -175,21 +175,23 @@ export async function listReadySites(
 }
 
 // counts a site that can serve or whose create is running, so two quick creates cannot both pass
-// a limit; a create that ended without a site stops counting before its row is cleaned up
+// a limit; a create that ended without a site stops counting before its row is cleaned up; a plane
+// narrows the count to the sites on it
 export async function countOrganizationSites(
 	db: CollegeDBClient,
-	organizationId: string
+	organizationId: string,
+	plane?: string
 ): Promise<number> {
 	const row = await db.first<{ n: number }>(
 		organizationId,
 		`SELECT COUNT(*) AS n FROM sites s
-		 WHERE s.organization_id = ? AND s.state IN ('active', 'suspended')
+		 WHERE s.organization_id = ? AND s.state IN ('active', 'suspended')${plane ? ' AND s.plane = ?' : ''}
 		 AND (s.ready_at IS NOT NULL OR EXISTS (
 			SELECT 1 FROM operations o WHERE o.organization_id = s.organization_id
 			AND ((o.site_id = s.id AND o.type IN ('site.create', 'node.command'))
 				OR (o.type = 'site.adopt' AND json_extract(o.target_ids, '$[0]') = s.id))
 			AND o.status IN ('planned', 'awaiting-approval', 'running', 'verifying')))`,
-		[organizationId]
+		plane ? [organizationId, plane] : [organizationId]
 	);
 	return row?.n ?? 0;
 }

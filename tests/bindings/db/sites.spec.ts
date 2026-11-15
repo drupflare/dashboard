@@ -49,7 +49,12 @@ let counter = 0;
 const next = () => `${++counter}`.padStart(8, '0');
 
 // a create with its own site and operation; the key is unique unless a test repeats it
-function newCreate(org: string, now: number, key = `key-${next()}`) {
+function newCreate(
+	org: string,
+	now: number,
+	key = `key-${next()}`,
+	plane: 'managed' | 'self-managed' = 'managed'
+) {
 	const siteId = `site_${next()}${next()}`;
 	const operationId = `op_${next()}${next()}`;
 	return createSiteOperation(
@@ -60,7 +65,7 @@ function newCreate(org: string, now: number, key = `key-${next()}`) {
 			name: `site-${siteId}`,
 			kind: 'drupal',
 			category: 'cms',
-			plane: 'managed',
+			plane,
 			config: 'managed',
 			primaryHostname: `${siteId}.drupflare.app`,
 			now
@@ -172,9 +177,9 @@ describe('the plan cap count', () => {
 	// a site as its create and the engine leave it
 	async function seed(
 		org: string,
-		shape: { operation: string; ready: boolean; state?: State }
+		shape: { operation: string; ready: boolean; state?: State; plane?: 'self-managed' }
 	): Promise<string> {
-		const { operation } = await newCreate(org, 1_000);
+		const { operation } = await newCreate(org, 1_000, undefined, shape.plane);
 		const id = operation.operation.targetIds[0] as string;
 		await env.DB.prepare('UPDATE operations SET status = ? WHERE id = ?')
 			.bind(shape.operation, operation.operation.id)
@@ -216,6 +221,15 @@ describe('the plan cap count', () => {
 		await seed(org, { operation: 'running', ready: false });
 		await seed(`${ORG}-count-other`, { operation: 'running', ready: false });
 		expect(await countOrganizationSites(db, org)).toBe(1);
+	});
+
+	it('counts only the named plane when a plane is given', async () => {
+		const org = `${ORG}-count-plane`;
+		await seed(org, { operation: 'running', ready: false });
+		await seed(org, { operation: 'succeeded', ready: true, plane: 'self-managed' });
+		expect(await countOrganizationSites(db, org)).toBe(2);
+		expect(await countOrganizationSites(db, org, 'managed')).toBe(1);
+		expect(await countOrganizationSites(db, org, 'self-managed')).toBe(1);
 	});
 });
 

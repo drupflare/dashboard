@@ -425,6 +425,15 @@ export const ladderSwitches = sqliteTable(
 	(table) => [primaryKey({ columns: [table.scope, table.scopeId] })]
 );
 
+export const platformAudit = sqliteTable('platform_audit', {
+	id: integer('id').primaryKey({ autoIncrement: true }),
+	actor: text('actor').notNull(),
+	action: text('action').notNull(),
+	target: text('target').notNull(),
+	detail: text('detail').notNull(),
+	createdAt: integer('created_at').notNull()
+});
+
 export const templateBundles = sqliteTable('template_bundles', {
 	id: text('id').primaryKey(),
 	entryId: text('entry_id').notNull(),
@@ -462,6 +471,40 @@ export const siteConfigChanges = sqliteTable('site_config_changes', {
 	revertedBy: text('reverted_by')
 });
 
+export const customReleases = sqliteTable('custom_releases', {
+	id: text('id').primaryKey(),
+	organizationId: text('organization_id').notNull(),
+	sha256: text('sha256').notNull(),
+	fileName: text('file_name').notNull(),
+	bundleKey: text('bundle_key').notNull(),
+	recipe: text('recipe').notNull(),
+	createdAt: integer('created_at').notNull()
+});
+
+export const siteRevisions = sqliteTable('site_revisions', {
+	id: text('id').primaryKey(),
+	organizationId: text('organization_id').notNull(),
+	siteId: text('site_id').notNull(),
+	kind: text('kind', { enum: ['release', 'edit'] }).notNull(),
+	releaseId: text('release_id'),
+	bundleKey: text('bundle_key'),
+	note: text('note'),
+	createdAt: integer('created_at').notNull()
+});
+
+export const siteStrata = sqliteTable('site_strata', {
+	siteId: text('site_id').primaryKey(),
+	organizationId: text('organization_id').notNull(),
+	allocation: text('allocation', { enum: ['light', 'detailed'] }).notNull(),
+	appliedAt: integer('applied_at'),
+	confirmedFreeAt: integer('confirmed_free_at'),
+	updatedAt: integer('updated_at').notNull(),
+	store: text('store', { enum: ['none', 'ready', 'failed'] })
+		.notNull()
+		.default('none'),
+	storeReason: text('store_reason')
+});
+
 export const TABLES = [
 	schemaMeta,
 	users,
@@ -493,9 +536,13 @@ export const TABLES = [
 	releaseRollouts,
 	repairs,
 	ladderSwitches,
+	platformAudit,
 	templateBundles,
 	siteAccessRules,
 	siteConfigChanges,
+	customReleases,
+	siteRevisions,
+	siteStrata,
 	...BILLING_TABLES
 ] as const;
 
@@ -888,6 +935,27 @@ export const SCHEMA_STATEMENTS: string[] = [
 	expires_at INTEGER NOT NULL,
 	used_at INTEGER
 )`,
+	`CREATE TABLE IF NOT EXISTS plane_connections (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	provider TEXT NOT NULL CHECK (provider IN ('cloudflare')),
+	account_id TEXT NOT NULL,
+	account_name TEXT NOT NULL,
+	token_kind TEXT NOT NULL CHECK (token_kind IN ('user', 'account')),
+	token_id TEXT,
+	minted INTEGER NOT NULL DEFAULT 0 CHECK (minted IN (0, 1)),
+	credential_envelope TEXT,
+	capabilities TEXT NOT NULL,
+	workers_subdomain TEXT,
+	expires_on TEXT,
+	state TEXT NOT NULL CHECK (state IN ('active', 'invalid', 'revoked')),
+	created_at INTEGER NOT NULL,
+	last_validated_at INTEGER NOT NULL,
+	revoked_at INTEGER
+)`,
+	`CREATE INDEX IF NOT EXISTS plane_connections_org ON plane_connections (organization_id, id)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS plane_connections_account
+	ON plane_connections (organization_id, provider, account_id) WHERE state <> 'revoked'`,
 	`CREATE INDEX IF NOT EXISTS import_credentials_org ON import_credentials (organization_id, id)`,
 	`CREATE INDEX IF NOT EXISTS import_credentials_expiry ON import_credentials (expires_at)`,
 	`CREATE TABLE IF NOT EXISTS import_runs (
@@ -966,6 +1034,14 @@ export const SCHEMA_STATEMENTS: string[] = [
 	updated_by TEXT NOT NULL,
 	PRIMARY KEY (scope, scope_id)
 )`,
+	`CREATE TABLE IF NOT EXISTS platform_audit (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	actor TEXT NOT NULL,
+	action TEXT NOT NULL,
+	target TEXT NOT NULL,
+	detail TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+)`,
 	`CREATE TABLE IF NOT EXISTS template_bundles (
 	id TEXT PRIMARY KEY,
 	entry_id TEXT NOT NULL,
@@ -1004,6 +1080,37 @@ export const SCHEMA_STATEMENTS: string[] = [
 )`,
 	`CREATE INDEX IF NOT EXISTS site_config_changes_site ON site_config_changes (organization_id, site_id, created_at, id)`,
 	`CREATE INDEX IF NOT EXISTS site_config_changes_operation ON site_config_changes (organization_id, operation_id)`,
+	`CREATE TABLE IF NOT EXISTS site_revisions (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	site_id TEXT NOT NULL,
+	kind TEXT NOT NULL CHECK (kind IN ('release', 'edit')),
+	release_id TEXT,
+	bundle_key TEXT,
+	note TEXT,
+	created_at INTEGER NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS site_revisions_site ON site_revisions (site_id, created_at, id)`,
+	`CREATE TABLE IF NOT EXISTS custom_releases (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+	file_name TEXT NOT NULL,
+	bundle_key TEXT NOT NULL,
+	recipe TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS custom_releases_org_sha ON custom_releases (organization_id, sha256)`,
+	`CREATE TABLE IF NOT EXISTS site_strata (
+	site_id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	allocation TEXT NOT NULL CHECK (allocation IN ('light', 'detailed')),
+	applied_at INTEGER,
+	confirmed_free_at INTEGER,
+	updated_at INTEGER NOT NULL,
+	store TEXT NOT NULL DEFAULT 'none' CHECK (store IN ('none', 'ready', 'failed')),
+	store_reason TEXT
+)`,
 	...ESTATE_SCHEMA_STATEMENTS,
 	...BILLING_SCHEMA_STATEMENTS
 ];
@@ -1013,5 +1120,9 @@ export const SCHEMA_TRIGGERS: string[] = [
 	`CREATE TRIGGER IF NOT EXISTS audit_log_no_update BEFORE UPDATE ON audit_log
 BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END`,
 	`CREATE TRIGGER IF NOT EXISTS audit_log_no_delete BEFORE DELETE ON audit_log
-BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END`
+BEGIN SELECT RAISE(ABORT, 'audit_log is append-only'); END`,
+	`CREATE TRIGGER IF NOT EXISTS platform_audit_no_update BEFORE UPDATE ON platform_audit
+BEGIN SELECT RAISE(ABORT, 'platform_audit is append-only'); END`,
+	`CREATE TRIGGER IF NOT EXISTS platform_audit_no_delete BEFORE DELETE ON platform_audit
+BEGIN SELECT RAISE(ABORT, 'platform_audit is append-only'); END`
 ];

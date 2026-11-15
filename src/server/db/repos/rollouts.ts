@@ -111,6 +111,17 @@ export async function findRollingRollout(db: CollegeDBClient): Promise<RolloutRe
 	return row ? toRecord(row) : null;
 }
 
+// the same test the engine runs before a repair: the site's ring has begun and the rollout is live
+export async function siteInRollingRollout(db: CollegeDBClient, siteId: string): Promise<boolean> {
+	const row = await db.first<{ hit: number }>(
+		DIRECTORY_KEY,
+		`SELECT 1 AS hit FROM release_rollouts r, json_each(r.previous) p
+		 WHERE r.status = 'rolling' AND p.key = ? LIMIT 1`,
+		[siteId]
+	);
+	return row !== null;
+}
+
 export async function requestStop(db: CollegeDBClient, id: string, now: number): Promise<void> {
 	await db.run(
 		DIRECTORY_KEY,

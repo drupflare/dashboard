@@ -10,6 +10,7 @@ import {
 	registerRelease,
 	type NewRelease
 } from '../../../src/server/db/repos/releases';
+import { listSiteRevisions } from '../../../src/server/db/repos/site-revisions';
 import { getSite } from '../../../src/server/db/repos/sites';
 import { openBindings, type Bindings, type OpenBindings } from '../support';
 
@@ -169,5 +170,50 @@ describe('the data schema version on a site', () => {
 		await store.activateSite(site(5, 'rel-s2'), NOW);
 		await store.activateSite(site(5, null), NOW + 1);
 		expect((await getSite(db, ORG, site(5).id))?.dataSchemaVersion).toBe(2);
+	});
+});
+
+describe('the release history of a site', () => {
+	const site = (n: number, release: string | null) => ({
+		id: `site_relhist${String(n).padStart(4, '0')}`,
+		organizationId: ORG,
+		name: `History ${n}`,
+		plane: 'managed',
+		accountId: 'a'.repeat(32),
+		category: 'cms' as const,
+		config: 'managed' as const,
+		releaseId: release
+	});
+	const releasesOf = async (id: string) =>
+		(await listSiteRevisions(db, ORG, id, 20)).map((row) => row.releaseId);
+
+	it('records the release a site is created on and each change after it, newest first', async () => {
+		const store = new D1OperationStore(env.DB);
+		await store.activateSite(site(1, 'rel-a'), NOW);
+		await store.setSiteRelease(site(1, null).id, 'rel-b', NOW + 1);
+		await store.setSiteRelease(site(1, null).id, 'rel-a', NOW + 2);
+		expect(await releasesOf(site(1, null).id)).toEqual(['rel-a', 'rel-b', 'rel-a']);
+		const [newest] = await listSiteRevisions(db, ORG, site(1, null).id, 1);
+		expect(newest).toMatchObject({ kind: 'release', bundleKey: null, createdAt: NOW + 2 });
+	});
+
+	it('adds nothing when a retried step names the release the site already has', async () => {
+		const store = new D1OperationStore(env.DB);
+		await store.activateSite(site(2, 'rel-a'), NOW);
+		await store.activateSite(site(2, 'rel-a'), NOW + 1);
+		await store.setSiteRelease(site(2, null).id, 'rel-a', NOW + 2);
+		expect(await releasesOf(site(2, null).id)).toEqual(['rel-a']);
+	});
+
+	it('records nothing for a site created without a release', async () => {
+		const store = new D1OperationStore(env.DB);
+		await store.activateSite(site(3, null), NOW);
+		expect(await releasesOf(site(3, null).id)).toEqual([]);
+	});
+
+	it('does not list the history of a site through another organisation', async () => {
+		const store = new D1OperationStore(env.DB);
+		await store.activateSite(site(4, 'rel-a'), NOW);
+		expect(await listSiteRevisions(db, 'org_other', site(4, null).id, 20)).toEqual([]);
 	});
 });
