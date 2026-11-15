@@ -48,4 +48,15 @@ describe('resolveRoute', () => {
 			expect(resolveRoute('a.example', raw)).toEqual({ ok: false, code: 'malformed_route' });
 		}
 	});
+
+	it('reads an optional environment hint and refuses a malformed one', () => {
+		const ok = resolveRoute('a.example', JSON.stringify({ ...entry, environment: 'env_1' }));
+		expect(ok).toMatchObject({ ok: true, value: { environment: 'env_1' } });
+		expect(
+			resolveRoute('a.example', JSON.stringify({ ...entry, environment: 'Bad Env' }))
+		).toEqual({
+			ok: false,
+			code: 'malformed_route'
+		});
+	});
 });

@@ -19,12 +19,15 @@ export type Env = {
 	CONTROL_PUBLIC_KEY: string;
 	CONTROL_HOST?: string;
 	SPIKE_MODE?: string;
+	GATE_PUBLIC_KEY?: string;
+	GATE_ORIGIN?: string;
 };
 
 // isolate-wide state: leases are reused across requests until they expire
 const cache = new Map<string, Lease>();
 const inflight: ServeDeps['inflight'] = new Map();
 const revoked = new Set<string>();
+const seenAssertions = new Set<string>();
 let spike: Spike | undefined;
 
 // built on first use in an isolate; only the stage config sets SPIKE_MODE
@@ -46,6 +49,14 @@ export default {
 	fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		return serve(request, {
 			spike: spikeFor(env, ctx),
+			gate:
+				env.GATE_PUBLIC_KEY && env.GATE_ORIGIN
+					? {
+							publicKey: env.GATE_PUBLIC_KEY,
+							origin: env.GATE_ORIGIN,
+							seen: seenAssertions
+						}
+					: undefined,
 			now: Date.now,
 			publicKey: env.LEASE_PUBLIC_KEY,
 			controlHost: env.CONTROL_HOST,

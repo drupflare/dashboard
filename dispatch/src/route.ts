@@ -6,11 +6,15 @@ export const routeSchema = z
 		v: z.literal(1),
 		siteId,
 		script: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/),
-		epoch: z.int().nonnegative()
+		epoch: z.int().nonnegative(),
+		environment: z
+			.string()
+			.regex(/^[a-z0-9][a-z0-9_-]{0,63}$/)
+			.optional()
 	})
 	.strict();
 
-export type Route = { siteId: string; script: string; epoch: number };
+export type Route = { siteId: string; script: string; epoch: number; environment?: string };
 export type RouteRefusal = 'unknown_host' | 'malformed_route';
 
 const HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/;
@@ -31,6 +35,9 @@ export function resolveRoute(host: string, raw: string | null): Verified<Route, 
 	}
 	const parsed = routeSchema.safeParse(json);
 	if (!parsed.success) return { ok: false, code: 'malformed_route' };
-	const { siteId: id, script, epoch } = parsed.data;
-	return { ok: true, value: { siteId: id, script, epoch } };
+	const { siteId: id, script, epoch, environment } = parsed.data;
+	return {
+		ok: true,
+		value: { siteId: id, script, epoch, ...(environment === undefined ? {} : { environment }) }
+	};
 }

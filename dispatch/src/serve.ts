@@ -11,6 +11,7 @@ import {
 	type Served
 } from './admit';
 import { applyMessageSchema, type ApplyResult, type SiteAuthResult } from './authority';
+import { gate, type GateDeps } from './gate';
 import { normalizeHost, resolveRoute, type Route } from './route';
 import { SPIKE_PREFIX, spikeRoute, type Spike } from './spike';
 import type { View } from './usage';
@@ -36,6 +37,8 @@ export type ServeDeps = {
 	onView?(view: View): void;
 	// set only when the stage switch is on
 	spike?: Spike;
+	// without it a gated environment fails closed
+	gate?: GateDeps;
 	askTimeoutMs?: number;
 	skewMs?: number;
 	graceMs?: number;
@@ -197,6 +200,9 @@ export async function serve(request: Request, deps: ServeDeps): Promise<Response
 		graceMs: deps.graceMs
 	});
 	const client = () => deps.siteAuth(route.siteId);
+	const proceed = async (lease: Lease, serving: string) =>
+		(await gate(request, host, route, lease, deps.now(), deps.gate)) ??
+		forward(request, host, route, lease, serving, deps);
 	// the answer is checked and cached inside the shared promise, so a waiter that arrives after it
 	// settles finds the new lease instead of starting a second call
 	const refresh = async (
@@ -248,7 +254,7 @@ export async function serve(request: Request, deps: ServeDeps): Promise<Response
 		if (decision.renew) {
 			deps.waitUntil(shared(deps, key, () => refresh(held, true)));
 		}
-		return forward(request, host, route, decision.lease, decision.serving, deps);
+		return proceed(decision.lease, decision.serving);
 	}
 
 	// a request that waited on the check may find another request already renewed the lease
@@ -256,7 +262,7 @@ export async function serve(request: Request, deps: ServeDeps): Promise<Response
 	if (decision.reason === 'expired' && latest !== undefined && latest !== held) {
 		const again = await admit(latest, context());
 		if (again.action === 'serve') {
-			return forward(request, host, route, again.lease, again.serving, deps);
+			return proceed(again.lease, again.serving);
 		}
 	}
 
@@ -265,5 +271,5 @@ export async function serve(request: Request, deps: ServeDeps): Promise<Response
 			? await shared(deps, key, () => refresh(held, true))
 			: await refresh(held, false);
 	if (after.action === 'refuse') return refusal(after.code);
-	return forward(request, host, route, after.lease, after.serving, deps);
+	return proceed(after.lease, after.serving);
 }

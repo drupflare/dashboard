@@ -4,6 +4,7 @@
 	"compatibility_date": "2026-08-01",
 	"compatibility_flags": ["nodejs_compat"],
 	"observability": { "enabled": true },
+	"vars": { "GATE_ORIGIN": "", "GATE_PUBLIC_KEY": "" },
 	"dispatch_namespaces": [{ "binding": "DISPATCH", "namespace": "drupflare-prod" }],
 	"kv_namespaces": [{ "binding": "HOSTS_KV" }],
 	"analytics_engine_datasets": [{ "binding": "USAGE", "dataset": "drupflare_usage" }],
@@ -21,7 +22,7 @@
 	"env": {
 		"stage": {
 			"name": "drupflare-dispatch-stage",
-			"vars": { "SPIKE_MODE": "1" },
+			"vars": { "SPIKE_MODE": "1", "GATE_ORIGIN": "", "GATE_PUBLIC_KEY": "" },
 			"dispatch_namespaces": [{ "binding": "DISPATCH", "namespace": "drupflare-stage" }],
 			"kv_namespaces": [{ "binding": "HOSTS_KV" }],
 			"analytics_engine_datasets": [
