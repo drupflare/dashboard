@@ -70,6 +70,18 @@ describe('the committed deploy files', () => {
 		}
 	});
 
+	it('names the Gate address and public key in both dispatch environments, with no value set', () => {
+		for (const environment of ['staging', 'production'] as const) {
+			const config = render('dispatch', environment, built) as Config & {
+				vars: Record<string, string>;
+			};
+			expect(config.vars, environment).toMatchObject({
+				GATE_ORIGIN: '',
+				GATE_PUBLIC_KEY: ''
+			});
+		}
+	});
+
 	it('puts the staging dashboard on its own hostname', () => {
 		const config = render('dashboard', 'staging', built) as Config & {
 			routes: { pattern: string }[];

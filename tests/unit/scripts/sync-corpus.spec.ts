@@ -9,6 +9,7 @@ import {
 	corpusEntries,
 	installDecision,
 	parseCorpusManifest,
+	searchCorpus,
 	type CorpusEntry
 } from '../../../src/shared/corpus';
 
@@ -162,6 +163,49 @@ describe('installDecision', () => {
 			allowed: false,
 			reason: 'refused: no composer.json'
 		});
+	});
+});
+
+describe('searchCorpus', () => {
+	const manifest = parseCorpusManifest(fixture());
+
+	it('returns every codebase with its install decision when no filter is given', () => {
+		const results = searchCorpus(manifest);
+		expect(results.map((item) => item.id).sort()).toEqual(
+			['good', 'half', 'refused', 'shipped', 'upgrade'].sort()
+		);
+		expect(results.find((item) => item.id === 'good')).toMatchObject({
+			name: 'good',
+			install: { allowed: true }
+		});
+	});
+
+	it('gives the corpus reason for a refused codebase', () => {
+		const refused = searchCorpus(manifest, { q: 'refused' });
+		expect(refused).toHaveLength(1);
+		expect(refused[0]?.install).toEqual({
+			allowed: false,
+			reason: 'refused: no composer.json'
+		});
+	});
+
+	it('matches part of the name without regard to case', () => {
+		expect(searchCorpus(manifest, { q: '  GOOD ' }).map((item) => item.id)).toEqual(['good']);
+	});
+
+	it('filters by status', () => {
+		expect(searchCorpus(manifest, { status: 'needs upgrade' }).map((item) => item.id)).toEqual([
+			'upgrade'
+		]);
+	});
+
+	it('returns nothing when no codebase matches', () => {
+		expect(searchCorpus(manifest, { q: 'nothing-here' })).toEqual([]);
+	});
+
+	it('carries the capability cells of each codebase', () => {
+		const good = searchCorpus(manifest, { q: 'good' })[0];
+		expect(Object.keys(good?.cells ?? {})).toHaveLength(13);
 	});
 });
 

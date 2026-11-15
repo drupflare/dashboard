@@ -21,7 +21,7 @@
 		"MANAGED_ACCOUNT_ID": "2bba2ae752a5bb611580fdccbce6d200",
 		"MANAGED_HOST_SUFFIX": "drupflare.app",
 		"MANAGED_LABEL_SUFFIX": "-staging",
-		"RELEASE_DRUPAL": "snap-b551063-b6175d49",
+		"RELEASE_DRUPAL": "snap-5f79d31-f2710db0",
 		"PAGED_RESTORE": "on",
 		"WEBAUTHN_RP_ID": "staging-app.drupflare.com",
 		"WEBAUTHN_ORIGIN": "https://staging-app.drupflare.com",

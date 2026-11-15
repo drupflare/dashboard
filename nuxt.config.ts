@@ -34,6 +34,9 @@ export default defineNuxtConfig({
 			clientSecret: '',
 			webhookSecret: ''
 		},
+		releaseHook: {
+			secret: ''
+		},
 		turnstile: {
 			secretKey: process.env.NUXT_TURNSTILE_SECRET_KEY || ''
 		}
@@ -97,6 +100,7 @@ export default defineNuxtConfig({
 			'*/15 * * * *': [
 				'pending-secrets-purge',
 				'single-use-purge',
+				'ladder-tick',
 				'import-credentials-purge'
 			]
 		},

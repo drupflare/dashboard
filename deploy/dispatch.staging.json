@@ -1,4 +1,5 @@
 {
 	"workers_dev": false,
+	"vars": { "GATE_ORIGIN": "", "GATE_PUBLIC_KEY": "" },
 	"kv_namespaces": [{ "binding": "HOSTS_KV", "id": "dd28ab148af84001ac883c96b4b5042b" }]
 }
