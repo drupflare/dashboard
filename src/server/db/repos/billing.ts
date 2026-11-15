@@ -1,4 +1,5 @@
 import type { CollegeDBClient } from '@earth-app/collegedb';
+import type { AddOnHolding } from '../../domain/entitlements';
 import { DIRECTORY_KEY } from '../collegedb';
 
 export interface BillingAccount {
@@ -6,12 +7,14 @@ export interface BillingAccount {
 	stripeCustomerId: string | null;
 	subscriptionId: string | null;
 	planId: string;
-	addOnIds: string[];
+	addOns: AddOnHolding[];
 	status: string;
 	entitlementState: string;
 	revision: number;
 	lastEventAt: number;
 	billingEmail: string | null;
+	billingName: string | null;
+	billingCountry: string | null;
 	lastInvoiceId: string | null;
 	reviewReason: string | null;
 	createdAt: number;
@@ -23,26 +26,36 @@ interface AccountRow {
 	stripe_customer_id: string | null;
 	subscription_id: string | null;
 	plan_id: string;
-	add_on_ids: string;
+	add_ons: string;
 	status: string;
 	entitlement_state: string;
 	revision: number;
 	last_event_at: number;
 	billing_email: string | null;
+	billing_name: string | null;
+	billing_country: string | null;
 	last_invoice_id: string | null;
 	review_reason: string | null;
 	created_at: number;
 	updated_at: number;
 }
 
-const COLUMNS = `organization_id, stripe_customer_id, subscription_id, plan_id, add_on_ids, status,
-	entitlement_state, revision, last_event_at, billing_email, last_invoice_id, review_reason,
-	created_at, updated_at`;
+const COLUMNS = `organization_id, stripe_customer_id, subscription_id, plan_id, add_ons, status,
+	entitlement_state, revision, last_event_at, billing_email, billing_name, billing_country,
+	last_invoice_id, review_reason, created_at, updated_at`;
 
-function parseAddOns(raw: string): string[] {
+function parseAddOns(raw: string): AddOnHolding[] {
 	try {
 		const parsed: unknown = JSON.parse(raw);
-		return Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string') : [];
+		if (!Array.isArray(parsed)) return [];
+		return parsed.filter(
+			(item): item is AddOnHolding =>
+				typeof item === 'object' &&
+				item !== null &&
+				typeof item.id === 'string' &&
+				Number.isInteger(item.quantity) &&
+				item.quantity > 0
+		);
 	} catch {
 		return [];
 	}
@@ -54,12 +67,14 @@ function toAccount(row: AccountRow): BillingAccount {
 		stripeCustomerId: row.stripe_customer_id,
 		subscriptionId: row.subscription_id,
 		planId: row.plan_id,
-		addOnIds: parseAddOns(row.add_on_ids),
+		addOns: parseAddOns(row.add_ons),
 		status: row.status,
 		entitlementState: row.entitlement_state,
 		revision: row.revision,
 		lastEventAt: row.last_event_at,
 		billingEmail: row.billing_email,
+		billingName: row.billing_name,
+		billingCountry: row.billing_country,
 		lastInvoiceId: row.last_invoice_id,
 		reviewReason: row.review_reason,
 		createdAt: row.created_at,
@@ -88,7 +103,7 @@ export async function ensureAccount(
 ): Promise<BillingAccount> {
 	await db.run(
 		organizationId,
-		`INSERT OR IGNORE INTO billing_accounts (organization_id, plan_id, add_on_ids, status,
+		`INSERT OR IGNORE INTO billing_accounts (organization_id, plan_id, add_ons, status,
 		 entitlement_state, revision, last_event_at, created_at, updated_at)
 		 VALUES (?, ?, '[]', 'none', 'pending', 0, 0, ?, ?)`,
 		[organizationId, freePlanId, now, now]
@@ -128,7 +143,7 @@ export interface SubscriptionApply {
 	customerId: string;
 	subscriptionId: string;
 	planId: string;
-	addOnIds: readonly string[];
+	addOns: readonly AddOnHolding[];
 	status: string;
 	entitlementState: string;
 	eventAt: number;
@@ -143,12 +158,12 @@ export async function applySubscription(
 	const row = await db.first<{ revision: number }>(
 		input.organizationId,
 		`INSERT INTO billing_accounts (organization_id, stripe_customer_id, subscription_id, plan_id,
-		 add_on_ids, status, entitlement_state, revision, last_event_at, created_at, updated_at)
+		 add_ons, status, entitlement_state, revision, last_event_at, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
 		 ON CONFLICT (organization_id) DO UPDATE SET
 		 stripe_customer_id = excluded.stripe_customer_id,
 		 subscription_id = excluded.subscription_id, plan_id = excluded.plan_id,
-		 add_on_ids = excluded.add_on_ids, status = excluded.status,
+		 add_ons = excluded.add_ons, status = excluded.status,
 		 entitlement_state = excluded.entitlement_state,
 		 revision = billing_accounts.revision + 1, last_event_at = excluded.last_event_at,
 		 updated_at = excluded.updated_at
@@ -159,7 +174,7 @@ export async function applySubscription(
 			input.customerId,
 			input.subscriptionId,
 			input.planId,
-			JSON.stringify(input.addOnIds),
+			JSON.stringify(input.addOns),
 			input.status,
 			input.entitlementState,
 			input.eventAt,
@@ -174,7 +189,10 @@ export interface AccountPatch {
 	stripeCustomerId?: string;
 	subscriptionId?: string;
 	status?: string;
-	billingEmail?: string;
+	// null clears the stored value, which is how a removed address reaches the account
+	billingEmail?: string | null;
+	billingName?: string | null;
+	billingCountry?: string | null;
 	lastInvoiceId?: string;
 	reviewReason?: string;
 }
@@ -184,6 +202,8 @@ const PATCH_COLUMNS: Record<keyof AccountPatch, string> = {
 	subscriptionId: 'subscription_id',
 	status: 'status',
 	billingEmail: 'billing_email',
+	billingName: 'billing_name',
+	billingCountry: 'billing_country',
 	lastInvoiceId: 'last_invoice_id',
 	reviewReason: 'review_reason'
 };
@@ -210,6 +230,92 @@ export async function patchAccount(
 		[...keys.map((key) => patch[key]), eventAt, now, organizationId, eventAt]
 	);
 	return row !== null;
+}
+
+export interface BillingDetails {
+	name: string | null;
+	email: string | null;
+	country: string | null;
+}
+
+// a person's own save: it leaves last_event_at alone, so no webhook that Stripe created just
+// before it can be read as stale and dropped
+export async function setBillingDetails(
+	db: CollegeDBClient,
+	organizationId: string,
+	details: BillingDetails,
+	now: number
+): Promise<void> {
+	await db.run(
+		organizationId,
+		`UPDATE billing_accounts SET billing_name = ?, billing_email = ?, billing_country = ?,
+		 updated_at = ? WHERE organization_id = ?`,
+		[details.name, details.email, details.country, now, organizationId]
+	);
+}
+
+export interface PendingInput {
+	sessionId: string;
+	organizationId: string;
+	mode: string;
+	now: number;
+}
+
+export async function addPending(db: CollegeDBClient, input: PendingInput): Promise<void> {
+	await db.run(
+		input.organizationId,
+		`INSERT OR IGNORE INTO billing_pending (session_id, organization_id, mode, created_at)
+		 VALUES (?, ?, ?, ?)`,
+		[input.sessionId, input.organizationId, input.mode, input.now]
+	);
+}
+
+// true when a pending purchase was there to clear
+export async function clearPending(
+	db: CollegeDBClient,
+	organizationId: string,
+	sessionId: string
+): Promise<boolean> {
+	const row = await db.first<{ session_id: string }>(
+		organizationId,
+		`DELETE FROM billing_pending WHERE session_id = ? AND organization_id = ?
+		 RETURNING session_id`,
+		[sessionId, organizationId]
+	);
+	return row !== null;
+}
+
+export interface CreditInput {
+	organizationId: string;
+	meter: string;
+	units: number;
+	sourceId: string;
+	now: number;
+}
+
+// false means the source id was already credited and nothing changed
+export async function addCredit(db: CollegeDBClient, input: CreditInput): Promise<boolean> {
+	const row = await db.first<{ source_id: string }>(
+		input.organizationId,
+		`INSERT INTO billing_credits (source_id, organization_id, meter, units, created_at)
+		 VALUES (?, ?, ?, ?, ?) ON CONFLICT (source_id) DO NOTHING RETURNING source_id`,
+		[input.sourceId, input.organizationId, input.meter, input.units, input.now]
+	);
+	return row !== null;
+}
+
+// purchased units per meter; nothing consumes a credit yet
+export async function creditBalances(
+	db: CollegeDBClient,
+	organizationId: string
+): Promise<Record<string, number>> {
+	const { results } = await db.all<{ meter: string; units: number }>(
+		organizationId,
+		`SELECT meter, SUM(units) AS units FROM billing_credits WHERE organization_id = ?
+		 GROUP BY meter ORDER BY meter`,
+		[organizationId]
+	);
+	return Object.fromEntries(results.map((row) => [row.meter, row.units]));
 }
 
 export async function hasEvent(db: CollegeDBClient, eventId: string): Promise<boolean> {

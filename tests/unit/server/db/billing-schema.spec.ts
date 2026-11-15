@@ -39,7 +39,7 @@ describe('billing schema', () => {
 		const insert = (status: string, state: string, review: string | null) =>
 			db
 				.prepare(
-					`INSERT INTO billing_accounts (organization_id, plan_id, add_on_ids, status,
+					`INSERT INTO billing_accounts (organization_id, plan_id, add_ons, status,
 					 entitlement_state, revision, last_event_at, review_reason, created_at, updated_at)
 					 VALUES (?, 'managed-free', '[]', ?, ?, 0, 0, ?, 1, 1)`
 				)
@@ -61,5 +61,19 @@ describe('billing schema', () => {
 		expect(() =>
 			db.prepare(`INSERT INTO stripe_events VALUES ('evt_1', 'invoice.paid', 2)`).run()
 		).toThrow(/UNIQUE/);
+	});
+
+	it('keeps one credit per source id and refuses a credit of no units', () => {
+		const db = applied();
+		const credit = (source: string, units: number) =>
+			db
+				.prepare(`INSERT INTO billing_credits VALUES (?, 'org-1', 'support-hours', ?, 1)`)
+				.run(source, units);
+		credit('evt_1', 5);
+		expect(() => credit('evt_1', 5)).toThrow(/UNIQUE/);
+		expect(() => credit('evt_2', 0)).toThrow(/CHECK/);
+		expect(() => credit('evt_3', -1)).toThrow(/CHECK/);
+		const rows = db.prepare('SELECT count(*) AS n FROM billing_credits').get() as { n: number };
+		expect(rows.n).toBe(1);
 	});
 });

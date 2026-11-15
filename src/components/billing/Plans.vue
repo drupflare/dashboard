@@ -1,19 +1,50 @@
 <script setup lang="ts">
-import type { Interval } from '~/shared/plans';
+import type { Interval, Plane } from '~/shared/plans';
 import type { BillingPlan } from '~/stores/billing';
 
 const props = defineProps<{
 	plans: BillingPlan[];
+	currentPlanId: string;
+	interval: Interval;
 	canBuy: boolean;
+	// the organization already pays for something, so a change goes through the portal
 	subscribed: boolean;
-	// the organization can open the billing portal, so a change goes through it
 	portal: boolean;
 	busy: string | null;
 }>();
 
 const emit = defineEmits<{ subscribe: [planId: string, interval: Interval] }>();
 
+const GROUPS: { plane: Plane; title: string; text: string }[] = [
+	{
+		plane: 'managed',
+		title: 'Managed',
+		text: 'We host your sites on our Cloudflare account.'
+	},
+	{
+		plane: 'self-managed',
+		title: 'Self-Managed',
+		text: 'We manage sites on your own Cloudflare account. You pay Cloudflare for what the sites use.'
+	},
+	{
+		plane: 'self-hosted',
+		title: 'Self-Hosted',
+		text: 'Run Drupflare on a server you own. Nothing is charged for linking it.'
+	}
+];
+
 const canSubscribe = computed(() => props.canBuy && !props.subscribed);
+
+// the group the organization is on comes first
+const groups = computed(() => {
+	const currentPlane = props.plans.find((plan) => plan.id === props.currentPlanId)?.plane;
+	return GROUPS.map((group) => ({
+		...group,
+		plans: props.plans.filter((plan) => plan.plane === group.plane)
+	}))
+		.filter((group) => group.plans.length > 0)
+		.sort((a, b) => Number(b.plane === currentPlane) - Number(a.plane === currentPlane));
+});
 </script>
 
 <template>
@@ -22,7 +53,7 @@ const canSubscribe = computed(() => props.canBuy && !props.subscribed);
 			<h2 class="text-lg font-semibold text-highlighted">Plans</h2>
 			<p
 				v-if="subscribed"
-				class="text-sm text-muted"
+				class="max-w-prose text-sm text-muted"
 			>
 				<template v-if="portal">
 					This organization already has a subscription. Use Manage Billing to change it.
@@ -41,16 +72,28 @@ const canSubscribe = computed(() => props.canBuy && !props.subscribed);
 		/>
 		<div
 			v-else
-			class="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
+			class="flex flex-col gap-6"
 		>
-			<BillingPlan
-				v-for="plan in plans"
-				:key="plan.id"
-				:plan="plan"
-				:can-subscribe="canSubscribe"
-				:busy="busy"
-				@subscribe="(interval) => emit('subscribe', plan.id, interval)"
-			/>
+			<div
+				v-for="group in groups"
+				:key="group.plane"
+				class="flex flex-col"
+			>
+				<h3 class="font-medium text-highlighted">{{ group.title }}</h3>
+				<p class="max-w-prose text-sm text-muted">{{ group.text }}</p>
+				<ul class="mt-2 divide-y divide-default border-y border-default">
+					<BillingPlanRow
+						v-for="plan in group.plans"
+						:key="plan.id"
+						:plan="plan"
+						:current="plan.id === currentPlanId"
+						:interval="interval"
+						:can-subscribe="canSubscribe"
+						:busy="busy"
+						@subscribe="emit('subscribe', plan.id, interval)"
+					/>
+				</ul>
+			</div>
 		</div>
 	</section>
 </template>

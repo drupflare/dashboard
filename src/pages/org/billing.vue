@@ -2,7 +2,7 @@
 import { toApiClientError, type ApiClientError } from '~/composables/useApi';
 import { isOrgRole, ORG_ROLE_ACTIONS } from '~/shared/permissions';
 import type { Interval } from '~/shared/plans';
-import { FREE_PLAN_ID, useBillingStore } from '~/stores/billing';
+import { FREE_PLAN_IDS, useBillingStore, type AddOnResult } from '~/stores/billing';
 import { useOrgStore } from '~/stores/org';
 import { useSessionStore } from '~/stores/session';
 
@@ -29,36 +29,46 @@ const plan = computed(() =>
 		? billing.plans?.find((item) => item.id === entitlement.value?.planId)
 		: undefined
 );
-const paidPlan = computed(() => {
+// a paid plan means a plan subscription exists, so a change goes through the portal; add-ons
+// alone do not stop a plan purchase
+const hasSubscription = computed(() => {
 	const current = entitlement.value;
-	return !!current && current.planId !== FREE_PLAN_ID;
+	if (!current) return false;
+	return !FREE_PLAN_IDS.includes(current.planId);
 });
-const subscribed = computed(() => paidPlan.value && entitlement.value?.billingAccount === true);
-const addOnNames = computed(() =>
-	(entitlement.value?.addOns ?? []).flatMap((id) => {
-		const name = billing.plans?.find((item) => item.id === id)?.name;
-		return name ? [name] : [];
-	})
-);
+const billingAccount = computed(() => entitlement.value?.billingAccount === true);
 
 const view = computed(() => {
 	if (org.error && !org.current) return 'org-error';
 	if (org.items !== undefined && !org.current) return 'no-org';
 	if (billing.entitlementError) return 'plan-error';
 	if (billing.plansError) return 'plans-error';
-	if (entitlement.value === undefined || billing.plans === undefined) return 'loading';
+	if (billing.addOnsError) return 'add-ons-error';
+	if (
+		entitlement.value === undefined ||
+		billing.plans === undefined ||
+		billing.addOns === undefined
+	) {
+		return 'loading';
+	}
 	if (entitlement.value === null) return 'no-plan';
 	return 'ready';
 });
 
+const interval = ref<Interval>('month');
 const actionError = ref<ApiClientError | null>(null);
 // the key of the request in flight; one at a time, so a double click cannot start two
 const busy = ref<string | null>(null);
 // the retry to run once a fresh sign-in is confirmed
 const waiting = ref<(() => Promise<void>) | null>(null);
+const notice = ref<string | null>(null);
+const checking = ref(false);
+// the retry to run once the billing details are saved, and the parts the server said it lacks
+const detailsRetry = ref<{ run: () => Promise<void>; missing: string[] } | null>(null);
 
 function load(): void {
 	void billing.loadPlans();
+	void billing.loadAddOns();
 	if (orgId.value) void billing.loadEntitlement(orgId.value);
 }
 
@@ -84,12 +94,24 @@ async function guarded(key: string, run: () => Promise<void>): Promise<void> {
 		await run();
 	} catch (cause) {
 		const failure = toApiClientError(cause);
-		const details = failure.details as { requires?: string } | null;
+		const details = failure.details as {
+			requires?: string;
+			reason?: string;
+			missing?: string[];
+		} | null;
 		if (details?.requires === 'step-up') waiting.value = () => guarded(key, run);
-		else actionError.value = failure;
+		else if (details?.reason === 'billing_details_required') {
+			detailsRetry.value = { run: () => guarded(key, run), missing: details.missing ?? [] };
+		} else actionError.value = failure;
 	} finally {
 		busy.value = null;
 	}
+}
+
+function detailsSaved(): void {
+	const retry = detailsRetry.value;
+	detailsRetry.value = null;
+	if (retry) void retry.run();
 }
 
 function stepUpDone(): void {
@@ -98,12 +120,11 @@ function stepUpDone(): void {
 	if (retry) void retry();
 }
 
-function subscribe(planId: string, interval: Interval): void {
+function subscribe(planId: string, chosen: Interval): void {
 	const id = orgId.value;
 	if (!id) return;
-	void guarded(`${planId}:${interval}`, async () => {
-		const { url } = await billing.checkout(id, planId, interval);
-		await navigateTo(url, { external: true });
+	void guarded(`${planId}:${chosen}`, async () => {
+		await settle(await billing.checkout(id, planId, chosen));
 	});
 }
 
@@ -115,15 +136,64 @@ function manage(): void {
 		await navigateTo(url, { external: true });
 	});
 }
+
+async function settle(result: AddOnResult): Promise<void> {
+	if ('url' in result) {
+		await navigateTo(result.url, { external: true });
+		return;
+	}
+	notice.value = 'Your change was sent. It shows here once your payment provider confirms it.';
+}
+
+function runAddOn(key: string, request: (id: string) => Promise<AddOnResult>): void {
+	const id = orgId.value;
+	if (!id) return;
+	notice.value = null;
+	void guarded(key, async () => settle(await request(id)));
+}
+
+function subscribeAddOn(addOn: string, quantity: number): void {
+	runAddOn(`addon:${addOn}:sub`, (id) =>
+		billing.buyAddOn(id, { mode: 'subscription', addOn, quantity, interval: interval.value })
+	);
+}
+
+function changeAddOn(addOn: string, quantity: number): void {
+	runAddOn(`addon:${addOn}:set`, (id) => billing.setAddOnQuantity(id, addOn, quantity));
+}
+
+function buyPack(addOn: string, units: number): void {
+	runAddOn(`addon:${addOn}:pack`, (id) => billing.buyAddOn(id, { mode: 'pack', addOn, units }));
+}
+
+async function checkAgain(): Promise<void> {
+	const id = orgId.value;
+	if (!id) return;
+	checking.value = true;
+	actionError.value = null;
+	try {
+		await billing.refreshEntitlement(id);
+		notice.value = null;
+	} catch (cause) {
+		actionError.value = toApiClientError(cause);
+	} finally {
+		checking.value = false;
+	}
+}
 </script>
 
 <template>
 	<ClientOnly>
-		<div class="flex flex-col gap-6">
+		<div class="flex max-w-4xl flex-col gap-10">
 			<UiPageHeader
 				title="Billing"
 				:text="org.current?.name"
-			/>
+			>
+				<BillingInterval
+					v-if="view === 'ready'"
+					v-model="interval"
+				/>
+			</UiPageHeader>
 
 			<UiErrorState
 				v-if="view === 'org-error'"
@@ -171,6 +241,19 @@ function manage(): void {
 				>
 			</UiErrorState>
 
+			<UiErrorState
+				v-else-if="view === 'add-ons-error'"
+				title="Could Not Load Add-Ons"
+				:text="billing.addOnsError?.message"
+				:request-id="billing.addOnsError?.requestId"
+			>
+				<UButton
+					color="neutral"
+					@click="load()"
+					>Try Again</UButton
+				>
+			</UiErrorState>
+
 			<UiSkeletonTable
 				v-else-if="view === 'loading'"
 				label="Loading billing"
@@ -183,7 +266,7 @@ function manage(): void {
 				text="This organization's plan could not be found."
 			/>
 
-			<template v-else>
+			<template v-else-if="entitlement">
 				<UiEmptyState
 					v-if="actionError?.code === 'not_built'"
 					icon="i-lucide-circle-slash"
@@ -203,26 +286,66 @@ function manage(): void {
 					@cancel="waiting = null"
 				/>
 
-				<BillingStatus
-					v-if="entitlement"
-					:plan-name="plan?.name ?? null"
+				<BillingDetails
+					v-if="detailsRetry && orgId"
+					:org-id="orgId"
+					:missing="detailsRetry.missing"
+					@saved="detailsSaved()"
+					@cancel="detailsRetry = null"
+				/>
+
+				<div
+					v-if="notice"
+					role="status"
+					class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-default p-4 text-sm"
+				>
+					<p>{{ notice }}</p>
+					<UButton
+						color="neutral"
+						variant="outline"
+						:loading="checking"
+						@click="checkAgain()"
+					>
+						Check Again
+					</UButton>
+				</div>
+
+				<BillingCurrent
+					:plan="plan"
 					:entitlement="entitlement"
-					:add-on-names="addOnNames"
-					:subscribed="subscribed"
+					:add-ons="billing.addOns ?? []"
+					:interval="interval"
+					:subscribed="billingAccount"
 					:can-portal="canPortal"
 					:busy="busy"
 					@manage="manage()"
 				/>
 
+				<BillingAddOns
+					:add-ons="billing.addOns ?? []"
+					:entitlement="entitlement"
+					:interval="interval"
+					:can-buy="canBuy"
+					:busy="busy"
+					@subscribe="subscribeAddOn"
+					@change="changeAddOn"
+					@pack="buyPack"
+				/>
+
 				<BillingPlans
 					:plans="billing.plans ?? []"
+					:current-plan-id="entitlement.planId"
+					:interval="interval"
 					:can-buy="canBuy"
-					:subscribed="paidPlan"
-					:portal="subscribed"
+					:subscribed="hasSubscription"
+					:portal="billingAccount"
 					:busy="busy"
 					@subscribe="subscribe"
 				/>
 			</template>
 		</div>
+		<template #fallback>
+			<UiSkeletonTable label="Loading billing" />
+		</template>
 	</ClientOnly>
 </template>

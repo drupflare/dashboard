@@ -2,17 +2,23 @@ import type { CollegeDBClient } from '@earth-app/collegedb';
 import { z } from 'zod';
 import { ApiError } from '../../shared/errors';
 import {
+	ADD_ONS,
 	PLANS,
+	describeAddOn,
 	describePlan,
 	findPlan,
 	intervalPrice,
-	planFromPriceKey,
+	offerFromPriceKey,
 	planPricesVisible,
 	priceLookupKey,
 	type Interval
 } from '../../shared/plans';
 import {
+	addCredit,
+	addPending,
 	applySubscription,
+	clearPending,
+	creditBalances,
 	ensureAccount,
 	findOrgByCustomer,
 	getAccount,
@@ -20,14 +26,25 @@ import {
 	linkCustomer,
 	patchAccount,
 	recordEvent,
+	setBillingDetails,
 	type AccountPatch,
 	type BillingAccount,
+	type BillingDetails,
+	type CreditInput,
+	type PendingInput,
 	type SubscriptionApply
 } from '../db/repos/billing';
 import type { Facts, Principal } from '../domain/authorize';
-import { FREE_PLAN_ID, canActivate, derive, type Entitlement } from '../domain/entitlements';
+import {
+	FREE_PLAN_ID,
+	canActivate,
+	derive,
+	type AddOnHolding,
+	type Entitlement
+} from '../domain/entitlements';
 import type { Desired, DesiredSite } from '../domain/reconcile';
 import {
+	IntervalMismatchError,
 	WebhookSignatureError,
 	verifyWebhook,
 	type StripeClient,
@@ -51,6 +68,14 @@ export interface BillingStore {
 	): Promise<boolean>;
 	hasEvent(eventId: string): Promise<boolean>;
 	recordEvent(eventId: string, type: string, now: number): Promise<void>;
+	// false means the source id was already credited
+	addCredit(input: CreditInput): Promise<boolean>;
+	creditBalances(orgId: string): Promise<Record<string, number>>;
+	// the stored copy of the contact and country; webhooks keep it in step with Stripe
+	setBillingDetails(orgId: string, details: BillingDetails, now: number): Promise<void>;
+	addPending(input: PendingInput): Promise<void>;
+	// true when a pending purchase was there to clear
+	clearPending(orgId: string, sessionId: string): Promise<boolean>;
 }
 
 export function collegeBillingStore(getDb: () => Promise<CollegeDBClient>): BillingStore {
@@ -78,6 +103,21 @@ export function collegeBillingStore(getDb: () => Promise<CollegeDBClient>): Bill
 		},
 		async recordEvent(eventId, type, now) {
 			await recordEvent(await getDb(), eventId, type, now);
+		},
+		async addCredit(input) {
+			return addCredit(await getDb(), input);
+		},
+		async creditBalances(orgId) {
+			return creditBalances(await getDb(), orgId);
+		},
+		async setBillingDetails(orgId, details, now) {
+			await setBillingDetails(await getDb(), orgId, details, now);
+		},
+		async addPending(input) {
+			await addPending(await getDb(), input);
+		},
+		async clearPending(orgId, sessionId) {
+			return clearPending(await getDb(), orgId, sessionId);
 		}
 	};
 }
@@ -127,7 +167,7 @@ export function billingFlags(env: Record<string, unknown>): BillingFlags {
 // only an activated account runs its plan; a blocked, revoked or new one runs the free plan
 export function entitlementOf(account: BillingAccount | null): Entitlement {
 	const live = account !== null && account.entitlementState === 'activated';
-	const result = live ? derive(account.planId, account.addOnIds) : derive(FREE_PLAN_ID);
+	const result = live ? derive(account.planId, account.addOns) : derive(FREE_PLAN_ID);
 	if (!result.ok) throw new Error(`billing account holds an unusable plan: ${result.reason}`);
 	return result.entitlement;
 }
@@ -163,9 +203,29 @@ const ref = z
 const metadata = z.record(z.string(), z.string()).nullish();
 
 const checkoutObject = z.object({
+	id: text,
+	mode: z.string().nullish(),
+	payment_status: z.string().nullish(),
 	customer: ref.nullish(),
 	subscription: ref.nullish(),
 	client_reference_id: z.string().nullish(),
+	customer_details: z
+		.object({
+			name: z.string().nullish(),
+			email: z.string().nullish(),
+			address: z.object({ country: z.string().nullish() }).nullish()
+		})
+		.nullish(),
+	line_items: z
+		.object({
+			data: z.array(
+				z.object({
+					price: z.object({ lookup_key: z.string().nullish() }).nullish(),
+					quantity: z.number().int().positive().nullish()
+				})
+			)
+		})
+		.nullish(),
 	metadata
 });
 
@@ -183,7 +243,12 @@ const subscriptionObject = z.object({
 		'paused'
 	]),
 	items: z.object({
-		data: z.array(z.object({ price: z.object({ lookup_key: z.string().nullish() }) }))
+		data: z.array(
+			z.object({
+				price: z.object({ lookup_key: z.string().nullish() }),
+				quantity: z.number().int().nullish()
+			})
+		)
 	}),
 	metadata
 });
@@ -191,10 +256,18 @@ const subscriptionObject = z.object({
 const invoiceObject = z.object({ id: text, customer: ref.nullish() });
 const chargeObject = z.object({ id: text, customer: ref.nullish() });
 const disputeObject = z.object({ id: text, charge: ref });
-const customerObject = z.object({ id: text, email: z.string().nullish() });
+const customerObject = z.object({
+	id: text,
+	email: z.string().nullish(),
+	name: z.string().nullish(),
+	address: z.object({ country: z.string().nullish() }).nullish()
+});
 
 export const HANDLED_EVENTS = [
 	'checkout.session.completed',
+	'checkout.session.async_payment_succeeded',
+	'checkout.session.async_payment_failed',
+	'checkout.session.expired',
 	'customer.subscription.created',
 	'customer.subscription.updated',
 	'customer.subscription.deleted',
@@ -242,11 +315,116 @@ const audited = (
 		detail
 	});
 
-async function onCheckout(ctx: EventContext, raw: unknown): Promise<EventOutcome> {
+// a webhook carries no line items, so the pack falls back to the price key in the metadata
+// a credit records units bought and nothing spends them yet
+async function creditPacks(
+	ctx: EventContext,
+	orgId: string,
+	object: z.infer<typeof checkoutObject>
+): Promise<number> {
+	const { s, now, eventId } = ctx;
+	if (!isSettled(object)) {
+		s.log('pack checkout that is not paid', { eventId, status: object.payment_status ?? null });
+		return 0;
+	}
+	const metaKey = object.metadata?.price_lookup_key;
+	const lines = object.line_items
+		? object.line_items.data.map((line) => ({
+				key: line.price?.lookup_key ?? null,
+				quantity: line.quantity ?? 1
+			}))
+		: metaKey
+			? [{ key: metaKey, quantity: 1 }]
+			: [];
+	let credited = 0;
+	for (const [index, line] of lines.entries()) {
+		const offer = line.key ? offerFromPriceKey(line.key) : undefined;
+		if (offer?.kind !== 'pack') {
+			s.log('payment for a price that is not a pack', { eventId, key: line.key });
+			continue;
+		}
+		const units = offer.units * line.quantity;
+		const added = await s.store.addCredit({
+			organizationId: orgId,
+			meter: offer.addOn.meter,
+			units,
+			sourceId: index === 0 ? eventId : `${eventId}:${index}`,
+			now
+		});
+		if (!added) continue;
+		credited += 1;
+		await audited(ctx, orgId, 'billing.credit.added', {
+			addOn: offer.addOn.id,
+			meter: offer.addOn.meter,
+			units
+		});
+	}
+	return credited;
+}
+
+// no_payment_required is a session a full discount made free; anything else has not settled yet
+const SETTLED = ['paid', 'no_payment_required'];
+
+const isSettled = (object: z.infer<typeof checkoutObject>) =>
+	SETTLED.includes(object.payment_status ?? '');
+
+const checkoutOrg = (object: z.infer<typeof checkoutObject>) =>
+	object.client_reference_id ?? object.metadata?.organization_id ?? null;
+
+// what Checkout collected goes into the stored copy; a value it did not collect is left alone
+function collectedDetails(object: z.infer<typeof checkoutObject>): AccountPatch {
+	const details = object.customer_details;
+	return {
+		...(details?.name ? { billingName: details.name } : {}),
+		...(details?.email ? { billingEmail: details.email } : {}),
+		...(details?.address?.country ? { billingCountry: details.address.country } : {})
+	};
+}
+
+// a session whose payment has not settled grants nothing: it waits as a pending purchase until
+// the async success, failure or expiry event settles it
+async function onCheckout(
+	ctx: EventContext,
+	raw: unknown,
+	fromAsync = false
+): Promise<EventOutcome> {
 	const object = checkoutObject.parse(raw);
 	const customerId = object.customer ?? null;
-	const orgId = object.client_reference_id ?? object.metadata?.organization_id ?? null;
-	if (customerId === null || orgId === null) return 'ignored';
+	const orgId = checkoutOrg(object);
+	if (orgId === null) return 'ignored';
+	if (!isSettled(object)) {
+		if (fromAsync) {
+			ctx.s.log('async checkout success for a session that is not paid', {
+				eventId: ctx.eventId,
+				status: object.payment_status ?? null
+			});
+			return 'ignored';
+		}
+		await ctx.s.store.addPending({
+			sessionId: object.id,
+			organizationId: orgId,
+			mode: object.mode ?? 'subscription',
+			now: ctx.now
+		});
+		await audited(ctx, orgId, 'billing.purchase.pending', {
+			sessionId: object.id,
+			mode: object.mode ?? 'subscription'
+		});
+		return 'handled';
+	}
+	const outcome = await grantCheckout(ctx, object, orgId, customerId);
+	if (fromAsync) await ctx.s.store.clearPending(orgId, object.id);
+	return outcome;
+}
+
+async function grantCheckout(
+	ctx: EventContext,
+	object: z.infer<typeof checkoutObject>,
+	orgId: string,
+	customerId: string | null
+): Promise<EventOutcome> {
+	const credited = object.mode === 'payment' ? await creditPacks(ctx, orgId, object) : 0;
+	if (customerId === null) return credited > 0 ? 'handled' : 'ignored';
 	const { s, now, eventAt } = ctx;
 	await s.store.ensureAccount(orgId, now);
 	if ((await s.store.linkCustomer(customerId, orgId)) === 'conflict') {
@@ -256,13 +434,34 @@ async function onCheckout(ctx: EventContext, raw: unknown): Promise<EventOutcome
 		orgId,
 		{
 			stripeCustomerId: customerId,
-			...(object.subscription ? { subscriptionId: object.subscription } : {})
+			...(object.subscription ? { subscriptionId: object.subscription } : {}),
+			...collectedDetails(object)
 		},
 		eventAt,
 		now
 	);
 	await audited(ctx, orgId, 'billing.customer.linked', { customerId });
 	return 'handled';
+}
+
+// a failed or expired session clears its pending purchase; only a failure is a payment problem
+async function onCheckoutEnded(
+	ctx: EventContext,
+	raw: unknown,
+	failed: boolean
+): Promise<EventOutcome> {
+	const object = checkoutObject.parse(raw);
+	const orgId = checkoutOrg(object);
+	if (orgId === null) return 'ignored';
+	const cleared = await ctx.s.store.clearPending(orgId, object.id);
+	if (failed) {
+		await audited(ctx, orgId, 'billing.payment.failed', {
+			sessionId: object.id,
+			source: 'checkout'
+		});
+		return 'handled';
+	}
+	return cleared ? 'handled' : 'ignored';
 }
 
 const ENDED = ['canceled', 'unpaid', 'incomplete_expired'];
@@ -280,23 +479,31 @@ async function onSubscription(ctx: EventContext, raw: unknown): Promise<EventOut
 		return 'ignored';
 	}
 
-	const resolved = sub.items.data.map((item) => {
+	const bases: string[] = [];
+	const holdings: AddOnHolding[] = [];
+	for (const item of sub.items.data) {
 		const key = item.price.lookup_key;
-		const found = key ? planFromPriceKey(key) : undefined;
-		if (!found)
+		const offer = key ? offerFromPriceKey(key) : undefined;
+		if (!offer)
 			throw new Error(`subscription ${sub.id} has a price this catalogue does not know`);
-		return found.plan;
-	});
-	const bases = resolved.filter((plan) => plan.kind !== 'add-on');
-	if (bases.length !== 1) throw new Error(`subscription ${sub.id} needs exactly one base plan`);
-	const base = bases[0]!;
-	const addOnIds = resolved.filter((plan) => plan.kind === 'add-on').map((plan) => plan.id);
+		if (offer.kind === 'plan') bases.push(offer.plan.id);
+		else if (offer.kind === 'add-on') {
+			holdings.push({ id: offer.addOn.id, quantity: item.quantity ?? 1 });
+		} else {
+			throw new Error(`subscription ${sub.id} holds a one-time pack as a recurring item`);
+		}
+	}
+	if (bases.length > 1 || sub.items.data.length === 0) {
+		throw new Error(`subscription ${sub.id} needs exactly one base plan`);
+	}
+	// a subscription of add-ons alone is how a free plan buys one; the plan stays as it is
+	const baseId = bases[0] ?? (await s.store.getAccount(orgId))?.planId ?? FREE_PLAN_ID;
 
-	let planId = base.id;
-	let addOns = addOnIds;
+	let planId = baseId;
+	let addOns: AddOnHolding[] = holdings;
 	let entitlementState: string;
 	if (RUNNING.includes(sub.status)) {
-		const derived = derive(base.id, addOnIds);
+		const derived = derive(baseId, holdings);
 		if (!derived.ok)
 			throw new Error(`subscription ${sub.id} cannot be derived: ${derived.reason}`);
 		entitlementState = canActivate(derived.entitlement, s.flags).ok ? 'activated' : 'blocked';
@@ -307,7 +514,7 @@ async function onSubscription(ctx: EventContext, raw: unknown): Promise<EventOut
 	} else {
 		const current = await s.store.ensureAccount(orgId, now);
 		planId = current.planId;
-		addOns = current.addOnIds;
+		addOns = current.addOns;
 		entitlementState = current.entitlementState;
 	}
 
@@ -316,7 +523,7 @@ async function onSubscription(ctx: EventContext, raw: unknown): Promise<EventOut
 		customerId: sub.customer,
 		subscriptionId: sub.id,
 		planId,
-		addOnIds: addOns,
+		addOns,
 		status: sub.status,
 		entitlementState,
 		eventAt,
@@ -374,10 +581,15 @@ async function onReview(
 async function onCustomer(ctx: EventContext, raw: unknown): Promise<EventOutcome> {
 	const customer = customerObject.parse(raw);
 	const orgId = await ctx.s.store.findOrgByCustomer(customer.id);
-	if (orgId === null || !customer.email) return 'ignored';
+	if (orgId === null) return 'ignored';
+	// the event carries the whole customer, so a missing field means it was removed
 	const changed = await ctx.s.store.patchAccount(
 		orgId,
-		{ billingEmail: customer.email },
+		{
+			billingEmail: customer.email || null,
+			billingName: customer.name || null,
+			billingCountry: customer.address?.country || null
+		},
 		ctx.eventAt,
 		ctx.now
 	);
@@ -390,6 +602,12 @@ export async function handleEvent(s: BillingServices, event: StripeEvent): Promi
 	switch (event.type) {
 		case 'checkout.session.completed':
 			return onCheckout(ctx, object);
+		case 'checkout.session.async_payment_succeeded':
+			return onCheckout(ctx, object, true);
+		case 'checkout.session.async_payment_failed':
+			return onCheckoutEnded(ctx, object, true);
+		case 'checkout.session.expired':
+			return onCheckoutEnded(ctx, object, false);
 		case 'customer.subscription.created':
 		case 'customer.subscription.updated':
 		case 'customer.subscription.deleted':
@@ -451,19 +669,8 @@ export async function processWebhook(
 
 // #region routes
 
-export interface PlanListItem {
-	id: string;
-	name: string;
-	kind: string;
-	lookupKey: string;
-	sites: number | null;
-	views: number | null;
-	support: string;
-	disabled: boolean;
-	monthly?: number | null;
-	annual?: number | null;
-	unreviewed?: boolean;
-}
+export type PlanListItem = ReturnType<typeof describePlan>;
+export type AddOnListItem = ReturnType<typeof describeAddOn>;
 
 // prices are for platform admins who hold the billing support permission and passed Access
 export function isBillingAdmin(facts: Facts | null): boolean {
@@ -479,7 +686,11 @@ export function listPlans(admin: boolean): PlanListItem[] {
 	return PLANS.map((plan) => describePlan(plan, { admin }));
 }
 
-function requireSession(principal: Principal | null): void {
+export function listAddOns(admin: boolean): AddOnListItem[] {
+	return ADD_ONS.map((addOn) => describeAddOn(addOn, { admin }));
+}
+
+export function requireSession(principal: Principal | null): void {
 	if (principal === null || principal.kind !== 'user') {
 		throw new ApiError('forbidden', 'This action needs a signed-in session', {
 			requires: 'session'
@@ -496,12 +707,99 @@ export interface CheckoutRequest {
 	idempotencyKey: string;
 }
 
-const SUBSCRIBED = ['active', 'trialing', 'past_due'];
+export const SUBSCRIBED = ['active', 'trialing', 'past_due'];
+
+// the stored copy decides, never the request: a checkout or an add-on purchase needs a contact
+// name and email and a billing country on the account
+export type MissingDetail = 'name' | 'email' | 'country';
+
+export function missingBillingDetails(account: BillingAccount | null): MissingDetail[] {
+	const missing: MissingDetail[] = [];
+	if (!account?.billingName?.trim()) missing.push('name');
+	if (!account?.billingEmail?.trim()) missing.push('email');
+	if (!account?.billingCountry?.trim()) missing.push('country');
+	return missing;
+}
+
+export function requireBillingDetails(account: BillingAccount | null): void {
+	const missing = missingBillingDetails(account);
+	if (missing.length > 0) {
+		throw new ApiError('unprocessable', 'Add your billing details first', {
+			reason: 'billing_details_required',
+			missing
+		});
+	}
+}
+
+// a free plan is one with no price at either interval; a plan with an unreviewed price counts as paid
+export function isFreePlanId(planId: string): boolean {
+	const plan = findPlan(planId);
+	return (
+		plan !== undefined &&
+		intervalPrice(plan, 'month') === 0 &&
+		intervalPrice(plan, 'year') === 0
+	);
+}
+
+// an organisation holds one subscription. A free plan's subscription holds add-ons alone, so it
+// does not stop a plan purchase; a paid plan's subscription does
+export function holdsPlanSubscription(account: BillingAccount | null): boolean {
+	return (
+		account?.subscriptionId !== null &&
+		account?.subscriptionId !== undefined &&
+		SUBSCRIBED.includes(account.status) &&
+		!isFreePlanId(account.planId)
+	);
+}
+
+export const COUNTRY = /^[A-Z]{2}$/;
+
+export interface DetailsRequest {
+	orgId: string;
+	principal: Principal | null;
+	name: string;
+	email: string;
+	country: string;
+}
+
+// the way to supply the details the gate asks for; a known Stripe customer is updated too, so the
+// next customer.updated agrees with what was saved
+export async function saveBillingDetails(
+	s: BillingServices,
+	request: DetailsRequest
+): Promise<{ saved: true }> {
+	requireSession(request.principal);
+	const name = request.name.trim();
+	const email = request.email.trim();
+	const country = request.country.trim().toUpperCase();
+	if (!name || !email.includes('@') || !COUNTRY.test(country)) {
+		throw new ApiError('unprocessable', 'Check the billing details', {
+			reason: 'bad_billing_details'
+		});
+	}
+	const account = await s.store.ensureAccount(request.orgId, s.now());
+	await s.store.setBillingDetails(request.orgId, { name, email, country }, s.now());
+	if (s.stripe !== null && account.stripeCustomerId) {
+		await s.stripe.updateCustomer({
+			customerId: account.stripeCustomerId,
+			name,
+			email,
+			country
+		});
+	}
+	await s.audit(request.orgId, {
+		actor: request.principal?.kind === 'user' ? `user:${request.principal.userId}` : 'user',
+		action: 'billing.details.saved',
+		target: request.orgId,
+		detail: { country }
+	});
+	return { saved: true };
+}
 
 export async function startCheckout(
 	s: BillingServices,
 	request: CheckoutRequest
-): Promise<{ url: string }> {
+): Promise<{ url: string } | { applied: true }> {
 	requireSession(request.principal);
 	if (s.stripe === null) throw new ApiError('not_built', 'Billing is not available yet');
 	const plan = findPlan(request.planId);
@@ -509,16 +807,40 @@ export async function startCheckout(
 	if (!plan || plan.disabled || !planPricesVisible(plan, { admin: request.admin })) {
 		throw new ApiError('not_found', 'Not found');
 	}
-	if (plan.kind !== 'managed' || (intervalPrice(plan, request.interval) ?? 0) <= 0) {
+	const selfServe = plan.kind === 'managed' || plan.kind === 'self-managed';
+	if (!selfServe || (intervalPrice(plan, request.interval) ?? 0) <= 0) {
 		throw new ApiError('unprocessable', 'This plan cannot be bought online', {
 			reason: 'not_self_serve'
 		});
 	}
 	const account = await s.store.getAccount(request.orgId);
-	if (account?.subscriptionId && SUBSCRIBED.includes(account.status)) {
+	if (holdsPlanSubscription(account)) {
 		throw new ApiError('conflict', 'This organisation already has a subscription', {
 			reason: 'already_subscribed'
 		});
+	}
+	requireBillingDetails(account);
+	// a running subscription of add-ons alone takes the plan as one more item, so the organisation
+	// keeps one subscription and the plan webhook sees the plan and the add-ons together
+	if (account?.subscriptionId && SUBSCRIBED.includes(account.status)) {
+		try {
+			await s.stripe.setSubscriptionItem({
+				subscriptionId: account.subscriptionId,
+				priceLookupKey: priceLookupKey(plan, request.interval),
+				quantity: 1,
+				idempotencyKey: request.idempotencyKey
+			});
+		} catch (error) {
+			if (error instanceof IntervalMismatchError) {
+				throw new ApiError(
+					'unprocessable',
+					`Your add-ons bill ${error.held === 'year' ? 'yearly' : 'monthly'}, so the plan bills the same way`,
+					{ reason: 'interval_mismatch' }
+				);
+			}
+			throw error;
+		}
+		return { applied: true };
 	}
 	const session = await s.stripe.createCheckoutSession({
 		organizationId: request.orgId,
