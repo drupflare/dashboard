@@ -71,7 +71,7 @@ export type RegistryEntry = {
 	permission: SettingPermission;
 	domain: LeverDomain;
 	danger?: boolean;
-	widget?: 'lever-slider' | 'json';
+	widget?: 'lever-slider' | 'json' | 'secret';
 	note?: string;
 };
 
@@ -277,4 +277,10 @@ export function isKvWritable(name: string): boolean {
 
 export function isOwnerOnly(name: string): boolean {
 	return (OWNER_ONLY_NAMES as readonly string[]).includes(name);
+}
+
+// the group a setting belongs to; an owner-only setting is a security setting
+export function groupOf(name: string): SettingPermission {
+	if (isOwnerOnly(name)) return 'security';
+	return SITE_CONFIG_REGISTRY[name]?.permission ?? 'runtime';
 }

@@ -36,15 +36,27 @@ const COVERED = [
 	'site.create',
 	'site.delete',
 	'site.upgrade',
+	'site.rollback',
 	'site.adopt',
 	'site.import',
 	'import.survey',
 	'migration.cutover',
 	'backup.create',
 	'backup.restore',
+	'backup.verify',
+	'config.apply',
+	'env.create',
+	'env.delete',
+	'access.sync',
+	'site.restore',
 	'git.pull',
+	'site.repair',
 	'domain.attach',
-	'node.command'
+	'node.command',
+	'module.install',
+	'module.enable',
+	'module.remove',
+	'theme.default'
 ];
 const WORKFLOWS = fileURLToPath(new URL('../../../engine/src/workflows/', import.meta.url));
 
@@ -54,7 +66,9 @@ function enginePlanSteps(): { type: string; id: string }[] {
 	for (const file of readdirSync(WORKFLOWS).filter((name) => name.endsWith('.ts'))) {
 		const text = readFileSync(WORKFLOWS + file, 'utf8');
 		const marks = [
-			...text.matchAll(/type: '((?:site|backup|migration|import|git|domain|node)\.[a-z-]+)'/g)
+			...text.matchAll(
+				/type: '((?:site|backup|config|env|migration|import|git|domain|node|module|theme|access)\.[a-z-]+)'/g
+			)
 		];
 		marks.forEach((mark, i) => {
 			const type = mark[1] ?? '';
@@ -78,6 +92,23 @@ describe('operation copy', () => {
 		for (const type of COVERED) expect(OPERATION_TYPES).toContain(type);
 	});
 
+	it('says in plain words why a settings change was refused or did not confirm', () => {
+		const reason = (code: string) =>
+			failureReason({
+				type: 'config.apply',
+				status: 'failed',
+				failedStep: 'check',
+				failedError: `${code}: refused`
+			});
+		expect(reason('owner_only')).toBe('Only an owner can change one of these settings.');
+		expect(reason('settings_changed')).toContain('changed on the site');
+		expect(reason('verify_failed')).toContain('did not report the new values back');
+		expect(reason('plan_not_writable')).toContain('plan');
+		expect(reason('something_else')).toBe(
+			'Stopped while checking the settings against what the site holds now.'
+		);
+	});
+
 	it('gives every entry a title, a running line, a success line and a failure title in plain ASCII', () => {
 		for (const type of COVERED) {
 			const copy = copyFor(type as never);
@@ -93,6 +124,34 @@ describe('operation copy', () => {
 		expect(copyFor('site.delete').title).toBe('Deleting Your Site');
 		expect(copyFor('site.delete').success).toMatch(/^Site deleted/);
 		expect(copyFor('site.delete').failure).toBe('Could Not Delete the Site');
+	});
+
+	it('shows the engine sentence of a refused module change without its code', () => {
+		const reason = (type: string, failedError: string | null) =>
+			failureReason({ type, status: 'failed', failedStep: 'preflight', failedError });
+		expect(reason('module.install', 'module_conflict: Installing this would conflict.')).toBe(
+			'Installing this would conflict.'
+		);
+		expect(
+			reason('module.remove', 'not_available: Removing Modules Needs a Worker Update')
+		).toBe('Removing Modules Needs a Worker Update');
+		expect(reason('theme.default', 'theme_not_enabled: Enable the theme first.')).toBe(
+			'Enable the theme first.'
+		);
+		expect(reason('module.enable', 'restore_too_large: the dump is larger than 5 bytes')).toBe(
+			'The site database is too large to take a restore point, so nothing was changed.'
+		);
+		expect(reason('module.install', 'export_stalled: page 1 stalled')).toBe(
+			'Stopped while checking the site and the module again.'
+		);
+		expect(reason('module.install', null)).toBe(
+			'Stopped while checking the site and the module again.'
+		);
+		expect(copyFor('module.remove').link({ targetIds: [SITE] })).toEqual({
+			to: `/sites/${SITE}/modules`,
+			label: 'Back to Modules'
+		});
+		expect(operationTypeLabel('theme.default')).toBe('Theme');
 	});
 
 	it('links a finished delete to Sites and every other site operation back to the site', () => {

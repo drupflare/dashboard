@@ -33,6 +33,20 @@ function siteOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
 		: { to: `/sites/${encodeURIComponent(id)}`, label: 'Back to the Site' };
 }
 
+function environmentsOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
+	const id = operation.targetIds[0];
+	return id === undefined
+		? sites
+		: { to: `/sites/${encodeURIComponent(id)}/environments`, label: 'Back to Environments' };
+}
+
+function modulesOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
+	const id = operation.targetIds[0];
+	return id === undefined
+		? sites
+		: { to: `/sites/${encodeURIComponent(id)}/modules`, label: 'Back to Modules' };
+}
+
 // an adoption names the new site first and the one it came from second
 function adoptedSiteOf(operation: Pick<Operation, 'targetIds'>): OperationLink {
 	const id = operation.targetIds[0];
@@ -108,6 +122,15 @@ export const OPERATION_COPY = {
 		link: siteOf,
 		failureLink: siteOf
 	},
+	'site.rollback': {
+		title: 'Rolling Back Your Site',
+		running:
+			'The site keeps serving while the earlier code goes back. Your content and settings stay as they are. Leaving this page does not stop the roll back.',
+		success: 'The earlier code is running again.',
+		failure: 'Could Not Roll Back the Site',
+		link: siteOf,
+		failureLink: siteOf
+	},
 	'site.adopt': {
 		title: 'Adopting Your Site',
 		running:
@@ -162,12 +185,75 @@ export const OPERATION_COPY = {
 		link: siteOf,
 		failureLink: siteOf
 	},
+	'backup.verify': {
+		title: 'Testing a Backup Restore',
+		running:
+			'The backup is restored into a scratch copy that is removed afterwards. Your live site is not touched. Leaving this page does not stop the test.',
+		success: 'The backup restored and the scratch copy answered. It now reads as verified.',
+		failure: 'The Test Restore Failed',
+		link: siteOf,
+		failureLink: siteOf
+	},
+	'env.create': {
+		title: 'Creating an Environment',
+		running:
+			'The copy is built from your newest backup. Your live site is not touched. Leaving this page does not stop it.',
+		success: 'The environment is ready.',
+		failure: 'Could Not Create the Environment',
+		link: environmentsOf,
+		failureLink: environmentsOf
+	},
+	'env.delete': {
+		title: 'Deleting an Environment',
+		running: 'The copy and everything made for it is removed. Your live site is not touched.',
+		success: 'The environment is deleted.',
+		failure: 'Could Not Delete the Environment',
+		link: environmentsOf,
+		failureLink: environmentsOf
+	},
+	'access.sync': {
+		title: 'Applying Access Changes',
+		running:
+			'Your access rules are being written to the site. Visitors see the change within a minute of it finishing.',
+		success: 'The site now follows your access rules.',
+		failure: 'Could Not Apply the Access Changes',
+		link: siteOf,
+		failureLink: siteOf
+	},
+	'site.restore': {
+		title: 'Restoring to a Moment',
+		running:
+			'The restore is scheduled with the site, which applies it the next time it starts. Leaving this page does not stop it.',
+		success:
+			'The restore is scheduled. The site applies it the next time it starts, and the undo point is kept with this activity.',
+		failure: 'Could Not Schedule the Restore',
+		link: siteOf,
+		failureLink: siteOf
+	},
+	'config.apply': {
+		title: 'Changing Your Settings',
+		running:
+			'The site keeps serving while the settings change. Leaving this page does not stop it.',
+		success: 'The settings are changed and the site reports the new values.',
+		failure: 'Could Not Change the Settings',
+		link: siteOf,
+		failureLink: siteOf
+	},
 	'git.pull': {
 		title: 'Pulling From Your Repository',
 		running:
 			'The site keeps serving while the new code is installed. Leaving this page does not stop the pull.',
 		success: 'The latest commit is installed.',
 		failure: 'Could Not Pull the Repository',
+		link: siteOf,
+		failureLink: siteOf
+	},
+	'site.repair': {
+		title: 'Repairing Your Site',
+		running:
+			'The site keeps serving while the repair runs. Leaving this page does not stop it.',
+		success: 'The repair is done and the site no longer shows the problem.',
+		failure: 'Could Not Repair the Site',
 		link: siteOf,
 		failureLink: siteOf
 	},
@@ -179,6 +265,42 @@ export const OPERATION_COPY = {
 		failure: 'Could Not Attach the Domain',
 		link: domainOf,
 		failureLink: domainOf
+	},
+	'module.install': {
+		title: 'Installing a Module',
+		running:
+			'A restore point is taken first, so the site can go back. Leaving this page does not stop the install.',
+		success: 'The module is installed. Enable it to turn it on.',
+		failure: 'Could Not Install the Module',
+		link: modulesOf,
+		failureLink: modulesOf
+	},
+	'module.enable': {
+		title: 'Enabling a Module',
+		running:
+			'A restore point is taken first, so the site can go back. Leaving this page does not stop the change.',
+		success: 'The module is on.',
+		failure: 'Could Not Enable the Module',
+		link: modulesOf,
+		failureLink: modulesOf
+	},
+	'module.remove': {
+		title: 'Removing a Module',
+		running:
+			'A restore point is taken first, so the site can go back. Leaving this page does not stop the removal.',
+		success: 'The module is removed.',
+		failure: 'Could Not Remove the Module',
+		link: modulesOf,
+		failureLink: modulesOf
+	},
+	'theme.default': {
+		title: 'Changing the Theme',
+		running:
+			'A restore point is taken first, so the site can go back. Leaving this page does not stop the change.',
+		success: 'The theme is changed.',
+		failure: 'Could Not Change the Theme',
+		link: modulesOf,
+		failureLink: modulesOf
 	}
 } satisfies Partial<Record<Operation['type'], OperationCopy>>;
 
@@ -202,6 +324,8 @@ export const GENERIC_STEP_LABEL = 'Working on this step';
 const TYPE_LABELS: Record<string, string> = {
 	'site.create': 'Create',
 	'site.upgrade': 'Update',
+	'site.rollback': 'Roll Back',
+	'fleet.upgrade': 'Rollout',
 	'site.delete': 'Delete',
 	'site.adopt': 'Adopt',
 	'site.import': 'Import',
@@ -210,14 +334,41 @@ const TYPE_LABELS: Record<string, string> = {
 	'migration.cutover': 'Move',
 	'backup.create': 'Backup',
 	'backup.restore': 'Restore',
+	'backup.verify': 'Test Restore',
+	'env.create': 'Environment',
+	'env.delete': 'Remove Environment',
+	'access.sync': 'Access',
+	'site.restore': 'Moment Restore',
+	'config.apply': 'Settings',
 	'git.pull': 'Pull',
+	'site.repair': 'Repair',
 	'domain.attach': 'Domain',
-	'node.command': 'Add to Box'
+	'node.command': 'Add to Box',
+	'module.install': 'Install',
+	'module.enable': 'Enable',
+	'module.remove': 'Remove',
+	'theme.default': 'Theme'
 };
 
 export function operationTypeLabel(type: string | undefined): string {
 	return (type !== undefined && TYPE_LABELS[type]) || GENERIC_TYPE_LABEL;
 }
+
+const COPY_PHRASES: Record<string, string> = {
+	lease: 'locking the site for this change',
+	'check-backup': 'checking the saved copy',
+	'resource.': 'creating the copy storage',
+	assets: 'uploading static files to the copy',
+	'upload-script': 'uploading the copy code',
+	authority: "recording the copy's access rules",
+	route: 'connecting the copy address',
+	'first-run': 'starting the copy',
+	grant: 'giving the copy temporary access to the backup files',
+	restore: 'sending the backup to the copy',
+	apply: 'waiting for the copy to load the backup',
+	adopt: 'waiting for the files to copy, then removing the temporary access',
+	verify: 'checking that the copy answers'
+};
 
 // keyed by operation type, then by the step id the engine writes; a key ending in a dot matches by prefix
 const STEP_PHRASES: Record<string, Record<string, string>> = {
@@ -290,6 +441,19 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		verify: 'checking that the site answers',
 		finish: 'recording the new release'
 	},
+	'site.rollback': {
+		guard: 'checking that the data allows the earlier code',
+		lease: 'locking the site for this change',
+		preflight: 'checking the site and the earlier release',
+		assets: 'uploading changed static files',
+		'upload-script': 'uploading the earlier site code',
+		record: 'recording the release',
+		verify: 'checking that the site answers'
+	},
+	'fleet.upgrade': {
+		rings: 'sending the release ring by ring',
+		close: 'recording how the rollout ended'
+	},
 	'site.delete': {
 		lease: 'locking the site for this change',
 		revoke: "turning off the site's access",
@@ -319,6 +483,37 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		'observe-6h': 'checking the new site after 6 hours',
 		'observe-24h': 'checking the new site after 24 hours'
 	},
+	'backup.verify': {
+		...COPY_PHRASES,
+		cleanup: 'removing the scratch copy',
+		record: 'recording that the backup restored'
+	},
+	'env.create': {
+		...COPY_PHRASES,
+		gate: 'applying the environment access rules',
+		activate: 'marking the environment ready'
+	},
+	'access.sync': {
+		lease: 'locking the site for this change',
+		digests: 'working out who can open each environment',
+		write: 'saving the access rules on the site',
+		verify: 'checking the site holds them'
+	},
+	'env.delete': {
+		lease: 'locking the site for this change',
+		stop: 'stopping the copy',
+		script: 'removing the copy code',
+		resources: 'removing the copy storage',
+		name: 'freeing the copy address',
+		forget: 'closing the copy record',
+		record: 'marking the environment deleted'
+	},
+	'site.restore': {
+		lease: 'locking the site for this change',
+		check: 'checking the site',
+		bookmark: 'finding the recovery point for that moment',
+		schedule: 'scheduling the restore and keeping the undo point'
+	},
 	'backup.create': {
 		lease: 'locking the site for this change',
 		export: 'copying the site database into the backup',
@@ -334,11 +529,26 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		adopt: 'waiting for the files to copy, then removing the temporary access',
 		verify: 'checking that the restored site answers'
 	},
+	'config.apply': {
+		lease: 'locking the site for this change',
+		check: 'checking the settings against what the site holds now',
+		write: 'sending the settings to the site',
+		verify: 'reading the settings back from the site',
+		record: 'saving the change to the history'
+	},
 	'git.pull': {
 		lease: 'locking the site for this change',
 		find: 'finding the repository on the site',
 		pull: 'installing the latest commit',
 		record: 'saving the result'
+	},
+	'site.repair': {
+		lease: 'locking the site for this change',
+		find: 'finding the site and the repair',
+		observe: 'reading the site before the repair',
+		check: 'checking the repair is safe to run now',
+		repair: 'running the repair',
+		confirm: 'reading the site again to see the problem is gone'
 	},
 	'node.command': {
 		claim: 'reserving the address for this site',
@@ -355,6 +565,42 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		certificate: 'waiting for the certificate',
 		routing: 'sending the domain to your site',
 		verification: 'loading your site through the domain'
+	},
+	'module.install': {
+		lease: 'locking the site for this change',
+		preflight: 'checking the site and the module again',
+		export: 'copying the site database into a restore point',
+		'restore-point-verify': 'checking every part of the restore point',
+		'restore-point-record': 'saving the restore point',
+		install: 'installing the module',
+		verify: 'checking that the site holds the module'
+	},
+	'module.enable': {
+		lease: 'locking the site for this change',
+		preflight: 'checking the site and the module',
+		export: 'copying the site database into a restore point',
+		'restore-point-verify': 'checking every part of the restore point',
+		'restore-point-record': 'saving the restore point',
+		enable: 'turning the module on',
+		verify: 'checking that the module is on'
+	},
+	'module.remove': {
+		lease: 'locking the site for this change',
+		preflight: 'asking the site what removing the module would change',
+		export: 'copying the site database into a restore point',
+		'restore-point-verify': 'checking every part of the restore point',
+		'restore-point-record': 'saving the restore point',
+		remove: 'turning the module off and removing it',
+		verify: 'checking that the module is gone'
+	},
+	'theme.default': {
+		lease: 'locking the site for this change',
+		preflight: 'checking the site and the theme',
+		export: 'copying the site database into a restore point',
+		'restore-point-verify': 'checking every part of the restore point',
+		'restore-point-record': 'saving the restore point',
+		set: 'changing the theme',
+		verify: 'checking which theme the site uses'
 	}
 };
 
@@ -386,6 +632,44 @@ function errorCode(error: string | null | undefined): string | null {
 
 export function failedStepError(steps: { state: string; error?: string | null }[]): string | null {
 	return steps.find((step) => step.state === 'failed')?.error ?? null;
+}
+
+const MODULE_TYPES: ReadonlySet<string> = new Set([
+	'module.install',
+	'module.enable',
+	'module.remove',
+	'theme.default'
+]);
+
+// the engine writes these refusals as plain sentences, so the text after the code is shown as it is
+const MODULE_MESSAGE_CODES: ReadonlySet<string> = new Set([
+	'module_refused',
+	'module_not_found',
+	'module_conflict',
+	'module_missing',
+	'install_failed',
+	'install_unverified',
+	'enable_failed',
+	'enable_unverified',
+	'removal_refused',
+	'removal_unreadable',
+	'remove_failed',
+	'remove_unverified',
+	'not_available',
+	'theme_refused',
+	'theme_not_enabled',
+	'set_failed',
+	'set_unverified'
+]);
+
+function moduleReason(error: string | null | undefined): string | null {
+	const match = /^([a-z_]+): (.+)$/s.exec(error ?? '');
+	if (match === null) return null;
+	if (MODULE_MESSAGE_CODES.has(match[1] ?? '')) return match[2] ?? null;
+	if (match[1] === 'restore_too_large') {
+		return 'The site database is too large to take a restore point, so nothing was changed.';
+	}
+	return null;
 }
 
 export const LARGER_RESTORE_TITLE = 'Needs a Larger Restore Path';
@@ -560,6 +844,20 @@ export function nodeSiteRefusalReason(error: { details: unknown; message: string
 	);
 }
 
+const CONFIG_APPLY_REFUSALS: Record<string, string> = {
+	plan_not_writable: 'The platform sets the plan, so it cannot change here.',
+	not_overridable:
+		'One of these settings is set when the site is deployed, so it cannot change here.',
+	owner_only: 'Only an owner can change one of these settings.',
+	setting_invalid: 'The site refused one of the values. Nothing was changed.',
+	settings_changed:
+		'The settings changed on the site while this change waited. Nothing was changed.',
+	nothing_to_change: 'The site already has these values. Nothing was changed.',
+	verify_failed:
+		'The site did not report the new values back. The change is marked unconfirmed in the history.',
+	settings_unsupported: 'This site has nowhere to keep a settings override.'
+};
+
 const FAILED_STATUSES: ReadonlySet<string> = new Set(['failed', 'cancelled', 'rolled-back']);
 
 // the one plain reason shown on the progress page, the site's activity list and the admin list
@@ -572,6 +870,10 @@ export function failureReason(operation: {
 	if (!FAILED_STATUSES.has(operation.status)) return null;
 	if (operation.status === 'cancelled') return 'The change was cancelled before it started.';
 	if (needsLargerRestore(operation)) return LARGER_RESTORE_REASON;
+	if (MODULE_TYPES.has(operation.type ?? '')) {
+		const reason = moduleReason(operation.failedError);
+		if (reason !== null) return reason;
+	}
 	if (operation.type === 'site.adopt') {
 		const refusal = ADOPT_REFUSALS[errorCode(operation.failedError) ?? ''];
 		if (refusal !== undefined) return refusal;
@@ -590,6 +892,10 @@ export function failureReason(operation: {
 	}
 	if (operation.type === 'site.import' || operation.type === 'import.survey') {
 		const refusal = IMPORT_REFUSALS[errorCode(operation.failedError) ?? ''];
+		if (refusal !== undefined) return refusal;
+	}
+	if (operation.type === 'config.apply') {
+		const refusal = CONFIG_APPLY_REFUSALS[errorCode(operation.failedError) ?? ''];
 		if (refusal !== undefined) return refusal;
 	}
 	if (operation.type === 'git.pull') {

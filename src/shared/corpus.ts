@@ -47,7 +47,23 @@ export type CorpusManifest = z.infer<typeof corpusSchema>;
 type CorpusRepo = CorpusManifest['repos'][string];
 type CorpusCell = z.infer<typeof cell>;
 
-export type CorpusStatus = 'deployed' | 'verified' | 'partial' | 'needs upgrade' | 'unsupported';
+export const corpusStatuses = [
+	'deployed',
+	'verified',
+	'partial',
+	'needs upgrade',
+	'unsupported'
+] as const;
+
+export type CorpusStatus = (typeof corpusStatuses)[number];
+
+export const CORPUS_STATUS_LABELS: Record<CorpusStatus, string> = {
+	deployed: 'Deployed',
+	verified: 'Verified',
+	partial: 'Partial',
+	'needs upgrade': 'Needs Upgrade',
+	unsupported: 'Unsupported'
+};
 
 export class CorpusInvalidError extends Error {}
 
@@ -100,4 +116,29 @@ export function installDecision(entry: CorpusEntry): InstallDecision {
 		allowed: false,
 		reason: entry.installNote ?? `${entry.name} is ${entry.status} in the corpus`
 	};
+}
+
+export type CorpusSearch = { q?: string; status?: CorpusStatus };
+
+export type CorpusResult = {
+	id: string;
+	name: string;
+	status: CorpusStatus;
+	install: InstallDecision;
+	cells: CorpusManifest['repos'][string]['rows'];
+};
+
+// the manifest has no display name, so id and name are both the repo key
+export function searchCorpus(
+	manifest: CorpusManifest,
+	{ q = '', status }: CorpusSearch = {}
+): CorpusResult[] {
+	const needle = q.trim().toLowerCase();
+	return Object.entries(manifest.repos).flatMap(([name, repo]) => {
+		const entry = { name, status: corpusStatus(repo), installNote: repo.rows.install?.note };
+		if (status && entry.status !== status) return [];
+		if (needle && !name.toLowerCase().includes(needle)) return [];
+		const install = installDecision(entry);
+		return [{ id: name, name, status: entry.status, install, cells: repo.rows }];
+	});
 }

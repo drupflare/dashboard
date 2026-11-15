@@ -131,8 +131,18 @@ Organisation roles are `owner`, `admin`, `developer`, `billing`, `viewer`. Site 
 | `site.backup.export`             | department | x         | x         |               |             |            |                 |                 |             | session only, site content        |
 | `site.environment.manage`        | site       | x         | x         | x             |             |            | x               |                 |             | plan feature environments         |
 | `site.preview.manage`            | site       | x         | x         | x             |             |            | x               | x               |             | plan feature previews             |
-| `site.access.manage`             | site       | x         | x         |               |             |            | x               |                 |             |                                   |
+| `site.access.manage`             | site       | x         | x         |               |             |            | x               |                 |             | session only                      |
 | `site.grant.manage`              | site       | x         | x         |               |             |            | x               |                 |             |                                   |
+| `site.access.read`               | site       | x         | x         |               |             |            | x               |                 |             |                                   |
+| `site.environment.read`          | site       | x         | x         | x             |             | x          | x               | x               | x           |                                   |
+| `site.restore-point.read`        | site       | x         | x         | x             |             | x          | x               | x               | x           |                                   |
+| `site.pitr.restore`              | site       | x         | x         |               |             |            | x               |                 |             | step-up                           |
+| `site.module.read`               | site       | x         | x         | x             |             | x          | x               | x               | x           |                                   |
+| `site.module.install`            | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
+| `site.module.remove`             | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
+| `site.theme.manage`              | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
+| `site.repair.read`               | site       | x         | x         | x             |             | x          | x               | x               | x           |                                   |
+| `site.repair.undo`               | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.config.runtime.read`       | site       | x         | x         | x             |             | x          | x               | x               | x           |                                   |
 | `site.config.runtime.write`      | site       | x         | x         | x             |             |            | x               | x               |             |                                   |
 | `site.config.content.read`       | site       | x         | x         | x             |             | x          | x               | x               | x           |                                   |
@@ -159,6 +169,9 @@ Platform admin actions need the admin flag, the Cloudflare Access fact and the n
 | `admin.metadata.read`         | platform admin, read            |              |
 | `admin.capacity.read`         | platform admin, read            |              |
 | `admin.audit.read`            | platform admin, read            |              |
+| `admin.ladder.read`           | platform admin, read            |              |
+| `admin.ladder.manage`         | platform admin, infrastructure  |              |
+| `admin.releases.manage`       | platform admin, infrastructure  | step-up      |
 | `admin.abuse.manage`          | platform admin, support         |              |
 | `admin.break-glass.start`     | platform admin, support         | step-up      |
 | `admin.billing.support`       | platform admin, billing_support |              |
@@ -189,6 +202,7 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `site.owner-token.reveal`
 - `site.owner-token.rotate`
 - `site.backup.export`
+- `site.access.manage`
 
 ## Step-up actions
 
@@ -212,6 +226,8 @@ These refuse API keys. Every `admin.*` action refuses them too.
 - `site.credentials.rotate`
 - `site.owner-token.reveal`
 - `site.owner-token.rotate`
+- `site.pitr.restore`
+- `admin.releases.manage`
 - `admin.break-glass.start`
 
 ## Delegation

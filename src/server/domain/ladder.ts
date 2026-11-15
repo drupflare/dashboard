@@ -5,6 +5,12 @@ import {
 	ROLLBACK_FAILURES,
 	type Rung
 } from '../../shared/health/vocab';
+import {
+	admitRepair,
+	autoRepairOn,
+	type RepairBudget,
+	type RepairRecord as SpentRepair
+} from './incidents';
 
 export type LadderOutcome = { ok: boolean; code?: string };
 
@@ -48,7 +54,7 @@ export function maySafelyRepair(
 }
 
 // a row's blocking precondition, or null when the repair may run; unknown preconditions fail closed
-function blocker(row: CatalogueRow, facts: LadderFacts): string | null {
+export function blocker(row: CatalogueRow, facts: LadderFacts): string | null {
 	if (row.automation === 'manual') return 'manual repair';
 	if (!maySafelyRepair(facts)) return 'open transaction or gate held';
 	for (const pre of row.preconditions) {
@@ -119,4 +125,75 @@ export function nextRung(history: readonly LadderOutcome[], facts: LadderFacts):
 		rollback: false,
 		reason: `quarantined for ${code}; rollback waits: ${block}`
 	};
+}
+
+export type PastAttempt = { status: string; finishedAt: number | null };
+
+export type AttemptBlock = { code: 'attempts' | 'cooling_down' | 'running'; reason: string };
+
+// past is newest first. A refused attempt ran nothing, so it neither counts nor cools anything
+export function attemptBlocker(
+	past: readonly PastAttempt[],
+	row: Pick<CatalogueRow, 'attemptBound' | 'cooldownMs'>,
+	nowMs: number
+): AttemptBlock | null {
+	const ran = past.filter((a) => a.status !== 'refused');
+	const last = ran[0];
+	if (last?.status === 'running') {
+		return { code: 'running', reason: 'a repair of this kind is already running' };
+	}
+	let failures = 0;
+	for (const attempt of ran) {
+		if (attempt.status !== 'failed') break;
+		failures++;
+	}
+	if (failures >= row.attemptBound) {
+		return { code: 'attempts', reason: `${failures} attempts failed in a row` };
+	}
+	if (last?.finishedAt != null && nowMs - last.finishedAt < row.cooldownMs) {
+		return { code: 'cooling_down', reason: 'the last attempt finished moments ago' };
+	}
+	return null;
+}
+
+export type RepairDecision =
+	| { start: true; repairId: string; rung: Rung; reason: string }
+	| { start: false; reason: string };
+
+// the unattended decision: a repair starts only when every gate says so, and the first closed gate
+// is the reason. Rungs past observe (quarantine, rollback) are not catalogue repairs
+export function decideRepair(input: {
+	history: readonly LadderOutcome[];
+	facts: LadderFacts;
+	switches: { global: boolean | undefined; org?: boolean; site?: boolean };
+	orgId: string;
+	hasHandler: (repairId: string) => boolean;
+	past: (repairId: string) => readonly PastAttempt[];
+	recent: readonly SpentRepair[];
+	budget: RepairBudget;
+}): RepairDecision {
+	if (!autoRepairOn(input.switches)) {
+		return { start: false, reason: 'automatic repair is off' };
+	}
+	const step = nextRung(input.history, input.facts);
+	if (step.repair === null) return { start: false, reason: step.reason };
+	if (step.rung !== 'observe') return { start: false, reason: step.reason };
+	const row = CATALOGUE.get(step.repair);
+	if (!row || (row.automation !== 'auto' && row.automation !== 'auto-with-guard')) {
+		return { start: false, reason: `${step.repair} needs a person` };
+	}
+	if (!input.hasHandler(row.repairId)) {
+		return { start: false, reason: `${row.repairId} has no automatic handler` };
+	}
+	const block = blocker(row, input.facts);
+	if (block !== null) return { start: false, reason: block };
+	const attempts = attemptBlocker(input.past(row.repairId), row, input.facts.nowMs);
+	if (attempts !== null) return { start: false, reason: attempts.reason };
+	const admitted = admitRepair(
+		input.recent,
+		{ orgId: input.orgId, nowMs: input.facts.nowMs },
+		input.budget
+	);
+	if (!admitted.admit) return { start: false, reason: admitted.reason };
+	return { start: true, repairId: row.repairId, rung: step.rung, reason: step.reason };
 }

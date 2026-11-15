@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+	attemptBlocker,
+	decideRepair,
 	maySafelyRepair,
 	nextRung,
 	type LadderFacts,
@@ -164,5 +166,78 @@ describe('nextRung preconditions', () => {
 		const step = nextRung(run(QUARANTINE_STRIKES, 'no.such.code'), base);
 		expect(step.repair).toBeNull();
 		expect(step.mayRun).toBe(false);
+	});
+});
+
+describe('attemptBlocker', () => {
+	const row = { attemptBound: 3, cooldownMs: 60_000 };
+	const NOW = 10_000_000;
+	const ended = (status: string, ago: number) => ({ status, finishedAt: NOW - ago });
+
+	it('allows a first attempt and one after the cool-down', () => {
+		expect(attemptBlocker([], row, NOW)).toBeNull();
+		expect(attemptBlocker([ended('succeeded', 60_000)], row, NOW)).toBeNull();
+	});
+
+	it('holds during the cool-down after a success or a failure', () => {
+		expect(attemptBlocker([ended('succeeded', 1)], row, NOW)?.code).toBe('cooling_down');
+		expect(attemptBlocker([ended('failed', 59_999)], row, NOW)?.code).toBe('cooling_down');
+	});
+
+	it('holds while an attempt is still running', () => {
+		expect(attemptBlocker([{ status: 'running', finishedAt: null }], row, NOW)?.code).toBe(
+			'running'
+		);
+	});
+
+	it('stops at the bound of failures in a row and resets on a success', () => {
+		const old = 10 * 60_000;
+		const failed = [ended('failed', old), ended('failed', old + 1), ended('failed', old + 2)];
+		expect(attemptBlocker(failed, row, NOW)?.code).toBe('attempts');
+		expect(attemptBlocker(failed.slice(0, 2), row, NOW)).toBeNull();
+		expect(
+			attemptBlocker([failed[0]!, ended('succeeded', old + 1), ...failed], row, NOW)
+		).toBeNull();
+	});
+
+	it('ignores a refused attempt', () => {
+		const old = 10 * 60_000;
+		expect(attemptBlocker([ended('refused', 1), ended('failed', old)], row, NOW)).toBeNull();
+	});
+});
+
+describe('decideRepair', () => {
+	const input = (over: Partial<Parameters<typeof decideRepair>[0]> = {}) => ({
+		history: run(1),
+		facts: base,
+		switches: { global: true },
+		orgId: 'org_a',
+		hasHandler: () => true,
+		past: () => [],
+		recent: [],
+		budget: { perOrgPerHour: 1, fleetPerHour: 5 },
+		...over
+	});
+
+	it('starts the catalogue repair for the failing code', () => {
+		expect(decideRepair(input())).toMatchObject({ start: true, repairId: 'render.empty' });
+	});
+
+	it.each([
+		['the switch is off', { switches: { global: undefined } }, 'automatic repair is off'],
+		['no code is failing', { history: [] }, 'no failures'],
+		['the repair needs approval', { history: run(1, 'migrate.incomplete') }, 'needs a person'],
+		['the repair has no handler', { hasHandler: () => false }, 'no automatic handler'],
+		['the site is shedding', { facts: { ...base, shedding: true } }, 'not shedding load'],
+		['the site is quarantined', { history: run(QUARANTINE_STRIKES) }, 'quarantined'],
+		[
+			'the budget is spent',
+			{ recent: [{ orgId: 'org_a', atMs: base.nowMs - 1 }] },
+			'organisation repair budget spent for the hour'
+		]
+	])('holds when %s', (_name, over, reason) => {
+		const decision = decideRepair(input(over));
+		expect(decision.start).toBe(false);
+		expect(decision.reason).toContain(reason);
 	});
 });

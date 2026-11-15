@@ -735,7 +735,10 @@
 				"views",
 				"views_ui"
 			],
-			"packages": ["drupal/consumers", "drupal/simple_oauth"],
+			"packages": [
+				"drupal/consumers",
+				"drupal/simple_oauth"
+			],
 			"custom": [
 				"simple_oauth_21",
 				"simple_oauth_client_registration",
@@ -859,7 +862,9 @@
 				"drupal/redis",
 				"drupal/smtp"
 			],
-			"custom": ["mantle2"]
+			"custom": [
+				"mantle2"
+			]
 		},
 		"webcms": {
 			"sha": "0d7d615044ca2352bb7393b9089badf6793f0bc5",
@@ -1872,7 +1877,10 @@
 				"ymcatwincities/openy",
 				"ynorth-projects/openy_repeat"
 			],
-			"custom": ["openy", "openy_admin"]
+			"custom": [
+				"openy",
+				"openy_admin"
+			]
 		},
 		"thunder": {
 			"sha": "50686db3e03c3749588dc9aa7a65cf8cea8b0879",
@@ -2550,7 +2558,10 @@
 				"drupal/webshare",
 				"drupal/yoast_seo"
 			],
-			"custom": ["varbase", "varbase_installer_theme"]
+			"custom": [
+				"varbase",
+				"varbase_installer_theme"
+			]
 		},
 		"govcms": {
 			"sha": "8fbe9c748e7a441abab5488b7d40dc01fad5d697",
@@ -2786,7 +2797,12 @@
 				"drupal/webform",
 				"drupal/workbench_access"
 			],
-			"custom": ["bartik", "govcms", "govcms_bartik", "govcms_security"],
+			"custom": [
+				"bartik",
+				"govcms",
+				"govcms_bartik",
+				"govcms_security"
+			],
 			"deployed": {
 				"sha": "8fbe9c748e7a441abab5488b7d40dc01fad5d697",
 				"run": "local:2026-09-30T07:41:08.637Z",
@@ -3567,7 +3583,10 @@
 				"drupal/twig_tweak",
 				"drupal/webform"
 			],
-			"custom": ["droopler", "droopler_theme"]
+			"custom": [
+				"droopler",
+				"droopler_theme"
+			]
 		},
 		"localgov_microsites": {
 			"sha": "4de8403b60f8c9c91d8966a65ff4ebb0537582bc",
@@ -3849,7 +3868,9 @@
 				"drupal/votingapi_reaction",
 				"drupal/webform"
 			],
-			"custom": ["openintranet"]
+			"custom": [
+				"openintranet"
+			]
 		},
 		"drupalx": {
 			"sha": "d665d327d509d26301a79e74383d833692c604c5",
@@ -4080,7 +4101,10 @@
 				"drupal/webform",
 				"drupal/yoast_seo"
 			],
-			"custom": ["drupalx_theme", "dx_image"]
+			"custom": [
+				"drupalx_theme",
+				"dx_image"
+			]
 		},
 		"atelier": {
 			"sha": "717890c5746733001ae4b423e958673ba6bdfd25",
@@ -4375,7 +4399,10 @@
 				"views",
 				"views_ui"
 			],
-			"packages": ["drupal/lagoon_logs", "drupal/redis"],
+			"packages": [
+				"drupal/lagoon_logs",
+				"drupal/redis"
+			],
 			"custom": []
 		},
 		"islandora": {

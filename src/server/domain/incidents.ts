@@ -85,3 +85,6 @@ export function autoRepairOn(s: {
 }): boolean {
 	return s.global === true && s.org !== false && s.site !== false;
 }
+
+// unmeasured starting points; the plan sets no numbers
+export const DEFAULT_REPAIR_BUDGET: RepairBudget = { perOrgPerHour: 12, fleetPerHour: 300 };
