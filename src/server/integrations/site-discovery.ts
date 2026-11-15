@@ -5,15 +5,21 @@ import {
 	discoveryDocumentSchema
 } from '@contracts/discovery';
 import { createHash } from 'node:crypto';
-import { z } from 'zod';
+import {
+	propertySchema,
+	type SettingsResponse,
+	settingsResponseSchema,
+	valueOf
+} from '../../shared/site-config/levers';
 import {
 	isKvWritable,
 	isOwnerOnly,
-	type LeverDomain,
 	type SettingPermission,
 	SITE_CONFIG_REGISTRY
 } from '../../shared/site-config/registry';
 import type { FetchLike } from './url-guard';
+
+export { propertySchema, settingsResponseSchema, type SettingsResponse };
 
 type Settings = DiscoveryDocument['settings'];
 
@@ -37,42 +43,6 @@ export class DiscoveryError extends Error {
 }
 
 export const DISCOVERY_TIMEOUT_MS = 5_000;
-
-const leverDomainSchema = z.discriminatedUnion('kind', [
-	z.object({
-		kind: z.literal('int'),
-		min: z.number(),
-		max: z.number(),
-		unit: z.enum(['ms', 'bytes']).optional(),
-		default: z.number().optional(),
-		marks: z
-			.array(z.object({ value: z.number(), label: z.string(), note: z.string() }))
-			.optional()
-	}),
-	z.object({ kind: z.literal('flag'), default: z.enum(['0', '1']).optional() }),
-	z.object({
-		kind: z.literal('enum'),
-		values: z.array(z.string()),
-		default: z.string().optional()
-	}),
-	z.object({ kind: z.literal('bins') }),
-	z.object({ kind: z.literal('rules') })
-]);
-
-// the body of GET /settings (src/site/deployment.ts settingsRoute)
-export const settingsResponseSchema = z.object({
-	ok: z.literal(true),
-	levers: z.array(
-		z.object({
-			name: z.string(),
-			value: z.string().nullable(),
-			source: z.enum(['kv', 'var', 'default']),
-			domain: leverDomainSchema
-		})
-	)
-});
-
-export type SettingsResponse = z.infer<typeof settingsResponseSchema>;
 
 export type CapabilityInput = {
 	id: string;
@@ -164,63 +134,6 @@ function settingsEtag(block: Omit<Settings, 'etag'>): string {
 		.update(JSON.stringify(canonical(block)))
 		.digest('hex');
 	return `"${digest.slice(0, 32)}"`;
-}
-
-function domainSchema(domain: LeverDomain): Record<string, unknown> {
-	switch (domain.kind) {
-		case 'int':
-			return {
-				type: 'integer',
-				minimum: domain.min,
-				maximum: domain.max,
-				...(domain.default !== undefined ? { default: domain.default } : {}),
-				...(domain.unit !== undefined ? { 'x-unit': domain.unit } : {}),
-				...(domain.marks !== undefined ? { 'x-marks': domain.marks } : {})
-			};
-		case 'flag':
-			return {
-				type: 'string',
-				enum: ['0', '1'],
-				...(domain.default !== undefined ? { default: domain.default } : {})
-			};
-		case 'enum':
-			return {
-				type: 'string',
-				enum: [...domain.values],
-				...(domain.default !== undefined ? { default: domain.default } : {})
-			};
-		case 'bins':
-		case 'rules':
-		case 'text':
-			return { type: 'string' };
-	}
-}
-
-function propertySchema(
-	name: string,
-	domain: LeverDomain,
-	permission: SettingPermission,
-	meta: (typeof SITE_CONFIG_REGISTRY)[string] | undefined
-): Record<string, unknown> {
-	const widget = meta?.widget ?? (domain.kind === 'rules' ? 'json' : undefined);
-	return {
-		...domainSchema(domain),
-		title: meta?.label ?? name,
-		...(meta?.note !== undefined ? { description: meta.note } : {}),
-		'x-ui': {
-			group: permission,
-			permission,
-			...(widget !== undefined ? { widget } : {}),
-			...(meta?.danger ? { danger: true } : {})
-		}
-	};
-}
-
-function valueOf(lever: SettingsResponse['levers'][number]): unknown {
-	if (lever.domain.kind === 'int' && lever.value !== null && /^-?\d+$/.test(lever.value.trim())) {
-		return Number(lever.value);
-	}
-	return lever.value;
 }
 
 function capabilityOf(c: CapabilityInput) {

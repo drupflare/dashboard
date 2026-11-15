@@ -174,8 +174,18 @@ const engine: EngineBinding = {
 				'site-purge': createStarter,
 				'site-cleanup': cleanupStarter,
 				'site-adopt': createStarter,
+				'site-repair': createStarter,
+				'site-rollback': createStarter,
+				'release-ring': createStarter,
+				'template-build': createStarter,
 				'backup-create': createStarter,
-				'backup-restore': createStarter
+				'backup-restore': createStarter,
+				'access-sync': createStarter,
+				'config-apply': createStarter,
+				'module-install': createStarter,
+				'module-enable': createStarter,
+				'module-remove': createStarter,
+				'theme-default': createStarter
 			}
 		});
 	}

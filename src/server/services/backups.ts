@@ -1,5 +1,10 @@
 import type { R2Bucket } from '@cloudflare/workers-types';
-import { DEFAULT_CHANGE_BUDGET, computePlanDigest, type Plan } from '@contracts/operations';
+import {
+	DEFAULT_CHANGE_BUDGET,
+	computePlanDigest,
+	type OperationType,
+	type Plan
+} from '@contracts/operations';
 import type { CollegeDBClient } from '@earth-app/collegedb';
 import { z } from 'zod';
 import {
@@ -165,8 +170,8 @@ async function activeSite(
 }
 
 // the engine owns every status after it accepts the start; a refused start is the dashboard's to close
-async function startAndReturn(
-	services: BackupServices,
+export async function startAndReturn(
+	services: Pick<BackupServices, 'startOperation'>,
 	db: CollegeDBClient,
 	operation: StoredOperation,
 	request: EngineStartRequest,
@@ -194,17 +199,17 @@ async function startAndReturn(
 	return latest;
 }
 
-async function newOperation(
+export async function newOperation(
 	db: CollegeDBClient,
 	input: {
 		id: string;
 		orgId: string;
 		accountId: string;
 		siteId: string;
-		type: 'backup.create' | 'backup.restore';
+		type: OperationType;
 		plan: Plan;
 		idempotencyKey: string;
-		inputs: BackupCreateInput | BackupRestoreInput;
+		inputs: unknown;
 	}
 ) {
 	const now = nowUtc().toMillis();

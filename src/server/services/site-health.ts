@@ -191,7 +191,7 @@ async function classify(res: Response, token: string): Promise<Probe> {
 async function probe(
 	services: SiteHealthServices,
 	site: SiteRecord,
-	principal: Principal
+	actor: string
 ): Promise<Probe> {
 	if (site.state !== 'active') {
 		return { kind: 'down', reason: 'This site is not active, so its health is not read.' };
@@ -209,7 +209,7 @@ async function probe(
 	try {
 		return await withOwnerToken(
 			await services.custody(),
-			{ siteId: site.id, actor: principalActor(principal), operation: 'health.read' },
+			{ siteId: site.id, actor, operation: 'health.read' },
 			async (token) => {
 				let res: Response;
 				try {
@@ -420,12 +420,24 @@ async function hasVerifiedBackup(
 
 // #endregion
 
+// what the repair ladder reads on its own, with no person behind the call
+export async function readHealthForLadder(
+	site: SiteRecord
+): Promise<{ findings: string[]; repair: WorkerHealth['repair'] } | null> {
+	const result = await probe(installed, site, 'system:ladder');
+	if (result.kind !== 'answer') return null;
+	return {
+		findings: result.health.lastFindings.map((f) => f.code),
+		repair: result.health.repair
+	};
+}
+
 async function observe(
 	services: SiteHealthServices,
 	site: SiteRecord,
 	principal: Principal
 ): Promise<SiteHealth> {
-	const result = await probe(services, site, principal);
+	const result = await probe(services, site, principalActor(principal));
 	const observedAt = new Date(services.now()).toISOString();
 	const backup = await hasVerifiedBackup(services, site.organizationId, site.id);
 	const base = { observedAt, reason: null, step: null, nodes: [] };

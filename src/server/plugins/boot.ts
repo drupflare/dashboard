@@ -30,7 +30,8 @@ export default defineNitroPlugin((nitroApp) => {
 					privateKey: config.githubApp.privateKey as string,
 					clientSecret: config.githubApp.clientSecret as string,
 					webhookSecret: config.githubApp.webhookSecret as string
-				}
+				},
+				releaseHook: { secret: config.releaseHook.secret as string }
 			});
 		} catch (error) {
 			console.error('boot failed; sign-in stays closed', error);

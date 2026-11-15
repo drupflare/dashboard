@@ -14,6 +14,7 @@ import { ApiError } from '../../shared/errors';
 import { isValidName, suffixOwner } from '../../shared/names';
 import type { BudgetKey } from '../../shared/permissions';
 import { recipeFor } from '../../shared/recipes';
+import { TEMPLATE_HELD_REASON, TEMPLATE_HELD_TITLE } from '../../shared/template-entries';
 import { nowUtc } from '../../shared/utils/time';
 import { createOperationRecord } from '../db/repos/backups';
 import { getUserById } from '../db/repos/identity';
@@ -48,6 +49,7 @@ import {
 	buildSiteCreateInput,
 	type SiteInputConfig
 } from './site-input';
+import { templateCodeDeliveryOf, templateForCreate } from './templates';
 
 export { MANAGED_HOST_SUFFIX };
 
@@ -69,6 +71,7 @@ export interface SiteServices {
 	// resolves once the signed start request is accepted; it does not wait for the workflow
 	startOperation: (request: EngineStartRequest) => Promise<void>;
 	config: SiteInputConfig;
+	templateCodeDelivery?: boolean;
 }
 
 const notBuilt = (what: string) => async (): Promise<never> => {
@@ -164,6 +167,8 @@ export interface CreateSiteInput {
 	name: string;
 	hostnameLabel: string | undefined;
 	idempotencyKey: string;
+	// a built template to start the new site from
+	templateEntryId?: string;
 }
 
 export function entitlementRefusal(reason: CheckDenial): ApiError {
@@ -201,12 +206,28 @@ export async function createSite(
 	const label = input.hostnameLabel ?? input.name;
 	checkLabel(input.name, 'name');
 	checkLabel(label, 'hostnameLabel');
+	if (input.templateEntryId !== undefined && input.kind !== 'drupal') {
+		throw new ApiError('validation', 'Templates are only for Drupal sites', {
+			field: 'templateEntryId'
+		});
+	}
+	if (input.templateEntryId !== undefined && !templateCodeDeliveryOf(services)) {
+		throw new ApiError('unprocessable', TEMPLATE_HELD_REASON, {
+			reason: 'template_code_delivery',
+			title: TEMPLATE_HELD_TITLE
+		});
+	}
 	const decision = await services.entitlements.check({
 		orgId: input.orgId,
 		userId: input.userId,
 		kind: input.kind
 	});
 	if (!decision.allow) throw entitlementRefusal(decision.reason);
+	// refused before anything is reserved: a template that is not ready or does not fit the plan
+	const template =
+		input.templateEntryId === undefined
+			? undefined
+			: await templateForCreate(services, input.templateEntryId, decision.entitlement.planId);
 
 	const siteId = newId('site');
 	const operationId = newId('op');
@@ -232,10 +253,14 @@ export async function createSite(
 		labelSuffix: config.labelSuffix,
 		...(owner === null ? {} : { ownerEmail: owner.email })
 	}).catch(inputRefusal);
-	return recordAndStartCreate(services, engineInput, {
-		orgId: input.orgId,
-		idempotencyKey: input.idempotencyKey
-	});
+	return recordAndStartCreate(
+		services,
+		template === undefined ? engineInput : { ...engineInput, template },
+		{
+			orgId: input.orgId,
+			idempotencyKey: input.idempotencyKey
+		}
+	);
 }
 
 // writes the operation and the hidden site row, then starts the engine; a retry carries the id of

@@ -86,6 +86,8 @@ export interface SiteInputParts {
 	hostSuffix?: string;
 	labelSuffix?: string;
 	ownerEmail?: string;
+	// an environment or scratch label carries a suffix or prefix the names table reserves
+	reservedOk?: boolean;
 }
 
 const clip = (value: string, max: number | undefined) =>
@@ -163,7 +165,7 @@ export async function buildSiteCreateInput(parts: SiteInputParts): Promise<SiteC
 	const labelSuffix = parts.labelSuffix ?? '';
 	if (
 		!isValidName(subdomain) ||
-		isReserved(subdomain) ||
+		(isReserved(subdomain) && parts.reservedOk !== true) ||
 		subdomain.length + labelSuffix.length > 63
 	) {
 		throw new SiteInputError('bad_label', `${subdomain} is not a usable hostname label`);

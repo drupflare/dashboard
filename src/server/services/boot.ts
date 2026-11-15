@@ -30,6 +30,7 @@ import {
 } from '../utils/auth';
 import { resetApiDeps, setApiDeps, type ApiDeps } from '../utils/define-api';
 import { collegeIdempotencyStore } from '../utils/idempotency';
+import { resetAccessServices, setAccessServices, type AccessServices } from './access-rules';
 import { append, appendBoth, r2HeadStore, type HeadStore } from './audit';
 import { collegeDirectory } from './auth';
 import {
@@ -52,11 +53,13 @@ import { fleetConfigOf, resetFleetServices, setFleetServices, type FleetServices
 import { startGitPull } from './git-pull';
 import { collegeIdentityStore, setIdentityServices, type IdentityServices } from './identities';
 import { setKeyServices, type KeyServices } from './key-admin';
+import { setLadderServices, type LadderServices } from './ladder';
 import {
 	resetCutoverServices,
 	setCutoverServices,
 	type CutoverServices
 } from './migration-cutover';
+import { resetModuleServices, setModuleServices, type ModuleServices } from './modules';
 import { setOrganizationServices, type OrganizationServices } from './organizations';
 import {
 	collegeOwnerTokenStore,
@@ -68,6 +71,7 @@ import {
 	type OwnerTokenStore,
 	type PendingSecretDeps
 } from './owner-tokens';
+import { setReleaseServices, type ReleaseServices } from './releases';
 import {
 	collegeRepoStore,
 	setRepoConnectionDeps,
@@ -87,6 +91,11 @@ import {
 } from './site-health';
 import { resetImportServices, setImportServices, type ImportServices } from './site-import';
 import { siteInputConfigOf } from './site-input';
+import {
+	resetSiteSettingsServices,
+	setSiteSettingsServices,
+	type SiteSettingsServices
+} from './site-settings';
 import {
 	collegeBudgets,
 	collegeSiteEntitlements,
@@ -119,6 +128,8 @@ export interface BootOptions {
 	};
 	// the entitlement, budget, policy, suspension and support ports; each defaults to empty
 	facts?: Omit<FactsDeps, 'store'>;
+	// the shared secret the release sender signs its events with; a Worker secret of the same NUXT_ name wins
+	releaseHook?: { secret?: string };
 }
 
 export class BootError extends Error {
@@ -356,12 +367,17 @@ export interface BuiltServices {
 	ownerTokens: OwnerTokenStore;
 	sites: SiteServices;
 	backups: BackupServices;
+	access: AccessServices;
+	ladder: LadderServices;
+	modules: Partial<ModuleServices>;
 	cutover: Partial<CutoverServices>;
 	fleet: FleetServices;
 	imports: Partial<ImportServices>;
 	siteHealth: Partial<SiteHealthServices>;
+	siteSettings: Partial<SiteSettingsServices>;
 	capacity: Partial<CapacityServices>;
 	repoConnections: RepoConnectionDeps;
+	releases: ReleaseServices;
 	domain: DomainServices;
 	pendingSecrets: () => Promise<PendingSecretDeps>;
 	heads: HeadStore;
@@ -454,6 +470,26 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 		backups: backupServicesOf({ BLOB: env.BLOB }, { getDb, startOperation }, heads, {
 			pagedRestore: text(env, 'PAGED_RESTORE') === 'on'
 		}),
+		access: {
+			getDb,
+			planOf: async (orgId) => (await planOf(orgId)).planId,
+			startOperation,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			now: Date.now
+		},
+		ladder: {
+			getDb,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			now: Date.now
+		},
+		modules: {
+			getDb,
+			custody: async () => {
+				const pending = await pendingSecrets();
+				return { store: ownerTokens, audit: pending.audit, ring: pending.ring };
+			},
+			startOperation
+		},
 		cutover: {
 			sendEvent: engineEventSender({ ...engineConfigOf(env), now: Date.now }),
 			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
@@ -491,6 +527,15 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 				return { store: ownerTokens, audit: pending.audit, ring: pending.ring };
 			}
 		},
+		siteSettings: {
+			getDb,
+			custody: async () => {
+				const pending = await pendingSecrets();
+				return { store: ownerTokens, audit: pending.audit, ring: pending.ring };
+			},
+			startOperation,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads))
+		},
 		capacity: {
 			getDb,
 			reads: cloudflareReadsOf(
@@ -523,6 +568,14 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 				);
 			}
 		},
+		releases: {
+			getDb,
+			once: collegeOnceStore(getDb),
+			fetch: (input, init) => fetch(input, init),
+			resolve: (hostname) => dohResolve(hostname),
+			now: Date.now,
+			hookSecret: text(env, 'NUXT_RELEASE_HOOK_SECRET') ?? (options.releaseHook?.secret || '')
+		},
 		domain: domainServicesOf({
 			secrets: env as Record<string, string | undefined>,
 			target: text(env, 'CUSTOM_HOSTNAME_TARGET')
@@ -545,12 +598,17 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	setApiDeps(built.api);
 	setSiteServices(built.sites);
 	setBackupServices(built.backups);
+	setAccessServices(built.access);
+	setLadderServices(built.ladder);
+	setModuleServices(built.modules);
 	setCutoverServices(built.cutover);
 	setFleetServices(built.fleet);
 	setImportServices(built.imports);
 	setSiteHealthServices(built.siteHealth);
+	setSiteSettingsServices(built.siteSettings);
 	setCapacityServices(built.capacity);
 	setRepoConnectionDeps(built.repoConnections);
+	setReleaseServices(built.releases);
 	setDomainServices(built.domain);
 	setEstateServices({ keys: built.domain.keys, dns: built.domain.resolver });
 	setPendingSecretDeps(built.pendingSecrets);
@@ -572,12 +630,17 @@ export function resetBoot(): void {
 	resetApiDeps();
 	resetSiteServices();
 	resetBackupServices();
+	resetAccessServices();
+	setLadderServices(null);
+	resetModuleServices();
 	resetCutoverServices();
 	resetFleetServices();
 	resetImportServices();
 	resetSiteHealthServices();
+	resetSiteSettingsServices();
 	resetCapacityServices();
 	setRepoConnectionDeps(null);
+	setReleaseServices(null);
 	resetDomainServices();
 	resetEstateServices();
 	resetPendingSecretDeps();
