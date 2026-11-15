@@ -59,7 +59,7 @@ const caught = (run: Promise<unknown>) =>
 	);
 
 describe('readCredits', () => {
-	it('reads the grant with one GET and turns cents into dollars', async () => {
+	it('reads the credits with one GET and turns cents into dollars', async () => {
 		const { billing, seen } = config(() => envelope(grant));
 		const view = await readCredits(billing);
 		expect(view).toEqual({

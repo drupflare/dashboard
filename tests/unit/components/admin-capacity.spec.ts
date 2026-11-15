@@ -74,7 +74,7 @@ async function mountWith(body: CapacityView) {
 	cleanup = registerApi({ [`GET ${PATH}`]: { body } });
 	const wrapper = await mountSuspended(AdminCapacity);
 	mounted.push(wrapper);
-	await vi.waitFor(() => expect(wrapper.text()).toContain('Credit Grant'));
+	await vi.waitFor(() => expect(wrapper.text()).toContain('Cloudflare Credits'));
 	return wrapper;
 }
 
@@ -90,11 +90,11 @@ describe('the capacity view', () => {
 		mounted.push(wrapper);
 		expect(wrapper.find('[role="status"]').text()).toBe('Loading capacity');
 		expect(wrapper.find('[role="status"]').findAll('.animate-pulse').length).toBeGreaterThan(3);
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Credit Grant'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Cloudflare Credits'));
 		expect(wrapper.text()).not.toContain('Loading capacity');
 	});
 
-	it('shows the grant in dollars and plain words', async () => {
+	it('shows the credits in dollars and plain words', async () => {
 		const wrapper = await mountWith(view());
 		const text = wrapper.text();
 		expect(text).toContain('$9,999.58');
@@ -172,7 +172,7 @@ describe('the capacity view', () => {
 			})
 		);
 		const text = wrapper.text();
-		expect(text).toContain('no credit grant on record');
+		expect(text).toContain('no credits on record');
 		expect(text).toContain('no Cloudflare credentials yet, so it cannot read usage');
 		expect(text).toContain('Account headroom could not be read');
 	});
@@ -197,7 +197,7 @@ describe('the capacity view', () => {
 		expect(text).toContain('No changes failed in the last 24 hours.');
 	});
 
-	it('warns when the namespaces pass 80 percent, the grant ends within 30 days and it runs out early', async () => {
+	it('warns when the namespaces pass 80 percent, the credits end within 30 days and it runs out early', async () => {
 		const base = view();
 		if (base.credits.state !== 'ok' || base.headroom.state !== 'ok') throw new Error('fixture');
 		const wrapper = await mountWith(
@@ -213,9 +213,9 @@ describe('the capacity view', () => {
 		const alert = wrapper.find('[role="alert"]');
 		expect(alert.text()).toContain('Storage Namespaces Are Filling Up');
 		expect(alert.text()).toContain('850 of 1,000');
-		expect(alert.text()).toContain('Credit Grant Ends Soon');
-		expect(alert.text()).toContain('The grant ends in 12 days on 2027-11-12.');
-		expect(alert.text()).toContain('Credit Will Run Out Early');
+		expect(alert.text()).toContain('Credits End Soon');
+		expect(alert.text()).toContain('The credits end in 12 days on 2027-11-12.');
+		expect(alert.text()).toContain('Credits Will Run Out Early');
 	});
 
 	it('shows an error state with the server message and loads again on Try Again', async () => {
@@ -235,7 +235,7 @@ describe('the capacity view', () => {
 		expect(wrapper.find('[role="alert"]').text()).toContain('Something went wrong.');
 		const retry = wrapper.findAll('button').find((button) => button.text() === 'Try Again');
 		await retry?.trigger('click');
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Credit Grant'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Cloudflare Credits'));
 		expect(wrapper.text()).not.toContain('Could Not Load Capacity');
 	});
 
@@ -252,7 +252,7 @@ describe('the capacity view', () => {
 		});
 		const wrapper = await mountSuspended(AdminCapacity);
 		mounted.push(wrapper);
-		await vi.waitFor(() => expect(wrapper.text()).toContain('Credit Grant'));
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Cloudflare Credits'));
 		expect(calls.filter((call) => call.path === PATH)).toHaveLength(1);
 		await vi.advanceTimersByTimeAsync(59_000);
 		expect(calls.filter((call) => call.path === PATH)).toHaveLength(1);

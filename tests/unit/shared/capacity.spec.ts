@@ -34,7 +34,7 @@ const ids = (view: Parameters<typeof capacityWarnings>[0]) =>
 	capacityWarnings(view).map((warning) => warning.id);
 
 describe('capacityWarnings', () => {
-	it('stays quiet on the grant as it stood on 2026-11-12', () => {
+	it('stays quiet on the credits as they stood on 2026-11-12', () => {
 		expect(ids({ credits: credits(), headroom: headroom(40) })).toEqual([]);
 	});
 
@@ -56,20 +56,20 @@ describe('capacityWarnings', () => {
 			headroom: headroom(1)
 		});
 		expect(warning).toMatchObject({ id: 'expiry' });
-		expect(warning?.text).toBe('The grant ends in 29 days on 2027-11-12.');
+		expect(warning?.text).toBe('The credits end in 29 days on 2027-11-12.');
 		const last = capacityWarnings({
 			credits: credits({ daysRemaining: 1, validTo: null }),
 			headroom: headroom(1)
 		});
-		expect(last[0]?.text).toBe('The grant ends in 1 day.');
+		expect(last[0]?.text).toBe('The credits end in 1 day.');
 	});
 
-	it('warns when the grant would run out before it expires', () => {
+	it('warns when the credits would run out before they expire', () => {
 		const early = credits({ projectedDepletion: '2027-03-01T00:00:00Z' });
 		const [warning] = capacityWarnings({ credits: early, headroom: headroom(1) });
 		expect(warning).toMatchObject({ id: 'depletion' });
 		expect(warning?.text).toBe(
-			'At the current pace the grant is used up on 2027-03-01, before it expires on 2027-11-12.'
+			'At the current pace the credits are used up on 2027-03-01, before they expire on 2027-11-12.'
 		);
 		const late = credits({ projectedDepletion: '2028-01-01T00:00:00Z' });
 		expect(ids({ credits: late, headroom: headroom(1) })).toEqual([]);

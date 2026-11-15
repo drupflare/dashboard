@@ -150,7 +150,7 @@ afterEach(() => {
 });
 
 describe('readCapacity', () => {
-	it('reads the grant, the usage by service, the headroom and the work in flight', async () => {
+	it('reads the credits, the usage by service, the headroom and the work in flight', async () => {
 		const world = install();
 		const view = await readCapacity();
 		expect(view.generatedAt).toBe(NOW);

@@ -14,13 +14,13 @@ const used = computed(() => {
 const notice = computed(() => {
 	switch (props.view.state) {
 		case 'none':
-			return 'This account has no credit grant on record.';
+			return 'This account has no credits on record.';
 		case 'no_billing_access':
-			return 'The token has no billing access. Give it the Billing Read permission to see the grant.';
+			return 'The token has no billing access. Give it the Billing Read permission to see the credits.';
 		case 'not_configured':
-			return 'The dashboard has no Cloudflare credentials yet, so it cannot read the grant.';
+			return 'The dashboard has no Cloudflare credentials yet, so it cannot read the credits.';
 		default:
-			return 'The credit grant could not be read. The next refresh tries again.';
+			return 'The credits could not be read. The next refresh tries again.';
 	}
 });
 </script>
@@ -34,7 +34,7 @@ const notice = computed(() => {
 			id="capacity-credits"
 			class="text-lg font-semibold text-highlighted"
 		>
-			Credit Grant
+			Cloudflare Credits
 		</h2>
 		<template v-if="view.state === 'ok'">
 			<dl class="grid grid-cols-2 gap-y-2">

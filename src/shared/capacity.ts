@@ -126,8 +126,8 @@ export function capacityWarnings(
 		const days = credits.daysRemaining;
 		warnings.push({
 			id: 'expiry',
-			title: 'Credit Grant Ends Soon',
-			text: `The grant ends in ${days} ${days === 1 ? 'day' : 'days'}${ends}.`
+			title: 'Credits End Soon',
+			text: `The credits end in ${days} ${days === 1 ? 'day' : 'days'}${ends}.`
 		});
 	}
 	const runsOut = parsed(credits.projectedDepletion);
@@ -141,8 +141,8 @@ export function capacityWarnings(
 	) {
 		warnings.push({
 			id: 'depletion',
-			title: 'Credit Will Run Out Early',
-			text: `At the current pace the grant is used up on ${day(credits.projectedDepletion)}, before it expires on ${day(credits.validTo)}.`
+			title: 'Credits Will Run Out Early',
+			text: `At the current pace the credits are used up on ${day(credits.projectedDepletion)}, before they expire on ${day(credits.validTo)}.`
 		});
 	}
 	return warnings;
