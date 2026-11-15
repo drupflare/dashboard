@@ -9,11 +9,11 @@ export const CAPABILITY_IDS = [
 	'routes',
 	'token-management'
 ] as const;
-export const CAPABILITY_STATES = ['granted', 'missing', 'unknown'] as const;
+export const CAPABILITY_STATES = ['granted', 'missing', 'not-enabled', 'unknown'] as const;
 
 const account = z.strictObject({ id: z.string().min(1), name: z.string() });
 
-const capability = z.strictObject({
+export const capability = z.strictObject({
 	id: z.enum(CAPABILITY_IDS),
 	label: z.string(),
 	state: z.enum(CAPABILITY_STATES),

@@ -208,6 +208,48 @@ describe('probeCloudflareToken: capabilities', () => {
 		});
 	});
 
+	it('marks object storage not enabled on code 10042, whichever status carries it', async () => {
+		for (const status of [403, 400]) {
+			const { fetch } = fake(
+				table({
+					...accountsOk,
+					[`${API}/accounts/${ACCOUNT}/r2/buckets`]: () =>
+						json(
+							{
+								success: false,
+								errors: [
+									{
+										code: 10042,
+										message:
+											'Please enable R2 through the Cloudflare Dashboard.'
+									}
+								]
+							},
+							status
+						)
+				})
+			);
+			const report = await probeCloudflareToken({ token: USER_TOKEN, fetch });
+			const states = Object.fromEntries(
+				report.capabilities.map((row) => [row.id, row.state])
+			);
+			expect(states.storage).toBe('not-enabled');
+			expect(states.scripts).toBe('granted');
+		}
+	});
+
+	it('keeps a 403 without code 10042 as a missing permission', async () => {
+		const { fetch } = fake(
+			table({
+				...accountsOk,
+				[`${API}/accounts/${ACCOUNT}/r2/buckets`]: () =>
+					json({ success: false, errors: [{ code: 10000 }] }, 403)
+			})
+		);
+		const report = await probeCloudflareToken({ token: USER_TOKEN, fetch });
+		expect(report.capabilities.find((row) => row.id === 'storage')?.state).toBe('missing');
+	});
+
 	it('marks a capability unknown on a 401, a 429, a 5xx, a failure body and a network throw', async () => {
 		const cases: Record<string, () => Response | 'throw'> = {
 			[`${API}/accounts/${ACCOUNT}/workers/scripts`]: () => json({ success: false }, 401),

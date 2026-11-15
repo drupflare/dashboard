@@ -46,6 +46,11 @@ function loadMore() {
 <template>
 	<ClientOnly>
 		<div class="flex flex-col gap-6">
+			<PlaneConnections
+				v-if="orgId"
+				:org-id="orgId"
+			/>
+
 			<UiPageHeader
 				title="Nodes"
 				text="Servers you run yourself. A paired node reports its status and takes commands, and keeps running on its own if you revoke it."

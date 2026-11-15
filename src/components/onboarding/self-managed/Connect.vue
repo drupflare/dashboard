@@ -21,8 +21,9 @@ function submit(): void {
 		@submit.prevent="submit"
 	>
 		<p class="text-sm text-default">
-			Drupflare reads what this token can reach on your account, then shows you the result. It
-			does not store the token and it does not create anything in your account.
+			Drupflare reads what this token can reach on your account, then shows you the result.
+			Checking stores nothing and creates nothing in your account. You decide afterward
+			whether to connect the account.
 		</p>
 		<a
 			:href="templateUrl"
@@ -49,7 +50,7 @@ function submit(): void {
 				:aria-describedby="props.error ? `${TOKEN_ID}-error` : undefined"
 				class="rounded-md border border-default bg-default px-3 py-2 font-mono text-sm text-default"
 			/>
-			<p class="text-sm text-muted">Paste the token. It is checked, not saved.</p>
+			<p class="text-sm text-muted">Paste the token. Checking it does not save it.</p>
 			<p
 				v-if="props.error"
 				:id="`${TOKEN_ID}-error`"

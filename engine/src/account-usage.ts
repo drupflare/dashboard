@@ -5,12 +5,24 @@ import {
 	type AccountUsage,
 	type ResourcePlan
 } from './provision-plan';
+import { PermanentError } from './step';
 
 export type { CloudflareUsage as AccountUsageReading, RateHeadroom } from './ports';
 
 export interface UsageLimits {
 	kvNamespaces: number;
 	buckets?: number;
+	scripts?: number;
+}
+
+// permanent: a retry cannot turn object storage on
+export class ObjectStorageOffError extends PermanentError {
+	constructor() {
+		super(
+			'r2_not_enabled',
+			'the account has no object storage turned on, so a site that needs file storage cannot be created in it'
+		);
+	}
 }
 
 // both are retryable on purpose: nothing is lost, and a later run resumes from the record
@@ -19,7 +31,7 @@ export class QuotaExhaustedError extends Error {
 	readonly retryAfterMs = null;
 
 	constructor(
-		readonly what: 'kv' | 'r2',
+		readonly what: 'kv' | 'r2' | 'scripts',
 		used: number,
 		added: number,
 		limit: number
@@ -106,7 +118,16 @@ export function checkHeadroom(
 			resetSeconds === null ? null : resetSeconds * 1000
 		);
 	}
+	const r2Wanted = plan.create.some((resource) => resource.kind === 'r2');
+	if (r2Wanted && reading.r2Enabled === false) throw new ObjectStorageOffError();
 	if (limits === undefined) return;
+	if (
+		limits.scripts !== undefined &&
+		reading.scripts !== undefined &&
+		reading.scripts + 1 > limits.scripts
+	) {
+		throw new QuotaExhaustedError('scripts', reading.scripts, 1, limits.scripts);
+	}
 	const kvAdded = plan.create.filter((resource) => resource.kind === 'kv').length;
 	if (reading.kvNamespaces + kvAdded > limits.kvNamespaces) {
 		throw new QuotaExhaustedError('kv', reading.kvNamespaces, kvAdded, limits.kvNamespaces);

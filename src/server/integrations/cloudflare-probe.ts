@@ -43,6 +43,7 @@ const VERIFY_STATUS: Record<string, ProbeStatus> = {
 type Outcome =
 	| { state: 'ok'; body: unknown }
 	| { state: 'forbidden' }
+	| { state: 'not-enabled' }
 	| { state: 'refused' }
 	| { state: 'retry' };
 
@@ -71,6 +72,9 @@ async function request(
 	} catch {
 		return { state: 'retry' };
 	}
+	if (response.status === 403 || response.status === 400) {
+		if (await isNotEnabled(response)) return { state: 'not-enabled' };
+	}
 	if (response.status === 403) return { state: 'forbidden' };
 	if (response.status === 401) return { state: 'refused' };
 	if (!response.ok) return { state: 'retry' };
@@ -80,6 +84,18 @@ async function request(
 		return { state: 'ok', body };
 	} catch {
 		return { state: 'retry' };
+	}
+}
+
+// R2 answers 10042 on an account that has not turned it on, which needs a payment card
+const R2_NOT_ENABLED_CODE = 10042;
+
+async function isNotEnabled(response: Response): Promise<boolean> {
+	try {
+		const body = (await response.clone().json()) as { errors?: { code?: unknown }[] };
+		return (body.errors ?? []).some((error) => error.code === R2_NOT_ENABLED_CODE);
+	} catch {
+		return false;
 	}
 }
 
@@ -142,8 +158,13 @@ async function checkCapability(
 ): Promise<ProbeCapability> {
 	const outcome = await request(input, budget, check.path);
 	// only a 403 means the permission is missing; a 401 or a failure is not a verdict
-	const state =
-		outcome.state === 'ok' ? 'granted' : outcome.state === 'forbidden' ? 'missing' : 'unknown';
+	const state = {
+		ok: 'granted',
+		forbidden: 'missing',
+		'not-enabled': 'not-enabled',
+		refused: 'unknown',
+		retry: 'unknown'
+	}[outcome.state] as ProbeCapability['state'];
 	return {
 		id: check.id,
 		label: check.label,

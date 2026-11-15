@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import type { ProbeCapability, ProbeReport, ProbeStatus } from '~/shared/cloudflare-probe';
 
-const props = defineProps<{ report: ProbeReport }>();
-const emit = defineEmits<{ choose: [accountId: string] }>();
+const props = defineProps<{ report: ProbeReport; connecting?: boolean }>();
+const emit = defineEmits<{ choose: [accountId: string]; connect: [accountId: string] }>();
 
 const chosen = ref(props.report.account?.id ?? '');
 
@@ -27,12 +27,14 @@ const STATUS: Record<ProbeStatus, { icon: string; text: string }> = {
 const STATE_TEXT: Record<ProbeCapability['state'], string> = {
 	granted: 'Granted',
 	missing: 'Missing',
+	'not-enabled': 'Not turned on',
 	unknown: 'Could not check'
 };
 
 const STATE_ICON: Record<ProbeCapability['state'], string> = {
 	granted: 'i-lucide-circle-check',
 	missing: 'i-lucide-circle-x',
+	'not-enabled': 'i-lucide-circle-alert',
 	unknown: 'i-lucide-circle-help'
 };
 
@@ -43,6 +45,16 @@ const kindLabel = computed(() => {
 	return null;
 });
 const multipleAccounts = computed(() => props.report.accounts.length > 1);
+
+// a token that cannot edit Workers scripts cannot run a site, so it is never offered for storing
+const scripts = computed(() => props.report.capabilities.find((row) => row.id === 'scripts'));
+const activeAccount = computed(
+	() => props.report.status === 'active' && props.report.account !== null
+);
+const connectable = computed(() => activeAccount.value && scripts.value?.state === 'granted');
+const noScripts = computed(
+	() => activeAccount.value && scripts.value !== undefined && scripts.value.state !== 'granted'
+);
 </script>
 
 <template>
@@ -149,6 +161,16 @@ const multipleAccounts = computed(() => props.report.accounts.length > 1);
 					Add the permission "{{ row.permission }}" to this token, then check again.
 				</p>
 				<p
+					v-else-if="row.state === 'not-enabled'"
+					class="pl-6 text-sm text-muted"
+				>
+					Object storage is not turned on for this account. Cloudflare asks for a payment
+					card before it turns on, even when your use stays free. Add a card under
+					Billing, turn on R2 in the Cloudflare dashboard, then check again. Until then
+					your site runs without object storage, so the file mirror and Strata backups
+					stay off.
+				</p>
+				<p
 					v-else-if="row.state === 'unknown' && row.retryHint"
 					class="pl-6 text-sm text-muted"
 				>
@@ -157,8 +179,41 @@ const multipleAccounts = computed(() => props.report.accounts.length > 1);
 			</li>
 		</ul>
 
+		<div
+			v-if="connectable"
+			class="flex flex-col gap-2"
+		>
+			<p class="text-sm text-default">
+				<template v-if="report.canDownscope">
+					This token can make other tokens, so Drupflare makes a narrower one for
+					{{ report.account?.name }}, keeps only that one sealed, and does not keep this
+					token.
+				</template>
+				<template v-else>
+					Drupflare keeps this token sealed. It cannot make a narrower one, so the token
+					keeps every permission you gave it.
+				</template>
+			</p>
+			<div>
+				<UButton
+					:loading="props.connecting"
+					:disabled="props.connecting"
+					@click="emit('connect', report.account?.id ?? '')"
+				>
+					Connect This Account
+				</UButton>
+			</div>
+		</div>
+		<p
+			v-else-if="noScripts"
+			class="text-sm text-muted"
+		>
+			This token cannot edit Workers scripts, so it cannot be connected. Add the permission
+			and check again.
+		</p>
+
 		<p class="text-sm text-muted">
-			Drupflare ran these checks and saved nothing. The token is not stored.
+			Nothing is saved until you connect the account. Checking a token stores nothing.
 		</p>
 	</section>
 </template>
