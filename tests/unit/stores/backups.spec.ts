@@ -31,6 +31,80 @@ afterEach(() => {
 	cleanup();
 });
 
+describe('restore points loader', () => {
+	const restorePointsPath = '/api/v1/orgs/org_a/sites/site_1/restore-points';
+	const layer = {
+		layer: 'pitr',
+		windowDays: 30,
+		moves: ['The site database'],
+		doesNotMove: ['Uploaded files']
+	};
+	const point = (id: string) => ({
+		id,
+		layer: 'export',
+		createdAt: '2026-11-01T12:00:00.000Z',
+		label: null,
+		verified: false,
+		moves: ['The site database as it stood'],
+		doesNotMove: ['Uploaded files']
+	});
+
+	it('loads the first page with its layers and appends the next one', async () => {
+		cleanup = registerApi({
+			[`GET ${restorePointsPath}`]: ({ query }) =>
+				query.cursor === 'next'
+					? { body: { items: [point('rp_2')], nextCursor: null, layers: [layer] } }
+					: { body: { items: [point('rp_1')], nextCursor: 'next', layers: [layer] } }
+		});
+		const backups = useBackupsStore();
+
+		await backups.loadRestorePoints('org_a', 'site_1');
+		await backups.loadMoreRestorePoints('org_a', 'site_1');
+
+		expect(backups.restorePointsFor('org_a', 'site_1')).toMatchObject({
+			status: 'ready',
+			nextCursor: null,
+			layers: [layer]
+		});
+		expect(backups.restorePointsFor('org_a', 'site_1')?.items.map((item) => item.id)).toEqual([
+			'rp_1',
+			'rp_2'
+		]);
+		expect(calls.at(-1)?.query).toEqual({ cursor: 'next' });
+	});
+
+	it('keeps the error with its request ID, then recovers on reload', async () => {
+		let fail = true;
+		cleanup = registerApi({
+			[`GET ${restorePointsPath}`]: () =>
+				fail
+					? failure('internal', 'failed', 'req_rp')
+					: { body: { items: [point('rp_1')], nextCursor: null, layers: [] } }
+		});
+		const backups = useBackupsStore();
+
+		await backups.loadRestorePoints('org_a', 'site_1');
+		expect(backups.restorePointsFor('org_a', 'site_1')).toMatchObject({ status: 'error' });
+		expect(backups.restorePointsFor('org_a', 'site_1')?.error?.requestId).toBe('req_rp');
+
+		fail = false;
+		await backups.reloadRestorePoints('org_a', 'site_1');
+		expect(backups.restorePointsFor('org_a', 'site_1')).toMatchObject({ status: 'ready' });
+	});
+
+	it('does not request a list that is already loaded', async () => {
+		cleanup = registerApi({
+			[`GET ${restorePointsPath}`]: { body: { items: [], nextCursor: null, layers: [] } }
+		});
+		const backups = useBackupsStore();
+
+		await backups.loadRestorePoints('org_a', 'site_1');
+		await backups.loadRestorePoints('org_a', 'site_1');
+
+		expect(calls.filter((call) => call.path === restorePointsPath)).toHaveLength(1);
+	});
+});
+
 describe('backups store', () => {
 	it('loads the first page and appends the next one with its cursor', async () => {
 		cleanup = registerApi({

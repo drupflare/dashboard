@@ -43,6 +43,28 @@ async function startBackup(): Promise<void> {
 }
 
 const restoring = ref<BackupView | null>(null);
+const pitrOpen = ref(false);
+const verifying = ref<string | null>(null);
+const verifyError = ref<string | null>(null);
+
+// a test restore builds a scratch copy, so the person follows it on the progress page
+async function verify(backup: BackupView): Promise<void> {
+	verifyError.value = null;
+	verifying.value = backup.id;
+	try {
+		const operation = await backups.verify(
+			props.orgId,
+			props.siteId,
+			backup.id,
+			crypto.randomUUID()
+		);
+		await navigateTo(`/new/progress/${operation.id}`);
+	} catch (cause) {
+		verifyError.value = toApiClientError(cause).message;
+	} finally {
+		verifying.value = null;
+	}
+}
 const downloading = ref<string | null>(null);
 const downloadError = ref<{ message: string; signIn: boolean } | null>(null);
 
@@ -91,13 +113,22 @@ const loadMoreError = computed(() =>
 			>
 				Backups
 			</h2>
-			<UButton
-				icon="i-lucide-archive"
-				:loading="starting"
-				:disabled="starting"
-				@click="backUpNow()"
-				>Back Up Now</UButton
-			>
+			<div class="flex flex-wrap gap-2">
+				<UButton
+					color="neutral"
+					variant="outline"
+					icon="i-lucide-history"
+					@click="pitrOpen = true"
+					>Restore to a Moment</UButton
+				>
+				<UButton
+					icon="i-lucide-archive"
+					:loading="starting"
+					:disabled="starting"
+					@click="backUpNow()"
+					>Back Up Now</UButton
+				>
+			</div>
 		</div>
 
 		<p
@@ -113,6 +144,14 @@ const loadMoreError = computed(() =>
 			class="text-sm text-red-700 dark:text-red-400"
 		>
 			{{ startError }}
+		</p>
+
+		<p
+			v-if="verifyError"
+			role="alert"
+			class="text-sm text-red-700 dark:text-red-400"
+		>
+			{{ verifyError }}
 		</p>
 
 		<p
@@ -163,8 +202,10 @@ const loadMoreError = computed(() =>
 			<SiteBackupTable
 				:backups="items"
 				:downloading="downloading"
+				:verifying="verifying"
 				@restore="restoring = $event"
 				@download="download"
+				@verify="verify"
 			/>
 
 			<div
@@ -194,6 +235,13 @@ const loadMoreError = computed(() =>
 				>Load More</UButton
 			>
 		</template>
+
+		<SiteBackupPitr
+			v-if="pitrOpen"
+			:org-id="orgId"
+			:site-id="siteId"
+			@close="pitrOpen = false"
+		/>
 
 		<SiteBackupRestore
 			v-if="restoring"

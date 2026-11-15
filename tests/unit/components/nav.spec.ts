@@ -152,6 +152,16 @@ describe('SideNav', () => {
 		expect(billing?.props('external')).toBe(false);
 	});
 
+	it('links repositories as a client route', async () => {
+		useSessionStore().me = me;
+		const wrapper = await mount(SideNav);
+		const repos = wrapper
+			.findAllComponents(NuxtLink)
+			.find((link) => link.props('to') === '/repos');
+		expect(repos?.text()).toBe('Repositories');
+		expect(repos?.props('external')).toBe(false);
+	});
+
 	it('links integrations as a client route', async () => {
 		useSessionStore().me = me;
 		const wrapper = await mount(SideNav);

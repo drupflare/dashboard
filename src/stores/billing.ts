@@ -27,6 +27,7 @@ export interface PlanEntitlement {
 	views: number | null;
 	// true when the organization has a Stripe customer, so the portal can open
 	billingAccount: boolean;
+	features?: Record<string, boolean>;
 }
 
 export const useBillingStore = defineStore('billing', {

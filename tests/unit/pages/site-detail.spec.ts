@@ -325,6 +325,38 @@ describe('site page', () => {
 	});
 });
 
+describe('site sections', () => {
+	it('links each section of a Drupal site', async () => {
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() =>
+			expect(wrapper.find('a[href="/sites/site_1/restore-points"]').exists()).toBe(true)
+		);
+		for (const path of [
+			'config',
+			'modules',
+			'access',
+			'environments',
+			'repairs',
+			'restore-points'
+		]) {
+			expect(wrapper.find(`a[href="/sites/site_1/${path}"]`).exists()).toBe(true);
+		}
+	});
+
+	it('hides Settings and Modules for a site that is not a Drupal site', async () => {
+		siteReply = () => ({ body: site('smoke') });
+		const wrapper = await mountPage();
+
+		await vi.waitFor(() =>
+			expect(wrapper.find('a[href="/sites/site_1/restore-points"]').exists()).toBe(true)
+		);
+		expect(wrapper.find('a[href="/sites/site_1/config"]').exists()).toBe(false);
+		expect(wrapper.find('a[href="/sites/site_1/modules"]').exists()).toBe(false);
+		expect(wrapper.find('a[href="/sites/site_1/access"]').exists()).toBe(true);
+	});
+});
+
 describe('site page retry', () => {
 	const failedRows = () => ({
 		body: {

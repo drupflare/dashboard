@@ -18,7 +18,7 @@ export function registerApi(routes: Record<string, Route>): () => void {
 	const cleanups = Object.entries(routes).map(([key, route]) => {
 		const [method, path] = key.split(' ') as [string, string];
 		return registerEndpoint(path, {
-			method: method as 'GET' | 'POST' | 'PATCH' | 'DELETE',
+			method: method as 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
 			handler: defineEventHandler(async (event) => {
 				const call: Call = {
 					method,
@@ -26,7 +26,10 @@ export function registerApi(routes: Record<string, Route>): () => void {
 					query: getQuery(event) as Record<string, string>,
 					headers: getRequestHeaders(event),
 					body:
-						method === 'POST' || method === 'PATCH' || method === 'DELETE'
+						method === 'POST' ||
+						method === 'PUT' ||
+						method === 'PATCH' ||
+						method === 'DELETE'
 							? await readBody(event)
 							: undefined
 				};

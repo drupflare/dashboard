@@ -21,6 +21,18 @@ interface Template {
 	comingSoon: string | null;
 }
 
+interface DrupalTemplate {
+	id: string;
+	name: string;
+	summary: string;
+	state: 'not_built' | 'building' | 'ready' | 'failed';
+	advisories: { id: string; package: string }[];
+	patchNotes: { package: string; patch: string }[];
+	fit: { fits: boolean; rows: number; limit: number; percent: number } | null;
+	usable: boolean;
+	reason: string | null;
+}
+
 const org = useOrgStore();
 const router = useRouter();
 const { draft, go, create } = useOnboarding();
@@ -30,13 +42,18 @@ const step = computed<OnboardingStep>(() => draft.value.step);
 
 const paidAllowed = computed(() => org.currentPlan?.features.customCode);
 const templates = ref<Template[] | null>(null);
+const drupalTemplates = ref<DrupalTemplate[]>([]);
+const freePlan = computed(() => org.currentPlan?.planId === 'managed-free');
 const templatesError = ref<ApiClientError | null>(null);
 
 async function loadTemplates(): Promise<void> {
 	templatesError.value = null;
 	try {
-		const page = await useApi().get<{ items: Template[] }>('/templates');
+		const page = await useApi().get<{ items: Template[]; drupal?: DrupalTemplate[] }>(
+			'/templates'
+		);
 		templates.value = page.items;
+		drupalTemplates.value = page.drupal ?? [];
 	} catch (error) {
 		templatesError.value = toApiClientError(error);
 	}
@@ -153,8 +170,11 @@ onMounted(() => {
 					<OnboardingWhatGrid
 						v-else-if="templates !== null"
 						v-model="draft.template"
+						v-model:entry="draft.templateEntryId"
 						:templates="templates"
 						:paid-allowed="paidAllowed"
+						:drupal-templates="drupalTemplates"
+						:free-plan="freePlan"
 					/>
 
 					<p class="text-sm text-muted">

@@ -2,6 +2,7 @@ import { clearNuxtState } from '#app';
 import { mountSuspended } from '@nuxt/test-utils/runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import NewPage from '~/pages/new/index.vue';
+import { TEMPLATE_HELD_REASON } from '~/shared/template-entries';
 import { useOrgStore } from '~/stores/org';
 import { useSessionStore } from '~/stores/session';
 import {
@@ -190,6 +191,153 @@ describe('create a site, template step', () => {
 		expect(wrapper.find<HTMLInputElement>('#template-bring-your-own').element.disabled).toBe(
 			false
 		);
+	});
+});
+
+const drupalEntries = [
+	{
+		id: 'thunder',
+		name: 'Thunder',
+		summary: 'A publishing distribution.',
+		state: 'ready',
+		advisories: [{ id: 'SA-CORE-2026-014', package: 'drupal/core' }],
+		patchNotes: [{ package: 'drupal/pathauto', patch: 'https://drupal.test/1.diff' }],
+		fit: { fits: true, rows: 2656, limit: 100000, percent: 3 },
+		usable: true,
+		reason: null
+	},
+	{
+		id: 'govcms',
+		name: 'GovCMS',
+		summary: 'A government distribution.',
+		state: 'not_built',
+		advisories: [],
+		patchNotes: [],
+		fit: null,
+		usable: false,
+		reason: 'This template has not been built yet.'
+	},
+	{
+		id: 'farmos',
+		name: 'farmOS',
+		summary: 'Farm records.',
+		state: 'ready',
+		advisories: [],
+		patchNotes: [],
+		fit: { fits: false, rows: 150000, limit: 100000, percent: 150 },
+		usable: true,
+		reason: 'This template writes about 150,000 rows on its first load. Choose a paid plan to use it.'
+	}
+];
+
+describe('create a site, Drupal start point', () => {
+	beforeEach(() => {
+		templatesReply = () => ({ body: { ...templates, drupal: drupalEntries } });
+	});
+
+	async function openEntries() {
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(wrapper.find('#drupal-entry-blank').exists()).toBe(true));
+		return wrapper;
+	}
+
+	it('offers Blank Drupal first and chooses it by default', async () => {
+		const wrapper = await openEntries();
+
+		expect(wrapper.find<HTMLInputElement>('#drupal-entry-blank').element.checked).toBe(true);
+		expect(wrapper.find('#drupal-entry-thunder').exists()).toBe(true);
+	});
+
+	it('shows no second pick when the server lists no Drupal templates', async () => {
+		templatesReply = () => ({ body: templates });
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(wrapper.find('#template-drupal').exists()).toBe(true));
+
+		expect(wrapper.find('#drupal-entry-blank').exists()).toBe(false);
+	});
+
+	it('disables a template that is not built and shows its reason', async () => {
+		const wrapper = await openEntries();
+
+		expect(wrapper.find<HTMLInputElement>('#drupal-entry-govcms').element.disabled).toBe(true);
+		expect(wrapper.text()).toContain('This template has not been built yet.');
+	});
+
+	it('holds every template with the update reason while code delivery is off', async () => {
+		const held = drupalEntries.map((entry) => ({
+			...entry,
+			usable: false,
+			reason: TEMPLATE_HELD_REASON
+		}));
+		templatesReply = () => ({ body: { ...templates, drupal: held } });
+		const wrapper = await openEntries();
+
+		for (const id of ['thunder', 'govcms', 'farmos']) {
+			expect(wrapper.find<HTMLInputElement>(`#drupal-entry-${id}`).element.disabled).toBe(
+				true
+			);
+		}
+		expect(wrapper.text()).toContain(TEMPLATE_HELD_REASON);
+	});
+
+	it('shows the advisory ids and the failed patch on a ready template', async () => {
+		const wrapper = await openEntries();
+
+		expect(wrapper.find<HTMLInputElement>('#drupal-entry-thunder').element.disabled).toBe(
+			false
+		);
+		expect(wrapper.text()).toContain('SA-CORE-2026-014');
+		expect(wrapper.text()).toContain('A patch for drupal/pathauto did not apply');
+		expect(wrapper.text()).toContain('3% of what the Free plan allows each day');
+	});
+
+	it('disables a template that does not fit the Free plan, and enables it on a paid plan', async () => {
+		planReply = () => ({ body: { planId: 'managed-free', features: { customCode: false } } });
+		let wrapper = await openEntries();
+		await vi.waitFor(() =>
+			expect(wrapper.find<HTMLInputElement>('#drupal-entry-farmos').element.disabled).toBe(
+				true
+			)
+		);
+		expect(wrapper.text()).toContain('Choose a paid plan to use it.');
+		wrapper.unmount();
+		mounted.pop();
+
+		planReply = () => ({ body: paidPlan });
+		useOrgStore().$reset();
+		await useOrgStore().ensure();
+		wrapper = await openEntries();
+		await vi.waitFor(() =>
+			expect(wrapper.find<HTMLInputElement>('#drupal-entry-farmos').element.disabled).toBe(
+				false
+			)
+		);
+	});
+
+	it('posts the chosen template with the create', async () => {
+		const wrapper = await openEntries();
+		await wrapper.find('#drupal-entry-thunder').setValue(true);
+		await clickButton(wrapper, 'Skip');
+		await vi.waitFor(() => expect(wrapper.find('#site-name').exists()).toBe(true));
+		await wrapper.find('#site-name').setValue('quiet-oak-harbor');
+
+		await wrapper.find('form').trigger('submit');
+
+		await vi.waitFor(() => expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1));
+		const [create] = calls.filter((c) => c.method === 'POST');
+		expect(create?.body).toEqual({
+			kind: 'drupal',
+			name: 'quiet-oak-harbor',
+			templateEntryId: 'thunder'
+		});
+	});
+
+	it('hides the second pick when another template is chosen', async () => {
+		const wrapper = await openEntries();
+
+		await wrapper.find('#template-bring-your-own').setValue(true);
+
+		await vi.waitFor(() => expect(wrapper.find('#drupal-entry-blank').exists()).toBe(false));
 	});
 });
 

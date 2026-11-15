@@ -3,6 +3,7 @@ import { defineEventHandler, getRequestURL, setResponseHeader, setResponseStatus
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick } from 'vue';
 import Panel from '~/components/site/backup/Panel.vue';
+import Pitr from '~/components/site/backup/Pitr.vue';
 import Restore from '~/components/site/backup/Restore.vue';
 import Table from '~/components/site/backup/Table.vue';
 import { useBackupsStore, type BackupView } from '~/stores/backups';
@@ -322,7 +323,10 @@ describe('backup panel', () => {
 
 		const wrapper = await mountPanel();
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Verified'));
-		await button(wrapper, 'Restore')!.trigger('click');
+		await wrapper
+			.findAll('button')
+			.find((candidate) => candidate.text() === 'Restore')!
+			.trigger('click');
 
 		await vi.waitFor(() => expect(dialogSelect()).not.toBeNull());
 		expect(document.body.textContent).toContain('Restore Backup');
@@ -492,5 +496,149 @@ describe('restore dialog', () => {
 
 		await vi.waitFor(() => expect(document.body.textContent).toContain(message));
 		expect(navigate).not.toHaveBeenCalled();
+	});
+});
+
+describe('verify', () => {
+	it('offers Verify on a backup that is not verified and leaves a verified one without it', async () => {
+		const wrapper = await mountSuspended(Table, {
+			props: {
+				downloading: null,
+				backups: [backup('ok'), backup('pending', { verified: false })]
+			}
+		});
+		mounted.push(wrapper);
+
+		expect(wrapper.findAll('button').filter((b) => b.text() === 'Verify')).toHaveLength(1);
+	});
+
+	it('disables Verify for a backup too large to restore', async () => {
+		const wrapper = await mountSuspended(Table, {
+			props: {
+				downloading: null,
+				backups: [backup('large', { verified: false, restorable: false })]
+			}
+		});
+		mounted.push(wrapper);
+
+		expect(button(wrapper, 'Verify')!.attributes('disabled')).toBeDefined();
+	});
+
+	it('posts the verify with a fresh key and follows the operation', async () => {
+		register({
+			[backupsPath]: page([backup('bk_1', { verified: false })]),
+			[`POST ${apiPath('/backups/bk_1/verify')}`]: operation('op_9')
+		});
+
+		const wrapper = await mountPanel();
+		await vi.waitFor(() => expect(button(wrapper, 'Verify')).toBeDefined());
+		await button(wrapper, 'Verify')!.trigger('click');
+
+		await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/new/progress/op_9'));
+		const post = calls.find((call) => call.method === 'POST');
+		expect(post?.path).toBe(apiPath('/backups/bk_1/verify'));
+		expect(post?.headers['idempotency-key']).toMatch(UUID);
+	});
+
+	it('shows the refusal in place', async () => {
+		register({
+			[backupsPath]: page([backup('bk_1', { verified: false })]),
+			[`POST ${apiPath('/backups/bk_1/verify')}`]: failure(
+				422,
+				'unprocessable',
+				'This backup is too large to test restore'
+			)
+		});
+
+		const wrapper = await mountPanel();
+		await vi.waitFor(() => expect(button(wrapper, 'Verify')).toBeDefined());
+		await button(wrapper, 'Verify')!.trigger('click');
+
+		await vi.waitFor(() => expect(wrapper.text()).toContain('too large to test restore'));
+		expect(navigate).not.toHaveBeenCalled();
+	});
+});
+
+describe('point-in-time dialog', () => {
+	const pitrPath = `POST ${apiPath('/restore-points/pitr')}`;
+	const moment = () => document.querySelector<HTMLInputElement>('#pitr-moment');
+
+	async function open() {
+		const wrapper = await mountSuspended(Pitr, { props: { orgId: ORG, siteId: SITE } });
+		mounted.push(wrapper);
+		await vi.waitFor(() => expect(moment()).not.toBeNull());
+		return wrapper;
+	}
+
+	async function fill(value: string) {
+		moment()!.value = value;
+		moment()!.dispatchEvent(new Event('input'));
+		dialogBox()!.checked = true;
+		dialogBox()!.dispatchEvent(new Event('change'));
+		await nextTick();
+	}
+
+	const localDaysAgo = (days: number) => {
+		const date = new Date(Date.now() - days * 86_400_000);
+		const pad = (n: number) => String(n).padStart(2, '0');
+		return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+	};
+
+	it('states the window, what moves and what does not, and keeps Schedule off until a moment and the box are set', async () => {
+		await open();
+		const text = document.body.textContent ?? '';
+		expect(text).toContain('last 30 days');
+		expect(text).toContain('This moves');
+		expect(text).toContain('This does not move');
+		expect(text).not.toContain('secrets included');
+		expect(dialogSubmit()?.disabled).toBe(true);
+		await fill(localDaysAgo(2));
+		expect(dialogSubmit()?.disabled).toBe(false);
+	});
+
+	it('keeps Schedule off for a moment outside the window', async () => {
+		await open();
+		await fill(localDaysAgo(45));
+		expect(dialogSubmit()?.disabled).toBe(true);
+	});
+
+	it('posts the moment with a fresh key and shows the undo bookmark', async () => {
+		register({
+			[pitrPath]: { status: 202, body: { id: 'op_5', rollbackPoint: '0000007c-undo' } }
+		});
+		await open();
+		await fill(localDaysAgo(2));
+
+		moment()!
+			.closest('form')!
+			.dispatchEvent(new Event('submit', { cancelable: true }));
+
+		await vi.waitFor(() => expect(document.body.textContent).toContain('0000007c-undo'));
+		const post = calls.find((call) => call.method === 'POST');
+		expect(post?.path).toBe(apiPath('/restore-points/pitr'));
+		expect(typeof (post?.body as { at: number }).at).toBe('number');
+		expect(post?.headers['idempotency-key']).toMatch(UUID);
+	});
+
+	it('points to the Account page when the step-up has lapsed', async () => {
+		register({
+			[pitrPath]: {
+				status: 403,
+				body: {
+					code: 'forbidden',
+					message: 'Step-up required',
+					details: { requires: 'step-up' },
+					requestId: 'req_test'
+				}
+			}
+		});
+		await open();
+		await fill(localDaysAgo(2));
+
+		moment()!
+			.closest('form')!
+			.dispatchEvent(new Event('submit', { cancelable: true }));
+
+		await vi.waitFor(() => expect(document.body.textContent).toContain('Account page'));
 	});
 });

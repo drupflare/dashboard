@@ -80,7 +80,24 @@ const listFor = computed(() => (tab.value in lists ? lists[tab.value as ListTab]
 			<UiPageHeader
 				title="Admin"
 				text="Read-only platform metadata. Site content is never shown."
-			/>
+			>
+				<UButton
+					color="neutral"
+					variant="outline"
+					icon="i-lucide-rocket"
+					to="/admin/releases"
+				>
+					Releases
+				</UButton>
+				<UButton
+					color="neutral"
+					variant="outline"
+					icon="i-lucide-list-ordered"
+					to="/admin/ladder"
+				>
+					Repair Ladder
+				</UButton>
+			</UiPageHeader>
 			<UTabs
 				v-model="tab"
 				:items="tabs"

@@ -1,6 +1,7 @@
 import type { Operation } from '@contracts/operations';
 import { defineStore } from 'pinia';
 import { toApiClientError, useApi, type ApiClientError } from '~/composables/useApi';
+import type { RestoreLayerOffer, RestorePoint } from '~/shared/restore-points';
 import { useSessionStore } from '~/stores/session';
 
 export interface BackupView {
@@ -24,6 +25,14 @@ export interface BackupList {
 	error: ApiClientError | null;
 }
 
+export interface RestorePointList {
+	items: RestorePoint[];
+	layers: RestoreLayerOffer[];
+	nextCursor: string | null;
+	status: 'loading' | 'ready' | 'error';
+	error: ApiClientError | null;
+}
+
 export interface BackupFile {
 	blob: Blob;
 	filename: string;
@@ -32,6 +41,12 @@ export interface BackupFile {
 interface BackupPage {
 	items: BackupView[];
 	nextCursor: string | null;
+}
+
+interface RestorePointPage {
+	items: RestorePoint[];
+	nextCursor: string | null;
+	layers: RestoreLayerOffer[];
 }
 
 type PostFetcher = (
@@ -46,6 +61,9 @@ type RawFetcher = (
 
 const backupsPath = (orgId: string, siteId: string) =>
 	`/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/backups`;
+
+const restorePointsPath = (orgId: string, siteId: string) =>
+	`/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/restore-points`;
 
 const keyOf = (orgId: string, siteId: string) => `${orgId}/${siteId}`;
 
@@ -80,13 +98,19 @@ function filenameFrom(disposition: string | null, fallback: string): string {
 export const useBackupsStore = defineStore('backups', {
 	state: () => ({
 		// keyed by `orgId/siteId`; undefined: not loaded; an object: loaded
-		lists: new Map<string, BackupList>()
+		lists: new Map<string, BackupList>(),
+		// keyed by `orgId/siteId`; undefined: not loaded; an object: loaded
+		restorePoints: new Map<string, RestorePointList>()
 	}),
 	getters: {
 		listFor:
 			(state) =>
 			(orgId: string, siteId: string): BackupList | undefined =>
-				state.lists.get(keyOf(orgId, siteId))
+				state.lists.get(keyOf(orgId, siteId)),
+		restorePointsFor:
+			(state) =>
+			(orgId: string, siteId: string): RestorePointList | undefined =>
+				state.restorePoints.get(keyOf(orgId, siteId))
 	},
 	actions: {
 		async load(orgId: string, siteId: string): Promise<void> {
@@ -130,6 +154,53 @@ export const useBackupsStore = defineStore('backups', {
 				list.error = toApiClientError(error);
 			}
 		},
+		async loadRestorePoints(orgId: string, siteId: string): Promise<void> {
+			const existing = this.restorePoints.get(keyOf(orgId, siteId));
+			if (existing?.status === 'ready' || existing?.status === 'loading') return;
+			this.restorePoints.set(keyOf(orgId, siteId), {
+				items: [],
+				layers: [],
+				nextCursor: null,
+				status: 'loading',
+				error: null
+			});
+			await this.fetchRestorePoints(orgId, siteId, null);
+		},
+		async reloadRestorePoints(orgId: string, siteId: string): Promise<void> {
+			this.restorePoints.delete(keyOf(orgId, siteId));
+			await this.loadRestorePoints(orgId, siteId);
+		},
+		async loadMoreRestorePoints(orgId: string, siteId: string): Promise<void> {
+			const list = this.restorePoints.get(keyOf(orgId, siteId));
+			if (!list?.nextCursor || list.status === 'loading') return;
+			list.status = 'loading';
+			await this.fetchRestorePoints(orgId, siteId, list.nextCursor);
+		},
+		async fetchRestorePoints(
+			orgId: string,
+			siteId: string,
+			cursor: string | null
+		): Promise<void> {
+			const key = keyOf(orgId, siteId);
+			try {
+				const page = await useApi().get<RestorePointPage>(
+					restorePointsPath(orgId, siteId),
+					cursor ? { cursor } : undefined
+				);
+				const list = this.restorePoints.get(key);
+				if (!list) return;
+				list.items.push(...page.items);
+				list.layers = page.layers;
+				list.nextCursor = page.nextCursor;
+				list.status = 'ready';
+				list.error = null;
+			} catch (error) {
+				const list = this.restorePoints.get(key);
+				if (!list) return;
+				list.status = 'error';
+				list.error = toApiClientError(error);
+			}
+		},
 		startBackup(orgId: string, siteId: string, idempotencyKey: string): Promise<Operation> {
 			return post(backupsPath(orgId, siteId), {}, idempotencyKey);
 		},
@@ -145,6 +216,27 @@ export const useBackupsStore = defineStore('backups', {
 				{ targetSiteId },
 				idempotencyKey
 			);
+		},
+		verify(
+			orgId: string,
+			siteId: string,
+			backupId: string,
+			idempotencyKey: string
+		): Promise<Operation> {
+			return post(
+				`${backupsPath(orgId, siteId)}/${encodeURIComponent(backupId)}/verify`,
+				{},
+				idempotencyKey
+			);
+		},
+		schedulePitr(
+			orgId: string,
+			siteId: string,
+			at: number,
+			idempotencyKey: string
+		): Promise<Operation> {
+			const site = `/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}`;
+			return post(`${site}/restore-points/pitr`, { at }, idempotencyKey);
 		},
 		async download(orgId: string, siteId: string, backupId: string): Promise<BackupFile> {
 			const fetcher = $fetch.raw as unknown as RawFetcher;
@@ -166,6 +258,7 @@ export const useBackupsStore = defineStore('backups', {
 		},
 		reset(): void {
 			this.lists.clear();
+			this.restorePoints.clear();
 		}
 	}
 });

@@ -87,6 +87,74 @@ describe('onboarding draft', () => {
 	});
 });
 
+describe('onboarding draft, template entry', () => {
+	it('starts on Blank Drupal', () => {
+		expect(useOnboarding().draft.value.templateEntryId).toBeNull();
+	});
+
+	it('keeps a saved entry', () => {
+		sessionStorage.setItem(
+			'drupflare.onboarding',
+			JSON.stringify({
+				step: 1,
+				template: 'drupal',
+				templateEntryId: 'thunder',
+				name: 'quiet-oak-harbor',
+				seed: 'seed-1',
+				idempotencyKey: 'key-12345'
+			})
+		);
+		clearNuxtState('onboarding-draft');
+
+		expect(useOnboarding().draft.value.templateEntryId).toBe('thunder');
+	});
+
+	it('reads a draft saved before the entry existed as Blank Drupal', () => {
+		sessionStorage.setItem(
+			'drupflare.onboarding',
+			JSON.stringify({
+				step: 2,
+				template: 'drupal',
+				name: 'quiet-oak-harbor',
+				seed: 'seed-1',
+				idempotencyKey: 'key-12345'
+			})
+		);
+		clearNuxtState('onboarding-draft');
+
+		expect(useOnboarding().draft.value.templateEntryId).toBeNull();
+	});
+
+	it('sends templateEntryId only for a Drupal site with an entry chosen', async () => {
+		cleanup = registerApi({ [sitesPath]: { status: 202, body: operation } });
+		const onboarding = useOnboarding();
+		onboarding.draft.value.templateEntryId = 'farmos';
+		const { name } = onboarding.draft.value;
+
+		await onboarding.create(orgId, 'drupal');
+
+		const [create] = calls.filter((call) => `${call.method} ${call.path}` === sitesPath);
+		expect(create?.body).toEqual({
+			kind: 'drupal',
+			name,
+			templateEntryId: 'farmos'
+		});
+	});
+
+	it('leaves templateEntryId out when another template is chosen', async () => {
+		cleanup = registerApi({ [sitesPath]: { status: 202, body: operation } });
+		const onboarding = useOnboarding();
+		onboarding.draft.value.template = 'nuxtpress';
+		onboarding.draft.value.templateEntryId = 'farmos';
+		const { name } = onboarding.draft.value;
+
+		await onboarding.create(orgId, 'drupal');
+
+		const [create] = calls.filter((call) => `${call.method} ${call.path}` === sitesPath);
+		expect(create?.body).not.toHaveProperty('templateEntryId');
+	});
+});
+
 describe('name and template rules', () => {
 	it('rejects names outside the label rules', () => {
 		expect(nameProblem('ab')).not.toBeNull();

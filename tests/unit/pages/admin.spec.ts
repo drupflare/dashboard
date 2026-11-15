@@ -1,6 +1,6 @@
 import { mountSuspended } from '@nuxt/test-utils/runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import AdminPage from '~/pages/admin.vue';
+import AdminPage from '~/pages/admin/index.vue';
 import { useOrgStore } from '~/stores/org';
 import { useSessionStore } from '~/stores/session';
 import { calls, clearBrowserState, registerApi } from '../stores/store-support';
@@ -115,6 +115,13 @@ describe('admin page states', () => {
 });
 
 describe('admin page', () => {
+	it('links the releases and the repair ladder from the header', async () => {
+		const wrapper = await mountPage('admin');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Sites by State'));
+		expect(wrapper.find('a[href="/admin/releases"]').exists()).toBe(true);
+		expect(wrapper.find('a[href="/admin/ladder"]').exists()).toBe(true);
+	});
+
 	it('shows the totals to an admin', async () => {
 		const wrapper = await mountPage('admin');
 		await vi.waitFor(() => expect(wrapper.text()).toContain('Sites by State'));

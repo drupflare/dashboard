@@ -51,6 +51,8 @@ export function adminUrlFor(site: Pick<SiteSummary, 'kind' | 'primaryHostname'>)
 export interface OnboardingDraft {
 	step: OnboardingStep;
 	template: string;
+	// null is Blank Drupal; an id starts the site from that built template
+	templateEntryId: string | null;
 	name: string;
 	seed: string;
 	idempotencyKey: string;
@@ -61,6 +63,7 @@ function newDraft(): OnboardingDraft {
 	return {
 		step: 1,
 		template: DEFAULT_TEMPLATE,
+		templateEntryId: null,
 		name: suggest(seed),
 		seed,
 		idempotencyKey: crypto.randomUUID()
@@ -86,6 +89,8 @@ function loadDraft(): OnboardingDraft {
 				return {
 					step: saved.step,
 					template: saved.template,
+					templateEntryId:
+						typeof saved.templateEntryId === 'string' ? saved.templateEntryId : null,
 					name: saved.name,
 					seed: saved.seed,
 					idempotencyKey: saved.idempotencyKey
@@ -103,7 +108,7 @@ type Fetcher = (
 	options: {
 		method: 'POST';
 		headers: Record<string, string>;
-		body: { kind: SiteKind; name: string };
+		body: { kind: SiteKind; name: string; templateEntryId?: string };
 	}
 ) => Promise<Operation>;
 
@@ -140,14 +145,20 @@ export function useOnboarding() {
 	}
 
 	async function submit(orgId: string, kind: SiteKind): Promise<Operation> {
-		const { idempotencyKey, name } = draft.value;
+		const { idempotencyKey, name, template, templateEntryId } = draft.value;
 		// useApi has no header argument; the create call needs Idempotency-Key
 		const fetcher = $fetch as unknown as Fetcher;
 		try {
 			const operation = await fetcher(`/api/v1/orgs/${encodeURIComponent(orgId)}/sites`, {
 				method: 'POST',
 				headers: { 'Idempotency-Key': idempotencyKey },
-				body: { kind, name }
+				body: {
+					kind,
+					name,
+					...(template === 'drupal' && templateEntryId !== null
+						? { templateEntryId }
+						: {})
+				}
 			});
 			reset();
 			return operation;

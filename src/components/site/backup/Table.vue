@@ -1,8 +1,16 @@
 <script setup lang="ts">
 import type { BackupView } from '~/stores/backups';
 
-const props = defineProps<{ backups: BackupView[]; downloading: string | null }>();
-const emit = defineEmits<{ restore: [backup: BackupView]; download: [backup: BackupView] }>();
+const props = defineProps<{
+	backups: BackupView[];
+	downloading: string | null;
+	verifying?: string | null;
+}>();
+const emit = defineEmits<{
+	restore: [backup: BackupView];
+	download: [backup: BackupView];
+	verify: [backup: BackupView];
+}>();
 
 const rows = computed(() =>
 	[...props.backups].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
@@ -102,6 +110,19 @@ function size(bytes: number): string {
 								@click="emit('restore', backup)"
 							>
 								Restore
+							</UButton>
+							<UButton
+								v-if="!backup.verified"
+								color="neutral"
+								variant="outline"
+								size="sm"
+								icon="i-lucide-shield-check"
+								:loading="verifying === backup.id"
+								:disabled="!backup.restorable || (verifying ?? null) !== null"
+								:aria-label="`Test restore backup from ${when(backup.createdAt)}`"
+								@click="emit('verify', backup)"
+							>
+								Verify
 							</UButton>
 							<UButton
 								color="neutral"

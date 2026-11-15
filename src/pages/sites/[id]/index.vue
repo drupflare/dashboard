@@ -165,6 +165,11 @@ async function tryAgain(operation: Operation): Promise<void> {
 
 			<template v-else>
 				<SiteHeader :site="site" />
+				<SiteNav
+					v-if="readable"
+					:site-id="site.id"
+					:kind="site.kind"
+				/>
 				<SiteBox
 					:site="site"
 					@renamed="renamed"

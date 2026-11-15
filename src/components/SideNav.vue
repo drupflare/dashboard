@@ -7,6 +7,7 @@ const ACTIVE = 'border-brand-600 bg-elevated !text-highlighted dark:border-brand
 // the access login needs a full page load, so /admin is never a client route
 const items = computed(() => [
 	{ to: '/sites', label: 'Sites', icon: 'i-lucide-globe', external: false },
+	{ to: '/repos', label: 'Repositories', icon: 'i-lucide-git-branch', external: false },
 	{ to: '/planes', label: 'Planes', icon: 'i-lucide-server', external: false },
 	{
 		to: '/org/integrations',
