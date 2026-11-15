@@ -11,6 +11,7 @@ import {
 	repairsSince,
 	type ActiveSiteRef
 } from '../db/repos/repairs';
+import { siteInRollingRollout } from '../db/repos/rollouts';
 import { getReadySite } from '../db/repos/sites';
 import {
 	DEFAULT_REPAIR_BUDGET,
@@ -137,6 +138,7 @@ export function productionLadderDeps(db: CollegeDBClient, services: SiteServices
 			const health = await readHealthForLadder(site);
 			if (health === null) return null;
 			const { transactionDepth, shedding } = factsOfFindings(health.findings);
+			const ringPromotion = await siteInRollingRollout(db, ref.id);
 			return {
 				history: historyOf(health.findings, health.repair),
 				facts: {
@@ -147,8 +149,7 @@ export function productionLadderDeps(db: CollegeDBClient, services: SiteServices
 					shedding,
 					// the workflow takes the lease itself and refuses when it cannot
 					leaseHeld: true,
-					// no ring state exists in the control plane yet
-					ringPromotion: false
+					ringPromotion
 				}
 			};
 		},

@@ -1,5 +1,6 @@
 import type { EventHandler } from 'h3';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { toBase64Url } from '../../../contracts/src/common';
 import operationRead from '../../../src/server/api/v1/orgs/[orgId]/operations/[id].get';
 import sitesList from '../../../src/server/api/v1/orgs/[orgId]/sites/index.get';
 import sitesCreate from '../../../src/server/api/v1/orgs/[orgId]/sites/index.post';
@@ -8,10 +9,16 @@ import siteOperations from '../../../src/server/api/v1/sites/[id]/operations.get
 import { ensureCollegeDB } from '../../../src/server/db/collegedb';
 import { withAtomicBatch } from '../../../src/server/db/repos/atomic-shards';
 import { createUser } from '../../../src/server/db/repos/identity';
+import { revokePlaneConnection } from '../../../src/server/db/repos/plane-connections';
 import { getReadySite, markSiteReady } from '../../../src/server/db/repos/sites';
 import { FREE_PLAN_ID, derive } from '../../../src/server/domain/entitlements';
 import type { EngineStartRequest } from '../../../src/server/integrations/engine';
 import { resetPendingSecretDeps } from '../../../src/server/services/owner-tokens';
+import {
+	connectCloudflare,
+	revokeConnection,
+	type PlaneConnectionDeps
+} from '../../../src/server/services/plane-connections';
 import {
 	createSite,
 	resetSiteServices,
@@ -19,6 +26,7 @@ import {
 	siteServices
 } from '../../../src/server/services/sites';
 import { resetApiDeps } from '../../../src/server/utils/define-api';
+import { loadKeyRing } from '../../../src/shared/custody/envelope';
 import { PENDING_SECRET_SQL } from '../../../src/shared/custody/records';
 import { ApiError } from '../../../src/shared/errors';
 import { DEPT, ORG, OTHER_ORG, facts, fresh } from '../../unit/domain/fixtures';
@@ -29,6 +37,12 @@ import {
 	type Reply,
 	type Request as RequestInit
 } from '../../unit/server/fixtures/harness';
+import {
+	ACCOUNT,
+	GIVEN,
+	NARROW,
+	cloudflare
+} from '../../unit/server/services/plane-connections-support';
 import { installPendingSecrets, openBindings, type Bindings, type OpenBindings } from '../support';
 
 let harness: OpenBindings;
@@ -190,6 +204,199 @@ describe('createSite', () => {
 		const second = await createSite(siteServices(), args);
 		expect(second.operation.id).toBe(first.operation.id);
 		expect(started).toHaveLength(1);
+	});
+});
+
+describe('createSite on a customer account', () => {
+	async function connect(orgId: string, over: Parameters<typeof cloudflare>[0] = {}) {
+		const cf = cloudflare({ groupsReadable: over.groupsReadable ?? true, ...over });
+		const deps: PlaneConnectionDeps = {
+			getDb,
+			ring: async () => loadKeyRing({ KEK_V1: toBase64Url(new Uint8Array(32).fill(1)) }),
+			fetch: cf.fetch,
+			now: () => NOW,
+			audit: async () => undefined
+		};
+		const { connection } = await connectCloudflare(deps, { orgId, token: GIVEN });
+		return { connection, deps, cf };
+	}
+
+	const own = (orgId: string, connectionId: string | undefined, name: string) =>
+		createSite(siteServices(), {
+			orgId,
+			userId: 'user-bindings',
+			kind: 'drupal',
+			name,
+			hostnameLabel: undefined,
+			plane: 'self-managed',
+			connectionId,
+			idempotencyKey: key()
+		});
+
+	async function everyTable(): Promise<string> {
+		const { results } = await env.DB.prepare(
+			"SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
+		).all<{ name: string }>();
+		const dumps: unknown[] = [];
+		for (const { name } of results) {
+			const rows = await env.DB.prepare(`SELECT * FROM "${name}"`).all();
+			dumps.push([name, rows.results]);
+		}
+		return JSON.stringify(dumps);
+	}
+
+	it('starts a create in the connected account at its workers.dev address, with no token in the start', async () => {
+		const started = acceptingPort();
+		const org = `org-self-${++counter}`;
+		const { connection } = await connect(org);
+		const { stored, siteId } = await (async () => {
+			const result = await own(org, connection.id, 'quiet-self-site');
+			return { stored: result, siteId: result.operation.targetIds[0] as string };
+		})();
+		expect(started).toHaveLength(1);
+		const params = started[0]!.params as {
+			hostname: string;
+			site: { plane: string; accountId: string; config: string };
+		};
+		expect(params.site).toMatchObject({
+			plane: 'self-managed',
+			accountId: ACCOUNT,
+			config: 'managed'
+		});
+		expect(params.hostname).toMatch(/^s-[a-z0-9]+\.acme\.workers\.dev$/);
+		const row = await env.DB.prepare(
+			'SELECT plane, account_id, primary_hostname FROM sites WHERE id = ?'
+		)
+			.bind(siteId)
+			.first();
+		expect(row).toMatchObject({ plane: 'self-managed' });
+		for (const secret of [GIVEN, NARROW]) {
+			expect(JSON.stringify(started)).not.toContain(secret);
+			expect(JSON.stringify(stored)).not.toContain(secret);
+			expect(await everyTable()).not.toContain(secret);
+		}
+	});
+
+	it('takes the hostname on a customer zone and records its zone id', async () => {
+		const started = acceptingPort();
+		const org = `org-self-${++counter}`;
+		const { connection } = await connect(org);
+		await createSite(siteServices(), {
+			orgId: org,
+			userId: 'user-bindings',
+			kind: 'drupal',
+			name: 'zone-self-site',
+			hostnameLabel: undefined,
+			plane: 'self-managed',
+			connectionId: connection.id,
+			customHost: { hostname: 'www.example.org', zoneId: 'e'.repeat(32) },
+			idempotencyKey: key()
+		});
+		expect(started[0]!.params).toMatchObject({
+			hostname: 'www.example.org',
+			zoneId: 'e'.repeat(32)
+		});
+	});
+
+	it('runs the canonical config and says why when object storage is off', async () => {
+		const started = acceptingPort();
+		const org = `org-self-${++counter}`;
+		const { connection } = await connect(org, { denied: new Set(['r2/buckets']) });
+		await own(org, connection.id, 'canonical-self-site');
+		const params = started[0]!.params as { site: { config: string }; configNote?: string };
+		expect(params.site.config).toBe('canonical');
+		expect(params.configNote).toContain('no object storage turned on');
+	});
+
+	it('refuses without a connection, with another organisation connection and with a revoked one', async () => {
+		const started = acceptingPort();
+		const org = `org-self-${++counter}`;
+		const other = `org-self-${++counter}`;
+		const { connection, deps } = await connect(org);
+		expect(
+			await own(org, undefined, 'no-connection-site').catch((e: unknown) => e)
+		).toMatchObject({
+			code: 'validation'
+		});
+		expect(
+			await own(other, connection.id, 'foreign-connection').catch((e: unknown) => e)
+		).toMatchObject({ code: 'not_found' });
+		await revokeConnection(deps, org, connection.id, []);
+		expect(
+			await own(org, connection.id, 'revoked-connection').catch((e: unknown) => e)
+		).toMatchObject({ code: 'unprocessable' });
+		expect(started).toHaveLength(0);
+	});
+
+	it('refuses a connectionId on a managed site', async () => {
+		acceptingPort();
+		const error = await createSite(siteServices(), {
+			orgId: ORG,
+			userId: 'user-bindings',
+			kind: 'drupal',
+			name: 'managed-with-connection',
+			hostnameLabel: undefined,
+			connectionId: 'pcn_x',
+			idempotencyKey: key()
+		}).catch((e: unknown) => e);
+		expect(error).toMatchObject({ code: 'validation' });
+	});
+});
+
+describe('the plane_connections table', () => {
+	const insert = (id: string, org: string, account: string, state: string) =>
+		env.DB.prepare(
+			`INSERT INTO plane_connections (id, organization_id, provider, account_id, account_name,
+				token_kind, minted, credential_envelope, capabilities, state, created_at, last_validated_at)
+				VALUES (?, ?, 'cloudflare', ?, 'A', 'user', 0, 'sealed', '[]', ?, 1, 1)`
+		)
+			.bind(id, org, account, state)
+			.run();
+
+	it('allows one open connection per organisation and account, and a new one after a revoke', async () => {
+		const org = `org-table-${++counter}`;
+		await insert('pcn_t1', org, 'acct', 'active');
+		await expect(insert('pcn_t2', org, 'acct', 'active')).rejects.toThrow();
+		await insert('pcn_t3', `${org}-b`, 'acct', 'active');
+		await env.DB.prepare(
+			"UPDATE plane_connections SET state = 'revoked' WHERE id = 'pcn_t1'"
+		).run();
+		await insert('pcn_t4', org, 'acct', 'active');
+	});
+
+	it('refuses a provider, a state and a token kind the table does not know', async () => {
+		const org = `org-table-${++counter}`;
+		await expect(insert('pcn_t5', org, 'acct', 'paused')).rejects.toThrow();
+		await expect(
+			env.DB.prepare(
+				`INSERT INTO plane_connections (id, organization_id, provider, account_id, account_name,
+					token_kind, minted, capabilities, state, created_at, last_validated_at)
+					VALUES ('pcn_t6', ?, 'aws', 'acct', 'A', 'user', 0, '[]', 'active', 1, 1)`
+			)
+				.bind(org)
+				.run()
+		).rejects.toThrow();
+		await expect(
+			env.DB.prepare(
+				`INSERT INTO plane_connections (id, organization_id, provider, account_id, account_name,
+					token_kind, minted, capabilities, state, created_at, last_validated_at)
+					VALUES ('pcn_t7', ?, 'cloudflare', 'acct', 'A', 'robot', 0, '[]', 'active', 1, 1)`
+			)
+				.bind(org)
+				.run()
+		).rejects.toThrow();
+	});
+
+	it('wipes the envelope in the same write that revokes', async () => {
+		const org = `org-table-${++counter}`;
+		await insert('pcn_t8', org, 'acct8', 'active');
+		await revokePlaneConnection(await getDb(), org, 'pcn_t8', 5);
+		const row = await env.DB.prepare(
+			'SELECT state, credential_envelope, revoked_at FROM plane_connections WHERE id = ?'
+		)
+			.bind('pcn_t8')
+			.first();
+		expect(row).toEqual({ state: 'revoked', credential_envelope: null, revoked_at: 5 });
 	});
 });
 

@@ -19,10 +19,29 @@ import {
 } from '../../shared/modules';
 import censusJson from '../../shared/modules.json';
 import { restoreCeiling } from '../../shared/restore-limits';
+import {
+	allocationAllowed,
+	DEFAULT_ALLOCATION,
+	statusOf,
+	STRATA_CAPTURES_STATEMENTS,
+	STRATA_FREE_REASON,
+	STRATA_FREE_WARNING,
+	STRATA_MODULE,
+	type StrataAllocation,
+	type StrataStatus
+} from '../../shared/strata';
+import {
+	getSiteStrata,
+	markStrataApplied,
+	saveSiteStrata,
+	selfManagedStorageCheck
+} from '../db/repos/site-strata';
 import { getReadySite, type SiteRecord } from '../db/repos/sites';
 import type { Principal } from '../domain/authorize';
+import { managedIsFree, type Entitlement } from '../domain/entitlements';
 import { guardRemoval } from '../domain/module-removal';
 import { checkUrl, UrlGuardError, type FetchLike } from '../integrations/url-guard';
+import type { AuditInput } from './audit';
 import { newOperation, startAndReturn, type BackupServices } from './backups';
 import { principalActor, withOwnerToken, type CustodyDeps } from './owner-tokens';
 
@@ -36,6 +55,9 @@ export interface ModuleServices {
 	// the worker routes that exist today; a removal or a theme change is refused until they do
 	routes: { uninstall: boolean; themeDefault: boolean };
 	restoreCeilingBytes: number;
+	planOf: (orgId: string) => Promise<Entitlement>;
+	audit: (orgId: string, input: AuditInput) => Promise<unknown>;
+	now: () => number;
 }
 
 export const MODULE_CHECK_TIMEOUT_MS = 5_000;
@@ -54,7 +76,10 @@ function productionServices(): ModuleServices {
 		census: () => census,
 		startOperation: notBuilt('Starting an operation'),
 		routes: { uninstall: false, themeDefault: false },
-		restoreCeilingBytes: restoreCeiling(false)
+		restoreCeilingBytes: restoreCeiling(false),
+		planOf: notBuilt('The plan lookup'),
+		audit: notBuilt('The audit log'),
+		now: () => Date.now()
 	};
 }
 
@@ -320,16 +345,61 @@ export async function installSiteModule(
 	});
 }
 
-export async function enableSiteModule(services: ModuleServices, input: Change & { name: string }) {
+// Strata spends the site's write allowance, so free asks once and the answer stays on record
+async function gateStrata(
+	services: ModuleServices,
+	db: CollegeDBClient,
+	input: Change & { actor?: string; confirm?: boolean }
+): Promise<StrataAllocation> {
+	const plan = await services.planOf(input.orgId);
+	if (plan.features.strata !== true) {
+		throw refused('Strata is not included on this plan.', 'feature_not_included');
+	}
+	const free = managedIsFree(plan);
+	const kept = await getSiteStrata(db, input.orgId, input.siteId);
+	if (free && kept?.confirmedFreeAt == null && input.confirm !== true) {
+		throw refused(STRATA_FREE_WARNING, 'needs_confirmation', { warning: STRATA_FREE_REASON });
+	}
+	const now = services.now();
+	const allocation = kept?.allocation ?? DEFAULT_ALLOCATION;
+	await saveSiteStrata(db, {
+		organizationId: input.orgId,
+		siteId: input.siteId,
+		allocation,
+		...(free && kept?.confirmedFreeAt == null ? { confirmedFreeAt: now } : {}),
+		now
+	});
+	if (free && kept?.confirmedFreeAt == null && input.actor !== undefined) {
+		await services.audit(input.orgId, {
+			actor: input.actor,
+			action: 'site.strata.confirm_free',
+			target: input.siteId
+		});
+	}
+	return allocation;
+}
+
+export async function enableSiteModule(
+	services: ModuleServices,
+	input: Change & { name: string; actor?: string; confirm?: boolean }
+) {
 	const { db, site } = await changeableSite(services, input.orgId, input.siteId);
 	const census = rowOf(services, input.name);
 	if (census === null) throw refused('That module is not on the list.', 'module_refused');
 	if (census.state === 'blocked') {
 		throw refused(census.reason ?? 'This module cannot run here.', 'module_refused');
 	}
+	const strata =
+		input.name === STRATA_MODULE
+			? {
+					allocation: await gateStrata(services, db, input),
+					store: site.plane === 'managed'
+				}
+			: undefined;
 	const params = {
 		...baseParams(services, input, site, input.name),
-		census: { state: census.state, shipping: census.shipping, reason: census.reason }
+		census: { state: census.state, shipping: census.shipping, reason: census.reason },
+		...(strata === undefined ? {} : { strata })
 	};
 	return begin(services, input, {
 		type: 'module.enable',
@@ -390,6 +460,119 @@ export async function setSiteThemeDefault(
 		site,
 		db
 	});
+}
+
+// #endregion
+
+// #region strata allocation
+
+async function strataSite(services: ModuleServices, orgId: string, siteId: string) {
+	const db = await services.getDb();
+	const site = await getReadySite(db, orgId, siteId);
+	if (site === null) throw notFound();
+	return { db, site };
+}
+
+export async function getStrataStatus(
+	services: ModuleServices,
+	input: { orgId: string; siteId: string }
+): Promise<StrataStatus> {
+	const { db, site } = await strataSite(services, input.orgId, input.siteId);
+	const kept = await getSiteStrata(db, input.orgId, input.siteId);
+	const storage =
+		site.plane === 'managed'
+			? null
+			: await selfManagedStorageCheck(db, input.orgId, site.accountId);
+	return statusOf(kept?.allocation ?? DEFAULT_ALLOCATION, kept, storage);
+}
+
+// the write boots Drupal, which takes longer than a module check
+export const STRATA_APPLY_TIMEOUT_MS = 30_000;
+
+const strataAnswerSchema = z.looseObject({ captureStatements: z.boolean() });
+
+// true only when the site answers with the value that was asked for; a site without the route, one
+// with Strata off or one that does not answer stays unapplied, and the next choice tries again
+async function applyToSite(
+	services: ModuleServices,
+	site: SiteRecord,
+	actor: string,
+	allocation: StrataAllocation
+): Promise<boolean> {
+	if (site.kind !== 'drupal' || site.state !== 'active' || site.primaryHostname === null) {
+		return false;
+	}
+	const wanted = STRATA_CAPTURES_STATEMENTS[allocation];
+	try {
+		const url = new URL('/strata-config', checkUrl(`https://${site.primaryHostname}`));
+		return await withOwnerToken(
+			await services.custody(),
+			{ siteId: site.id, actor, operation: 'strata.apply' },
+			async (token) => {
+				const res = await services.fetch(url.href, {
+					method: 'POST',
+					headers: {
+						authorization: `Bearer ${token}`,
+						accept: 'application/json',
+						'content-type': 'application/json'
+					},
+					body: JSON.stringify({ captureStatements: wanted }),
+					redirect: 'manual',
+					signal: AbortSignal.timeout(STRATA_APPLY_TIMEOUT_MS)
+				});
+				if (res.status !== 200) {
+					void res.body?.cancel().catch(() => undefined);
+					return false;
+				}
+				const parsed = strataAnswerSchema.safeParse(await res.json().catch(() => null));
+				return parsed.success && parsed.data.captureStatements === wanted;
+			}
+		);
+	} catch {
+		return false;
+	}
+}
+
+export async function setStrataAllocation(
+	services: ModuleServices,
+	input: { orgId: string; siteId: string; allocation: StrataAllocation; actor: string }
+): Promise<StrataStatus> {
+	const { db, site } = await strataSite(services, input.orgId, input.siteId);
+	const plan = await services.planOf(input.orgId);
+	if (plan.features.strata !== true) {
+		throw refused('Strata is not included on this plan.', 'feature_not_included');
+	}
+	const free = managedIsFree(plan);
+	if (!allocationAllowed(input.allocation, free)) {
+		throw refused('The free plan keeps Strata on the Light setting.', 'allocation_not_allowed');
+	}
+	const kept = await getSiteStrata(db, input.orgId, input.siteId);
+	if (kept?.allocation !== input.allocation) {
+		await saveSiteStrata(db, {
+			organizationId: input.orgId,
+			siteId: input.siteId,
+			allocation: input.allocation,
+			now: services.now()
+		});
+		await services.audit(input.orgId, {
+			actor: input.actor,
+			action: 'site.strata.allocation',
+			target: input.siteId,
+			detail: { from: kept?.allocation ?? null, to: input.allocation }
+		});
+	}
+	// choosing the same setting again retries an apply that did not land
+	if (kept?.allocation !== input.allocation || kept.appliedAt == null) {
+		if (await applyToSite(services, site, input.actor, input.allocation)) {
+			await markStrataApplied(db, {
+				organizationId: input.orgId,
+				siteId: input.siteId,
+				allocation: input.allocation,
+				now: services.now()
+			});
+		}
+	}
+	return getStrataStatus(services, input);
 }
 
 // #endregion

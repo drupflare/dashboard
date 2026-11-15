@@ -23,7 +23,11 @@ export { propertySchema, settingsResponseSchema, type SettingsResponse };
 
 type Settings = DiscoveryDocument['settings'];
 
-export type DiscoveryRelease = { version: string; releaseId: string; schemaVersion: number };
+export type DiscoveryRelease = {
+	version: string | null;
+	releaseId: string;
+	schemaVersion: number | null;
+};
 
 export type DiscoverySite = {
 	origin: string;

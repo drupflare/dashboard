@@ -127,14 +127,14 @@ describe('a degraded answer', () => {
 		expect(node).toMatchObject({
 			level: 'warn',
 			detail: 'memory rose across four samples',
-			handle: 'interpreter-recycle'
+			handle: '/recycle'
 		});
 		expect(node?.guidance?.text).toBe(
 			'The site repairs this on its own once it is safe to. The repair rebuilds cached or temporary pieces and keeps stored data.'
 		);
 		expect(node?.guidance?.diagnostics).toContainEqual({
 			label: 'Repair handle',
-			value: 'interpreter-recycle'
+			value: '/recycle'
 		});
 		expect(node?.history).toEqual([
 			{ state: 'warn', atMs: 1000 },

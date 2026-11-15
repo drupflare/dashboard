@@ -37,9 +37,9 @@ const refusal = async (promise: Promise<unknown>): Promise<ApiError> => {
 
 describe('what an admin sees per catalogue row', () => {
 	it('marks an unrouted automatic row as not runnable, with the reason', () => {
-		const row = CATALOGUE_ROWS.find((r) => r.repairId === 'bridge.asyncify_called');
-		if (!row) throw new Error('row missing');
-		const view = ladderRowView(row);
+		const base = CATALOGUE_ROWS.find((r) => r.repairId === 'render.empty');
+		if (!base) throw new Error('row missing');
+		const view = ladderRowView({ ...base, repairId: 'test.unrouted' });
 		expect(view.canRunToday).toBe(false);
 		expect(view.reason).toBe(
 			'No route on the site worker for this repair yet. It refuses to run.'
@@ -76,9 +76,18 @@ describe('changing a switch', () => {
 		expect(error.message).toBe(`Type ${GLOBAL_CONFIRMATION} to change the global switch`);
 	});
 
-	it('accepts the global switch with the typed confirmation and writes no audit row', async () => {
+	it('writes the global switch to the platform audit table, not an organisation chain', async () => {
 		let audited = false;
-		const services = { ...servicesWithEmptyStore(), audit: async () => (audited = true) };
+		const statements: string[] = [];
+		const base = servicesWithEmptyStore();
+		const db = {
+			...(await base.getDb()),
+			run: async (_key: string, sql: string) => {
+				statements.push(sql);
+				return {};
+			}
+		} as unknown as CollegeDBClient;
+		const services = { ...base, getDb: async () => db, audit: async () => (audited = true) };
 		const view = await setSwitch(services, {
 			scope: 'global',
 			scopeId: '',
@@ -88,6 +97,8 @@ describe('changing a switch', () => {
 		});
 		expect(view).toMatchObject({ scope: 'global', auto: false });
 		expect(audited).toBe(false);
+		expect(statements.some((sql) => sql.includes('INSERT INTO platform_audit'))).toBe(true);
+		expect(statements.some((sql) => sql.includes('INSERT INTO ladder_switches'))).toBe(true);
 	});
 
 	it('refuses a global switch that carries a scope id', async () => {

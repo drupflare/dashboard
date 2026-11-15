@@ -1,5 +1,6 @@
 import type { R2Bucket } from '@cloudflare/workers-types';
 import type { CollegeDBClient } from '@earth-app/collegedb';
+import { r2BackupBlobs } from '../../../engine/src/adapters/backups';
 import { CUTOVER_MISSING_CONTRACTS } from '../../../engine/src/adapters/cutover-destination';
 import { CryptoError, loadKeyRing, type KeyRing } from '../../shared/custody/envelope';
 import { ApiError } from '../../shared/errors';
@@ -18,6 +19,7 @@ import { engineConfigOf, engineEventSender, engineStarter } from '../integration
 import { guardedProviderFetch } from '../integrations/git-providers/guard';
 import { OAUTH_PROVIDERS, oauthClients, type OAuthConfig } from '../integrations/oauth';
 import { probeHostKey } from '../integrations/ssh-key';
+import { STRIPE_SECRET_NAMES, createStripeClient } from '../integrations/stripe';
 import { dohResolve } from '../integrations/url-guard';
 import type { WebAuthnConfig } from '../integrations/webauthn';
 import { accessConfigOf, accessTokenOf, verifyAccessToken } from '../utils/access';
@@ -39,13 +41,25 @@ import {
 	setBackupServices,
 	type BackupServices
 } from './backups';
-import { collegeBillingStore, entitlementOf } from './billing';
+import {
+	billingFlags,
+	collegeBillingStore,
+	entitlementOf,
+	setBillingServices,
+	type BillingServices,
+	type BillingStore
+} from './billing';
 import {
 	cloudflareReadsOf,
 	resetCapacityServices,
 	setCapacityServices,
 	type CapacityServices
 } from './capacity';
+import {
+	resetCustomBundleServices,
+	setCustomBundleServices,
+	type CustomBundleServices
+} from './custom-bundles';
 import { collegeAttemptStore, consoleMailSender, type MailSender } from './email-codes';
 import { resetEstateServices, setEstateServices } from './estate';
 import { collegeFactsStore, factsLoader, type FactsDeps } from './facts';
@@ -59,6 +73,7 @@ import {
 	setCutoverServices,
 	type CutoverServices
 } from './migration-cutover';
+import { resetModifyServices, setModifyServices, type ModifyServices } from './modify';
 import { resetModuleServices, setModuleServices, type ModuleServices } from './modules';
 import { setOrganizationServices, type OrganizationServices } from './organizations';
 import {
@@ -71,6 +86,7 @@ import {
 	type OwnerTokenStore,
 	type PendingSecretDeps
 } from './owner-tokens';
+import { setPlaneConnectionDeps, type PlaneConnectionDeps } from './plane-connections';
 import { setReleaseServices, type ReleaseServices } from './releases';
 import {
 	collegeRepoStore,
@@ -370,6 +386,8 @@ export interface BuiltServices {
 	access: AccessServices;
 	ladder: LadderServices;
 	modules: Partial<ModuleServices>;
+	modify: Partial<ModifyServices>;
+	customBundles: Partial<CustomBundleServices>;
 	cutover: Partial<CutoverServices>;
 	fleet: FleetServices;
 	imports: Partial<ImportServices>;
@@ -377,10 +395,37 @@ export interface BuiltServices {
 	siteSettings: Partial<SiteSettingsServices>;
 	capacity: Partial<CapacityServices>;
 	repoConnections: RepoConnectionDeps;
+	planeConnections: PlaneConnectionDeps;
 	releases: ReleaseServices;
 	domain: DomainServices;
 	pendingSecrets: () => Promise<PendingSecretDeps>;
 	heads: HeadStore;
+	// null without a Stripe secret, so the billing routes keep answering 501
+	billing: BillingServices | null;
+}
+
+// a missing Stripe secret leaves billing uninstalled; a missing webhook secret leaves only the webhook off
+export function billingServicesOf(
+	env: BootEnv,
+	deps: {
+		store: BillingStore;
+		audit: BillingServices['audit'];
+		baseUrl: string;
+		now?: () => number;
+	}
+): BillingServices | null {
+	const secretKey = text(env, STRIPE_SECRET_NAMES.secretKey);
+	if (secretKey === undefined) return null;
+	return {
+		stripe: createStripeClient(secretKey),
+		webhookSecret: text(env, STRIPE_SECRET_NAMES.webhookSecret) ?? null,
+		store: deps.store,
+		audit: deps.audit,
+		flags: billingFlags(env),
+		now: deps.now ?? Date.now,
+		log: (message, detail) => console.warn(message, detail),
+		baseUrl: deps.baseUrl
+	};
 }
 
 // every store comes from a binding: sessions from KV, the rest from D1, and the audit chain heads
@@ -472,7 +517,7 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 		}),
 		access: {
 			getDb,
-			planOf: async (orgId) => (await planOf(orgId)).planId,
+			planOf,
 			startOperation,
 			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
 			now: Date.now
@@ -488,8 +533,19 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 				const pending = await pendingSecrets();
 				return { store: ownerTokens, audit: pending.audit, ring: pending.ring };
 			},
-			startOperation
+			startOperation,
+			planOf,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads))
 		},
+		modify: {
+			getDb,
+			startOperation,
+			planOf,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			ownerTokens,
+			blobs: r2BackupBlobs(env.BLOB)
+		},
+		customBundles: { getDb, planOf, blobs: r2BackupBlobs(env.BLOB), now: Date.now },
 		cutover: {
 			sendEvent: engineEventSender({ ...engineConfigOf(env), now: Date.now }),
 			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
@@ -568,6 +624,20 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 				);
 			}
 		},
+		planeConnections: {
+			getDb,
+			ring: async () => (await pendingSecrets()).ring,
+			fetch: (input, init) => fetch(input, init),
+			now: Date.now,
+			audit: async (orgId, action, targetId) => {
+				await append(
+					await getDb(),
+					orgId,
+					{ actor: 'dashboard', action, target: targetId },
+					heads
+				);
+			}
+		},
 		releases: {
 			getDb,
 			once: collegeOnceStore(getDb),
@@ -581,7 +651,14 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			target: text(env, 'CUSTOM_HOSTNAME_TARGET')
 		}),
 		pendingSecrets,
-		heads
+		heads,
+		billing: billingServicesOf(env, {
+			store: billing,
+			audit: async (orgId, input) => {
+				await append(await getDb(), orgId, input, heads);
+			},
+			baseUrl
+		})
 	};
 }
 
@@ -601,6 +678,8 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	setAccessServices(built.access);
 	setLadderServices(built.ladder);
 	setModuleServices(built.modules);
+	setModifyServices(built.modify);
+	setCustomBundleServices(built.customBundles);
 	setCutoverServices(built.cutover);
 	setFleetServices(built.fleet);
 	setImportServices(built.imports);
@@ -608,10 +687,12 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	setSiteSettingsServices(built.siteSettings);
 	setCapacityServices(built.capacity);
 	setRepoConnectionDeps(built.repoConnections);
+	setPlaneConnectionDeps(built.planeConnections);
 	setReleaseServices(built.releases);
 	setDomainServices(built.domain);
 	setEstateServices({ keys: built.domain.keys, dns: built.domain.resolver });
 	setPendingSecretDeps(built.pendingSecrets);
+	setBillingServices(built.billing);
 	booted = built;
 	return built;
 }
@@ -633,6 +714,8 @@ export function resetBoot(): void {
 	resetAccessServices();
 	setLadderServices(null);
 	resetModuleServices();
+	resetModifyServices();
+	resetCustomBundleServices();
 	resetCutoverServices();
 	resetFleetServices();
 	resetImportServices();
@@ -640,10 +723,12 @@ export function resetBoot(): void {
 	resetSiteSettingsServices();
 	resetCapacityServices();
 	setRepoConnectionDeps(null);
+	setPlaneConnectionDeps(null);
 	setReleaseServices(null);
 	resetDomainServices();
 	resetEstateServices();
 	resetPendingSecretDeps();
+	setBillingServices(null);
 }
 
 // #endregion

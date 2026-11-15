@@ -17,7 +17,13 @@ import { createApiKeyWithLookup } from '../../../src/server/db/repos/api-key-loo
 import { generateApiKey } from '../../../src/server/services/api-keys';
 import { verify } from '../../../src/server/services/audit';
 import { authChain } from '../../../src/server/services/auth';
-import { buildServices, type BootEnv } from '../../../src/server/services/boot';
+import { billingServices } from '../../../src/server/services/billing';
+import {
+	bootOnce,
+	buildServices,
+	resetBoot,
+	type BootEnv
+} from '../../../src/server/services/boot';
 import { setIdentityServices } from '../../../src/server/services/identities';
 import { setKeyServices } from '../../../src/server/services/key-admin';
 import { SESSION_COOKIE_NAME } from '../../../src/server/services/sessions';
@@ -381,5 +387,30 @@ describe('API keys through the production stores', () => {
 		]);
 		expect(trail[1]!.target).toBe(created.id);
 		expect(await verify(db, orgId, buildServices(env as BootEnv).heads)).toBeNull();
+	});
+});
+
+describe('billing install', () => {
+	afterEach(() => resetBoot());
+
+	const withStripe = (extra: Record<string, string> = {}) =>
+		Object.assign({}, env, { STRIPE_SECRET_KEY: 'sk_test_boot', ...extra }) as BootEnv;
+
+	it('leaves billing uninstalled without a Stripe secret, so the routes answer 501', () => {
+		expect(buildServices(env as BootEnv).billing).toBeNull();
+		bootOnce(env as BootEnv);
+		expect(() => billingServices()).toThrowError(
+			expect.objectContaining({ code: 'not_built' })
+		);
+	});
+
+	it('installs billing when the Stripe secret is set and keeps the webhook off without its own secret', () => {
+		bootOnce(withStripe());
+		const installed = billingServices();
+		expect(installed.stripe).not.toBeNull();
+		expect(installed.webhookSecret).toBeNull();
+		resetBoot();
+		bootOnce(withStripe({ STRIPE_WEBHOOK_SECRET: 'whsec_boot' }));
+		expect(billingServices().webhookSecret).toBe('whsec_boot');
 	});
 });

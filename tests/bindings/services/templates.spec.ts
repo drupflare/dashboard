@@ -347,7 +347,7 @@ describe('templateForCreate', () => {
 			details: { reason: 'template_plan' }
 		});
 		await expect(
-			templateForCreate(siteServices(), 'thunder', 'managed-site')
+			templateForCreate(siteServices(), 'thunder', 'managed-pro')
 		).resolves.toMatchObject({
 			entryId: 'thunder'
 		});
@@ -356,7 +356,7 @@ describe('templateForCreate', () => {
 	it('refuses a database above the restore ceiling on every plan, with the plain reason', async () => {
 		port();
 		await ready('govcms', { databaseBytes: 16 * 1024 * 1024 + 1 });
-		for (const plan of [FREE_PLAN_ID, 'managed-site']) {
+		for (const plan of [FREE_PLAN_ID, 'managed-pro']) {
 			const error = await templateForCreate(siteServices(), 'govcms', plan).catch(
 				(e: unknown) => e
 			);

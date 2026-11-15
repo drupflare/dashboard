@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import revisionList from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/revisions.get';
 import rollbackCheck from '../../../src/server/api/v1/orgs/[orgId]/sites/[id]/rollback-check.get';
 import { applySchema, createCollegeDB, ensureCollegeDB } from '../../../src/server/db/collegedb';
 import { withAtomicBatch } from '../../../src/server/db/repos/atomic-shards';
@@ -135,6 +136,48 @@ describe('GET rollback-check', () => {
 	it('refuses a viewer', async () => {
 		asRole('viewer');
 		expect((await check(await liveSite(7, 1), '?release=rel-old')).status).toBe(403);
+	});
+});
+
+describe('GET revisions', () => {
+	const REVISIONS = '/api/v1/orgs/:orgId/sites/:id/revisions';
+	const revisions = (siteId: string, orgId = ORG) =>
+		send(revisionList, REVISIONS, {
+			path: `/api/v1/orgs/${orgId}/sites/${siteId}/revisions`,
+			headers: asUser
+		});
+	const record = (siteId: string, release: string, at: number) =>
+		env.DB.prepare(
+			`INSERT INTO site_revisions (id, organization_id, site_id, kind, release_id, created_at)
+			 VALUES (?, ?, ?, 'release', ?, ?)`
+		)
+			.bind(`rev_${siteId}_${at}`, ORG, siteId, release, at)
+			.run();
+
+	it('lists releases newest first with versions and marks only the newest match as current', async () => {
+		asRole('viewer');
+		const siteId = await liveSite(20, 1, 'rel-old');
+		await record(siteId, 'rel-old', 1);
+		await record(siteId, 'rel-new', 2);
+		await record(siteId, 'rel-old', 3);
+		const reply = await revisions(siteId);
+		expect(reply.status).toBe(200);
+		const items = (
+			reply.json as { items: { release: string; version: string; current: boolean }[] }
+		).items;
+		expect(items.map((item) => [item.release, item.version, item.current])).toEqual([
+			['rel-old', '1.0.0', true],
+			['rel-new', '1.1.0', false],
+			['rel-old', '1.0.0', false]
+		]);
+	});
+
+	it('answers an empty list for a site with no history and 404 for another organisation', async () => {
+		asRole('viewer');
+		const siteId = await liveSite(21, 1);
+		expect((await revisions(siteId)).json).toEqual({ items: [] });
+		asRole('viewer', 'org-2');
+		expect((await revisions(siteId, 'org-1')).status).toBe(404);
 	});
 });
 

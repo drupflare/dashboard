@@ -6,6 +6,7 @@ import { derive, siteLimits } from '../../../../src/server/domain/entitlements';
 import {
 	DEFAULT_PUBLIC_ACCESS_RULE,
 	MANAGED_HOST_SUFFIX,
+	NO_STORAGE_NOTE,
 	SITE_INPUT_ERRORS,
 	SiteInputError,
 	buildSiteCreateInput,
@@ -144,11 +145,77 @@ describe('buildSiteCreateInput for each plane', () => {
 		expect((await buildSiteCreateInput(parts('drupal'))).site.plane).toBe('managed');
 	});
 
-	it.each(['self-managed', 'self-hosted'] as const)('refuses the %s plane', async (plane) => {
+	it('refuses the self-hosted plane', async () => {
 		const base = parts('drupal');
-		expect(await refusal({ ...base, site: { ...base.site, plane } })).toMatchObject({
-			code: 'unsupported_plane'
+		expect(
+			await refusal({ ...base, site: { ...base.site, plane: 'self-hosted' } })
+		).toMatchObject({ code: 'unsupported_plane' });
+	});
+});
+
+const connection = (over: Partial<NonNullable<SiteInputParts['connection']>> = {}) => ({
+	state: 'active' as const,
+	accountId: 'c'.repeat(32),
+	capabilities: [{ id: 'storage', state: 'granted' }],
+	workersSubdomain: 'acme',
+	...over
+});
+const own = (over: Partial<SiteInputParts> = {}): SiteInputParts => {
+	const base = parts('drupal');
+	return {
+		...base,
+		account: null,
+		site: { ...base.site, plane: 'self-managed' as const },
+		connection: connection(),
+		...over
+	};
+};
+const selfRefusals = () => [
+	refusal(own({ connection: undefined })),
+	refusal(own({ connection: connection({ state: 'invalid' }) })),
+	refusal(own({ connection: connection({ workersSubdomain: null }) })),
+	refusal(own({ customHost: { hostname: 'not a host', zoneId: 'e'.repeat(32) } }))
+];
+
+describe('buildSiteCreateInput on the self-managed plane', () => {
+	it('builds a create in the connected account at its workers.dev address', async () => {
+		const input = await buildSiteCreateInput(own());
+		expect(input.site).toMatchObject({
+			plane: 'self-managed',
+			accountId: 'c'.repeat(32),
+			config: 'managed'
 		});
+		expect(input.hostname).toBe(`${input.subdomain}.acme.workers.dev`);
+		expect(input.zoneId).toBeUndefined();
+		expect(input.configNote).toBeUndefined();
+	});
+
+	it('runs the canonical config and says why when storage is not on', async () => {
+		const input = await buildSiteCreateInput(
+			own({
+				connection: connection({ capabilities: [{ id: 'storage', state: 'not-enabled' }] })
+			})
+		);
+		expect(input.site.config).toBe('canonical');
+		expect(input.configNote).toBe(NO_STORAGE_NOTE);
+	});
+
+	it('takes a hostname on the customer zone when one is given', async () => {
+		const zoneId = 'e'.repeat(32);
+		const input = await buildSiteCreateInput(
+			own({ customHost: { hostname: 'www.example.org', zoneId } })
+		);
+		expect(input.hostname).toBe('www.example.org');
+		expect(input.zoneId).toBe(zoneId);
+	});
+
+	it.each([
+		['no_connection', { connection: undefined }],
+		['connection_invalid', { connection: connection({ state: 'invalid' }) }],
+		['no_subdomain', { connection: connection({ workersSubdomain: null }) }],
+		['bad_hostname', { customHost: { hostname: 'not a host', zoneId: 'e'.repeat(32) } }]
+	] as const)('refuses with %s', async (code, patch) => {
+		expect(await refusal(own(patch as Partial<SiteInputParts>))).toMatchObject({ code });
 	});
 });
 
@@ -193,12 +260,12 @@ describe('buildSiteCreateInput name, plan and authority', () => {
 		const free = await buildSiteCreateInput(parts('drupal'));
 		const paid = await buildSiteCreateInput(
 			parts('drupal', {
-				organization: { id: 'org_abcdefgh12345678', planId: 'managed-site' }
+				organization: { id: 'org_abcdefgh12345678', planId: 'managed-pro' }
 			})
 		);
 		expect(free.authority.risk).toBe('new-free');
 		expect(paid.authority.risk).toBe('established');
-		expect(paid.site.plan).toBe('managed-site');
+		expect(paid.site.plan).toBe('managed-pro');
 	});
 
 	it('takes the limits from the plan data and the rule hash from the default public rule', async () => {
@@ -262,7 +329,8 @@ describe('buildSiteCreateInput refusals', () => {
 				parts('drupal', { organization: { id: 'org_abcdefgh12345678', planId: 'nope' } })
 			),
 			refusal({ ...base, site: { ...base.site, label: 'admin' } }),
-			refusal(parts('smoke'))
+			refusal(parts('smoke')),
+			...selfRefusals()
 		]);
 		for (const outcome of outcomes) seen.add((outcome as SiteInputError).code);
 		expect([...seen].sort()).toEqual([...SITE_INPUT_ERRORS].sort());
@@ -281,8 +349,15 @@ describe('siteInputConfigOf', () => {
 			hostSuffix: 'sites.example.net',
 			labelSuffix: '',
 			accountId: ACCOUNT,
-			releases: { drupal: 'v1.0.4', smoke: 'v2' }
+			releases: { drupal: 'v1.0.4', smoke: 'v2' },
+			restoreDrills: true
 		});
+	});
+
+	it('leaves restore drills on unless RESTORE_DRILLS is off', () => {
+		expect(siteInputConfigOf({}).restoreDrills).toBe(true);
+		expect(siteInputConfigOf({ RESTORE_DRILLS: 'on' }).restoreDrills).toBe(true);
+		expect(siteInputConfigOf({ RESTORE_DRILLS: 'off' }).restoreDrills).toBe(false);
 	});
 
 	it('leaves an unset or empty name unset and falls back to the default suffix', () => {
@@ -292,7 +367,8 @@ describe('siteInputConfigOf', () => {
 			hostSuffix: MANAGED_HOST_SUFFIX,
 			labelSuffix: '',
 			accountId: null,
-			releases: {}
+			releases: {},
+			restoreDrills: true
 		});
 	});
 

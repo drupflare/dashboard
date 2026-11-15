@@ -17,6 +17,7 @@ import { recipeFor } from '../../shared/recipes';
 import { TEMPLATE_HELD_REASON, TEMPLATE_HELD_TITLE } from '../../shared/template-entries';
 import { nowUtc } from '../../shared/utils/time';
 import { createOperationRecord } from '../db/repos/backups';
+import { getCustomRelease } from '../db/repos/custom-releases';
 import { getUserById } from '../db/repos/identity';
 import {
 	createSiteOperation,
@@ -30,6 +31,7 @@ import {
 	type StoredOperation
 } from '../db/repos/operations';
 import { listUserOrganizations } from '../db/repos/organization';
+import { getPlaneConnection } from '../db/repos/plane-connections';
 import {
 	countOrganizationSites,
 	getReadySite,
@@ -38,11 +40,12 @@ import {
 	toSite,
 	type SiteRecord
 } from '../db/repos/sites';
-import { FREE_PLAN_ID, check, type CheckDenial, type Entitlement } from '../domain/entitlements';
+import { check, managedIsFree, type CheckDenial, type Entitlement } from '../domain/entitlements';
 import type { EngineStartRequest } from '../integrations/engine';
 import { EngineStartError } from '../integrations/engine';
 import { entitlementOf, type BillingStore } from './billing';
 import { removeBoxSite } from './box-sites';
+import { bundleForRequest, planUnlockingCustomCode, updateRefusal } from './custom-bundles';
 import {
 	MANAGED_HOST_SUFFIX,
 	SiteInputError,
@@ -63,6 +66,8 @@ export interface SiteServices {
 			orgId: string;
 			userId: string;
 			kind: SiteKind;
+			// absent means managed
+			plane?: 'managed' | 'self-managed';
 		}): Promise<EntitlementDecision>;
 	};
 	planOf: (orgId: string) => Promise<Entitlement>;
@@ -113,25 +118,26 @@ export function collegeSiteEntitlements(
 ): SiteServices['entitlements'] {
 	const planOf = async (orgId: string) => entitlementOf(await billing.getAccount(orgId));
 	return {
-		async check({ orgId, userId, kind }) {
+		async check({ orgId, userId, kind, plane = 'managed' }) {
 			const db = await getDb();
 			const entitlement = await planOf(orgId);
 			const platformAdmin = (await getUserById(db, userId))?.platformRole === 'admin';
-			const sitesInOrg = await countOrganizationSites(db, orgId);
+			const sitesInOrg = await countOrganizationSites(db, orgId, plane);
 			let freeSitesOwnedByUser: number | undefined;
-			if (entitlement.planId === FREE_PLAN_ID) {
+			if (plane === 'managed' && managedIsFree(entitlement)) {
 				// free sites count per person, across every organisation they own on the free plan
 				const owned = await listUserOrganizations(db, userId, { limit: 500 });
 				let total = 0;
 				for (const org of owned.items) {
 					if (org.role !== 'owner') continue;
-					if ((await planOf(org.id)).planId !== FREE_PLAN_ID) continue;
-					total += await countOrganizationSites(db, org.id);
+					if (!managedIsFree(await planOf(org.id))) continue;
+					total += await countOrganizationSites(db, org.id, 'managed');
 				}
 				freeSitesOwnedByUser = Math.max(total, sitesInOrg);
 			}
 			const decision = check('site.create', entitlement, {
 				sitesInOrg,
+				plane,
 				freeSitesOwnedByUser,
 				platformAdmin,
 				customWorker: kind === 'custom'
@@ -169,13 +175,22 @@ export interface CreateSiteInput {
 	idempotencyKey: string;
 	// a built template to start the new site from
 	templateEntryId?: string;
+	// the uploaded bundle a custom site starts from
+	bundleId?: string;
+	// absent means managed; a self-managed site is created through a Cloudflare connection
+	plane?: 'managed' | 'self-managed';
+	connectionId?: string;
+	// a hostname on a zone the owner holds, with the zone id they gave; absent means workers.dev
+	customHost?: { hostname: string; zoneId: string };
 }
 
+// only custom code is a feature of its own, so that is what a feature refusal names
 export function entitlementRefusal(reason: CheckDenial): ApiError {
 	return new ApiError('forbidden', 'Your plan does not include this kind of site', {
 		requires: 'entitlement',
 		feature: 'site.create',
-		reason
+		reason,
+		...(reason === 'feature_not_included' ? { unlockedBy: planUnlockingCustomCode() } : {})
 	});
 }
 
@@ -220,14 +235,33 @@ export async function createSite(
 	const decision = await services.entitlements.check({
 		orgId: input.orgId,
 		userId: input.userId,
-		kind: input.kind
+		kind: input.kind,
+		plane: input.plane ?? 'managed'
 	});
 	if (!decision.allow) throw entitlementRefusal(decision.reason);
+	if ((input.kind === 'custom') !== (input.bundleId !== undefined)) {
+		throw new ApiError(
+			'validation',
+			input.kind === 'custom'
+				? 'A custom site needs the bundleId of an uploaded bundle'
+				: 'Only a custom site starts from a bundle',
+			{ field: 'bundleId' }
+		);
+	}
+	// another organisation's bundle answers as unknown, before anything is reserved
+	const bundle =
+		input.bundleId === undefined
+			? undefined
+			: await bundleForRequest(services, { orgId: input.orgId, bundleId: input.bundleId });
 	// refused before anything is reserved: a template that is not ready or does not fit the plan
 	const template =
 		input.templateEntryId === undefined
 			? undefined
-			: await templateForCreate(services, input.templateEntryId, decision.entitlement.planId);
+			: await templateForCreate(
+					services,
+					input.templateEntryId,
+					decision.entitlement.managedPlanId
+				);
 
 	const siteId = newId('site');
 	const operationId = newId('op');
@@ -235,19 +269,39 @@ export async function createSite(
 	const category = categoryOfKind(input.kind);
 	// the address comes from the stored user, never from the request body
 	const owner = await getUserById(await services.getDb(), input.userId);
+	const plane = input.plane ?? 'managed';
+	if ((plane === 'self-managed') !== (input.connectionId !== undefined)) {
+		throw new ApiError(
+			'validation',
+			plane === 'self-managed'
+				? 'A self-managed site needs the connectionId of a Cloudflare connection'
+				: 'Only a self-managed site takes a connectionId',
+			{ field: 'connectionId' }
+		);
+	}
+	const connection =
+		input.connectionId === undefined
+			? undefined
+			: await getPlaneConnection(await services.getDb(), input.orgId, input.connectionId);
+	if (input.connectionId !== undefined && connection === null) {
+		throw new ApiError('not_found', 'Not found');
+	}
 	const engineInput = await buildSiteCreateInput({
 		site: {
 			id: siteId,
 			name: input.name,
 			kind: input.kind,
 			category,
-			plane: 'managed',
+			plane,
 			label
 		},
-		organization: { id: input.orgId, planId: decision.entitlement.planId },
+		...(connection === undefined || connection === null
+			? {}
+			: { connection, customHost: input.customHost }),
+		organization: { id: input.orgId, planId: decision.entitlement.managedPlanId },
 		operation: { id: operationId },
-		recipe: recipeFor(input.kind),
-		release: config.releases[input.kind],
+		recipe: bundle?.recipe ?? recipeFor(input.kind),
+		release: bundle?.id ?? config.releases[input.kind],
 		account: config.accountId,
 		hostSuffix: config.hostSuffix,
 		labelSuffix: config.labelSuffix,
@@ -284,7 +338,7 @@ export async function recordAndStartCreate(
 			name: engineInput.site.name,
 			kind: engineInput.site.kind,
 			category: engineInput.site.category,
-			plane: 'managed',
+			plane: engineInput.site.plane,
 			config: engineInput.site.config,
 			primaryHostname: engineInput.hostname,
 			now: nowUtc().toMillis()
@@ -396,7 +450,8 @@ export async function deleteSite(
 		operationId,
 		siteId: site.id,
 		accountId: site.accountId,
-		hostnames: toSite(site).hostnames
+		hostnames: toSite(site).hostnames,
+		plane: site.plane
 	};
 	const plan = planSiteDelete(params);
 	const { operation, created } = await createOperationRecord(db, {
@@ -454,6 +509,8 @@ export interface UpgradeSiteInput {
 	orgId: string;
 	siteId: string;
 	idempotencyKey: string;
+	// the uploaded bundle a custom site moves to; every other kind moves to the current release
+	bundleId?: string;
 }
 
 // the engine owns every status after it accepts the start; the site keeps serving the release it
@@ -479,7 +536,7 @@ export async function upgradeSite(
 	if (site === null) throw new ApiError('not_found', 'Not found');
 	if (
 		site.state !== 'active' ||
-		site.plane !== 'managed' ||
+		(site.plane !== 'managed' && site.plane !== 'self-managed') ||
 		site.accountId === null ||
 		site.primaryHostname === null
 	) {
@@ -487,7 +544,25 @@ export async function upgradeSite(
 			reason: 'site_not_live'
 		});
 	}
-	const available = services.config.releases[site.kind];
+	if ((site.kind === 'custom') !== (input.bundleId !== undefined)) {
+		throw new ApiError(
+			'validation',
+			site.kind === 'custom'
+				? 'Updating a custom site needs the bundleId of an uploaded bundle'
+				: 'Only a custom site is updated from a bundle',
+			{ field: 'bundleId' }
+		);
+	}
+	const bundle =
+		input.bundleId === undefined
+			? undefined
+			: await bundleForRequest(services, { orgId: input.orgId, bundleId: input.bundleId });
+	if (bundle !== undefined && site.releaseId !== null) {
+		const live = await getCustomRelease(db, input.orgId, site.releaseId);
+		const refusal = live === null ? null : updateRefusal(live, bundle);
+		if (refusal !== null) throw refusal;
+	}
+	const available = bundle?.id ?? services.config.releases[site.kind];
 	if (available === undefined) {
 		throw new ApiError('not_built', `No current release is set for ${site.kind}`);
 	}
@@ -497,7 +572,7 @@ export async function upgradeSite(
 			release: available
 		});
 	}
-	const recipe = recipeFor(site.kind);
+	const recipe = bundle?.recipe ?? recipeFor(site.kind);
 	if (recipe === undefined) {
 		throw new ApiError('unprocessable', `There is no recipe for ${site.kind}`, {
 			reason: 'no_recipe'
@@ -526,7 +601,7 @@ export async function upgradeSite(
 			plane: site.plane,
 			config: site.config,
 			ring: 'R0',
-			plan: (await services.planOf(input.orgId)).planId,
+			plan: (await services.planOf(input.orgId)).managedPlanId,
 			accountId: site.accountId
 		},
 		hostname: site.primaryHostname,

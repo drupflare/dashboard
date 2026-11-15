@@ -7,13 +7,14 @@ import { GLOBAL_CONFIRMATION } from '../../shared/health/repair-copy';
 import { DIRECTORY_KEY } from '../db/collegedb';
 import { GLOBAL_SCOPE_ID, setLadderSwitch } from '../db/repos/ladder-switches';
 import { getOrganization } from '../db/repos/organization';
+import { appendPlatformAudit } from '../db/repos/platform-audit';
 import type { Principal } from '../domain/authorize';
 import type { AuditInput } from './audit';
 import { principalActor } from './owner-tokens';
 
 export interface LadderServices {
 	getDb: () => Promise<CollegeDBClient>;
-	// writes to an organisation's audit chain; global changes have no chain to write to
+	// writes to an organisation's audit chain; a global change goes to the platform audit table
 	audit: (orgId: string, input: AuditInput) => Promise<unknown>;
 	now: () => number;
 }
@@ -163,12 +164,17 @@ export async function setSwitch(
 			if (auditOrg === null) throw refuse('unknown_scope', 'No site has this id');
 		}
 	}
+	const target = input.scopeId === '' ? input.scope : input.scopeId;
+	const detail = { scope: input.scope, auto: input.auto };
 	if (auditOrg !== null) {
-		await services.audit(auditOrg, {
+		await services.audit(auditOrg, { actor, action: 'admin.ladder.switch', target, detail });
+	} else {
+		await appendPlatformAudit(db, {
 			actor,
 			action: 'admin.ladder.switch',
-			target: input.scopeId === '' ? input.scope : input.scopeId,
-			detail: { scope: input.scope, auto: input.auto }
+			target,
+			detail,
+			now
 		});
 	}
 	await setLadderSwitch(db, {

@@ -116,7 +116,8 @@ describe('bootOnce', () => {
 			hostSuffix: 'sites.example.net',
 			labelSuffix: '-staging',
 			accountId: 'a'.repeat(32),
-			releases: { drupal: 'v1.0.4' }
+			releases: { drupal: 'v1.0.4' },
+			restoreDrills: true
 		});
 		resetBoot();
 		expect(siteServices().config.accountId).toBeNull();
