@@ -13,6 +13,7 @@ const sections = computed(() => [
 		: []),
 	{ path: '/access', label: 'Access', icon: 'i-lucide-shield-check' },
 	{ path: '/environments', label: 'Environments', icon: 'i-lucide-layers' },
+	{ path: '/code-history', label: 'Code History', icon: 'i-lucide-git-commit-horizontal' },
 	{ path: '/repairs', label: 'Repairs', icon: 'i-lucide-wrench' },
 	{ path: '/restore-points', label: 'Restore Points', icon: 'i-lucide-history' }
 ]);

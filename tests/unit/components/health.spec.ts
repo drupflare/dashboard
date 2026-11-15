@@ -28,11 +28,11 @@ const node = (over: Partial<HealthNodeView> = {}): HealthNodeView => ({
 	state: 'warn',
 	title: 'memory.trend_rising',
 	detail: 'memory rose across four samples',
-	handle: 'interpreter-recycle',
+	handle: '/recycle',
 	history: [],
 	guidance: {
 		text: 'The site repairs this on its own once it is safe to.',
-		diagnostics: [{ label: 'Repair handle', value: 'interpreter-recycle' }]
+		diagnostics: [{ label: 'Repair handle', value: '/recycle' }]
 	},
 	children: [],
 	...over
@@ -150,10 +150,8 @@ describe('health node', () => {
 		expect(details.exists()).toBe(true);
 		expect(details.attributes('open')).toBeUndefined();
 		expect(details.find('summary').text()).toBe('Diagnostics');
-		expect(details.text()).toContain('interpreter-recycle');
-		expect(wrapper.find('li').text().replace(details.text(), '')).not.toContain(
-			'interpreter-recycle'
-		);
+		expect(details.text()).toContain('/recycle');
+		expect(wrapper.find('li').text().replace(details.text(), '')).not.toContain('/recycle');
 	});
 
 	it('lists the history newest first and keeps the last five', async () => {

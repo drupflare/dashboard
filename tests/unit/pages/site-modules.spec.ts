@@ -123,6 +123,56 @@ describe('modules page', () => {
 		).toBe(true);
 	});
 
+	it('loads the Strata allocation for an included plan and saves a change', async () => {
+		cleanup();
+		const status = {
+			allocation: 'light',
+			capturesStatements: false,
+			recoverySeconds: 900,
+			applied: false,
+			confirmedFreeAt: null,
+			store: 'none',
+			storeReason: null
+		};
+		cleanup = registerApi({
+			'GET /api/v1/me': {
+				body: {
+					id: 'usr_1',
+					email: 'owner@example.test',
+					displayName: null,
+					via: 'session',
+					stepUpUntil: null
+				}
+			},
+			[`GET /api/v1/sites/${SITE}`]: { body: site },
+			[`GET /api/v1/orgs/${ORG}/entitlement`]: {
+				body: {
+					planId: 'managed-pro',
+					addOns: [],
+					sites: 3,
+					views: null,
+					billingAccount: false,
+					features: { strata: true }
+				}
+			},
+			[`GET ${base}`]: (call) =>
+				call.query.q === 'strata' ? { body: { items: [STRATA] } } : listReply(),
+			[`GET /api/v1/orgs/${ORG}/sites/${SITE}/strata`]: { body: status },
+			[`PUT /api/v1/orgs/${ORG}/sites/${SITE}/strata`]: {
+				body: { ...status, allocation: 'detailed', capturesStatements: true }
+			}
+		});
+		const wrapper = await mountPage();
+		await waitFor(() => wrapper.text().includes('How Much Strata May Use'));
+		const radios = wrapper.findAll('input[type="radio"]');
+		expect((radios[0]!.element as HTMLInputElement).checked).toBe(true);
+		await radios[1]!.trigger('change');
+		await waitFor(() => calls.some((call) => call.method === 'PUT'));
+		expect(calls.find((call) => call.method === 'PUT')?.body).toEqual({
+			allocation: 'detailed'
+		});
+	});
+
 	it('shows the empty state when the search matches nothing', async () => {
 		listReply = () => ({ body: { items: [] } });
 		const wrapper = await mountPage();

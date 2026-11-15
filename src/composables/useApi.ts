@@ -124,7 +124,7 @@ export function toApiClientError(error: unknown): ApiClientError {
 type Fetcher = (
 	url: string,
 	options: {
-		method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+		method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 		query?: Record<string, string>;
 		body?: Record<string, unknown>;
 		headers?: Record<string, string>;
@@ -150,6 +150,8 @@ export function useApi() {
 			settle<T>(fetcher(`/api/v1${path}`, { method: 'GET', query })),
 		post: <T>(path: string, body?: Record<string, unknown>, headers?: Record<string, string>) =>
 			settle<T>(fetcher(`/api/v1${path}`, { method: 'POST', body, headers })),
+		put: <T>(path: string, body?: Record<string, unknown>) =>
+			settle<T>(fetcher(`/api/v1${path}`, { method: 'PUT', body })),
 		patch: <T>(path: string, body?: Record<string, unknown>) =>
 			settle<T>(fetcher(`/api/v1${path}`, { method: 'PATCH', body })),
 		delete: <T>(path: string) => settle<T>(fetcher(`/api/v1${path}`, { method: 'DELETE' }))

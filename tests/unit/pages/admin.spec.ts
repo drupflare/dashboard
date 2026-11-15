@@ -192,7 +192,7 @@ describe('admin page', () => {
 		expect(wrapper.text()).toContain('2026-11-06 12:30');
 	});
 
-	it('loads the capacity tab only when it is opened, and shows the grant', async () => {
+	it('loads the capacity tab only when it is opened, and shows the credits', async () => {
 		cleanup = registerApi({
 			'GET /api/v1/me': { body: me('admin') },
 			'GET /api/v1/admin/overview': {

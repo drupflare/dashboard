@@ -5,6 +5,7 @@ import Row from '~/components/site/module/Row.vue';
 import Search from '~/components/site/module/Search.vue';
 import Strata from '~/components/site/module/Strata.vue';
 import type { ModuleListItem } from '~/shared/modules';
+import type { StrataStatus } from '~/shared/strata';
 
 const mounted: { unmount: () => void }[] = [];
 
@@ -267,7 +268,13 @@ describe('module install steps', () => {
 describe('strata add-on row', () => {
 	it('names the census state and says it is optional and not a backup replacement', async () => {
 		const wrapper = await mountSuspended(Strata, {
-			props: { included: null, unlockPlan: null, state: 'verified' }
+			props: {
+				included: null,
+				unlockPlan: null,
+				state: 'verified',
+				free: false,
+				status: null
+			}
 		});
 		mounted.push(wrapper);
 		expect(wrapper.text()).toContain('Optional Add-On');
@@ -278,15 +285,258 @@ describe('strata add-on row', () => {
 
 	it('says the plan includes it when the entitlement does', async () => {
 		const wrapper = await mountSuspended(Strata, {
-			props: { included: true, unlockPlan: null, state: 'verified' }
+			props: {
+				included: true,
+				unlockPlan: null,
+				state: 'verified',
+				free: false,
+				status: null
+			}
 		});
 		mounted.push(wrapper);
 		expect(wrapper.text()).toContain('included on this plan');
 	});
 
+	it('starts straight away on a paid plan', async () => {
+		const wrapper = await mountSuspended(Strata, {
+			props: {
+				included: true,
+				unlockPlan: null,
+				state: 'verified',
+				free: false,
+				status: null
+			}
+		});
+		mounted.push(wrapper);
+		await buttonNamed(wrapper, 'Set Up Strata')?.trigger('click');
+		expect(wrapper.emitted('start')).toHaveLength(1);
+		expect(wrapper.find('[data-test="strata-free-warning"]').exists()).toBe(false);
+	});
+
+	it('warns on the free plan and starts only after the owner turns it on', async () => {
+		const wrapper = await mountSuspended(Strata, {
+			props: { included: true, unlockPlan: null, state: 'verified', free: true, status: null }
+		});
+		mounted.push(wrapper);
+		await buttonNamed(wrapper, 'Set Up Strata')?.trigger('click');
+		expect(wrapper.emitted('start')).toBeUndefined();
+		expect(wrapper.find('[data-test="strata-free-warning"]').text()).toContain(
+			'daily write allowance'
+		);
+		await buttonNamed(wrapper, 'Cancel')?.trigger('click');
+		expect(wrapper.find('[data-test="strata-free-warning"]').exists()).toBe(false);
+		await buttonNamed(wrapper, 'Set Up Strata')?.trigger('click');
+		await buttonNamed(wrapper, 'Turn On Strata')?.trigger('click');
+		expect(wrapper.emitted('start')).toHaveLength(1);
+	});
+
+	it('does not warn again once the free confirmation is on record', async () => {
+		const wrapper = await mountSuspended(Strata, {
+			props: {
+				included: true,
+				unlockPlan: null,
+				state: 'verified',
+				free: true,
+				status: {
+					allocation: 'light',
+					capturesStatements: false,
+					recoverySeconds: 900,
+					applied: false,
+					confirmedFreeAt: 1,
+					store: 'none',
+					storeReason: null,
+					storage: null
+				}
+			}
+		});
+		mounted.push(wrapper);
+		await buttonNamed(wrapper, 'Set Up Strata')?.trigger('click');
+		expect(wrapper.emitted('start')).toHaveLength(1);
+	});
+
+	it('offers every allocation on a paid plan and only light on free', async () => {
+		const status: StrataStatus = {
+			allocation: 'light',
+			capturesStatements: false,
+			recoverySeconds: 900,
+			applied: true,
+			confirmedFreeAt: null,
+			store: 'none',
+			storeReason: null,
+			storage: null
+		};
+		const paid = await mountSuspended(Strata, {
+			props: { included: true, unlockPlan: null, state: 'verified', free: false, status }
+		});
+		mounted.push(paid);
+		const paidRadios = paid.findAll('input[type="radio"]');
+		expect(paidRadios).toHaveLength(2);
+		expect(paidRadios.every((radio) => radio.attributes('disabled') === undefined)).toBe(true);
+		await paidRadios[1]!.trigger('change');
+		expect(paid.emitted('allocate')?.[0]).toEqual(['detailed']);
+
+		const free = await mountSuspended(Strata, {
+			props: {
+				included: true,
+				unlockPlan: null,
+				state: 'verified',
+				free: true,
+				status: { ...status, allocation: 'light' }
+			}
+		});
+		mounted.push(free);
+		const disabled = free
+			.findAll('input[type="radio"]')
+			.map((radio) => radio.attributes('disabled') !== undefined);
+		expect(disabled).toEqual([false, true]);
+	});
+
+	it('says when the site has not accepted the setting', async () => {
+		const wrapper = await mountSuspended(Strata, {
+			props: {
+				included: true,
+				unlockPlan: null,
+				state: 'verified',
+				free: false,
+				status: {
+					allocation: 'light',
+					capturesStatements: false,
+					recoverySeconds: 900,
+					applied: false,
+					confirmedFreeAt: null,
+					store: 'none',
+					storeReason: null,
+					storage: null
+				}
+			}
+		});
+		mounted.push(wrapper);
+		expect(wrapper.text()).toContain('has not accepted this setting yet');
+
+		await wrapper.get('[data-test="strata-retry"]').trigger('click');
+		expect(wrapper.emitted('allocate')?.[0]).toEqual(['light']);
+	});
+
+	it('offers no retry once the site has accepted the setting', async () => {
+		const wrapper = await mountSuspended(Strata, {
+			props: {
+				included: true,
+				unlockPlan: null,
+				state: 'verified',
+				free: false,
+				status: {
+					allocation: 'detailed',
+					capturesStatements: true,
+					recoverySeconds: 900,
+					applied: true,
+					confirmedFreeAt: null,
+					store: 'none',
+					storeReason: null,
+					storage: null
+				}
+			}
+		});
+		mounted.push(wrapper);
+		expect(wrapper.find('[data-test="strata-retry"]').exists()).toBe(false);
+	});
+
+	describe('the store state', () => {
+		const status = (patch: Partial<StrataStatus>): StrataStatus => ({
+			allocation: 'light',
+			capturesStatements: false,
+			recoverySeconds: 900,
+			applied: true,
+			confirmedFreeAt: null,
+			store: 'none',
+			storeReason: null,
+			storage: null,
+			...patch
+		});
+		const mountWith = async (patch: Partial<StrataStatus>, managed: boolean | null = true) => {
+			const wrapper = await mountSuspended(Strata, {
+				props: {
+					included: true,
+					unlockPlan: null,
+					state: 'verified',
+					free: false,
+					status: status(patch),
+					managed
+				}
+			});
+			mounted.push(wrapper);
+			return wrapper;
+		};
+
+		it('says nothing about storage before one is set up', async () => {
+			const wrapper = await mountWith({});
+			expect(wrapper.find('[data-test="strata-store-ready"]').exists()).toBe(false);
+			expect(wrapper.find('[data-test="strata-store-failed"]').exists()).toBe(false);
+			expect(wrapper.find('[data-test="strata-store-self"]').exists()).toBe(false);
+		});
+
+		it('says where backups go once the store is ready', async () => {
+			const wrapper = await mountWith({ store: 'ready' });
+			expect(wrapper.get('[data-test="strata-store-ready"]').text()).toBe(
+				"Backups go to a private bucket in Drupflare's storage."
+			);
+			expect(wrapper.find('[data-test="strata-store-retry"]').exists()).toBe(false);
+		});
+
+		it('says it could not be set up, gives the reason and offers Try Again', async () => {
+			const wrapper = await mountWith({ store: 'failed', storeReason: 'token_quota' });
+			const text = wrapper.get('[data-test="strata-store-failed"]').text();
+			expect(text).toContain(
+				'Storage could not be set up. Strata is on but not saving history.'
+			);
+			expect(text).toContain('The storage allowance for new sites is used up.');
+			await wrapper.get('[data-test="strata-store-retry"]').trigger('click');
+			expect(wrapper.emitted('retryStore')).toHaveLength(1);
+		});
+
+		it('leaves out the reason when the code is not one it knows', async () => {
+			const wrapper = await mountWith({ store: 'failed', storeReason: 'something_new' });
+			expect(wrapper.get('[data-test="strata-store-failed"]').text()).not.toContain(
+				'something_new'
+			);
+		});
+
+		it('says a self-managed site stores where its owner points it', async () => {
+			const wrapper = await mountWith({ store: 'ready' }, false);
+			expect(wrapper.get('[data-test="strata-store-self"]').text()).toBe(
+				"Strata stores where you point it. Drupflare's own backups stay the default."
+			);
+			expect(wrapper.find('[data-test="strata-store-ready"]').exists()).toBe(false);
+			expect(wrapper.find('[data-test="strata-storage-note"]').exists()).toBe(false);
+		});
+
+		it.each([
+			['needs_object_storage', 'Needs Object Storage.', 'Turn on R2'],
+			['needs_wider_token', 'Needs a Wider Token.', 'Workers R2 Storage Edit']
+		] as const)(
+			'tells a self-managed owner what to fix for %s',
+			async (storage, label, action) => {
+				const wrapper = await mountWith({ storage }, false);
+				const note = wrapper.get('[data-test="strata-storage-note"]').text();
+				expect(note).toContain(label);
+				expect(note).toContain(action);
+			}
+		);
+
+		it('adds no note when the account is ready', async () => {
+			const wrapper = await mountWith({ storage: 'ok' }, false);
+			expect(wrapper.find('[data-test="strata-storage-note"]').exists()).toBe(false);
+		});
+	});
+
 	it('names the unlocking plan for a free plan when one is stated', async () => {
 		const wrapper = await mountSuspended(Strata, {
-			props: { included: false, unlockPlan: 'Managed Studio', state: 'verified' }
+			props: {
+				included: false,
+				unlockPlan: 'Managed Studio',
+				state: 'verified',
+				free: true,
+				status: null
+			}
 		});
 		mounted.push(wrapper);
 		expect(wrapper.text()).toContain('The Managed Studio plan includes it');

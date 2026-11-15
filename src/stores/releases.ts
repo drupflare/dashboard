@@ -51,6 +51,23 @@ export interface RollbackCheck {
 	offers: ('restore-data-with-code' | 'fix-forward')[];
 }
 
+export interface RevisionItem {
+	id: string;
+	kind: 'release' | 'edit';
+	release: string | null;
+	version: string | null;
+	note: string | null;
+	createdAt: number;
+	current: boolean;
+	// an edit that kept its files, so it can be rolled back to
+	bundle: boolean;
+}
+
+export interface EditInput {
+	files: { path: string; content: string; encoding?: 'utf8' | 'base64' }[];
+	note: string;
+}
+
 export const useReleasesStore = defineStore('releases', {
 	state: () => ({
 		// undefined: not loaded; an array: loaded
@@ -99,10 +116,40 @@ export const useReleasesStore = defineStore('releases', {
 			});
 			await this.load();
 		},
+		async revisions(orgId: string, siteId: string): Promise<RevisionItem[]> {
+			const page = await useApi().get<{ items: RevisionItem[] }>(
+				`/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/revisions`
+			);
+			return page.items;
+		},
 		rollbackCheck(orgId: string, siteId: string, release: string): Promise<RollbackCheck> {
 			return useApi().get<RollbackCheck>(
 				`/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/rollback-check`,
 				{ release }
+			);
+		},
+		deliverEdit(
+			orgId: string,
+			siteId: string,
+			input: EditInput,
+			idempotencyKey: string
+		): Promise<{ id: string }> {
+			return useApi().post<{ id: string }>(
+				`/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/modify`,
+				input as unknown as Record<string, unknown>,
+				{ 'Idempotency-Key': idempotencyKey }
+			);
+		},
+		rollbackEdit(
+			orgId: string,
+			siteId: string,
+			revision: string,
+			idempotencyKey: string
+		): Promise<{ id: string }> {
+			return useApi().post<{ id: string }>(
+				`/orgs/${encodeURIComponent(orgId)}/sites/${encodeURIComponent(siteId)}/modify/rollback`,
+				{ revision },
+				{ 'Idempotency-Key': idempotencyKey }
 			);
 		},
 		rollback(

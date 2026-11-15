@@ -47,7 +47,7 @@ describe('admin ladder page', () => {
 							repairId: 'bridge.asyncify_called',
 							source: 'worker host tripwire',
 							severity: 'critical',
-							handle: 'interpreter-recycle',
+							handle: '/recycle',
 							automation: 'auto-with-guard',
 							canRunToday: false,
 							reason: 'No route on the site worker for this repair yet. It refuses to run.'

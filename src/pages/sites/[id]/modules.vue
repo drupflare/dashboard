@@ -7,7 +7,8 @@ import type {
 	ModuleQuery,
 	ModuleState
 } from '~/shared/modules';
-import { useBillingStore } from '~/stores/billing';
+import { STRATA_MODULE, type StrataAllocation, type StrataStatus } from '~/shared/strata';
+import { FREE_PLAN_ID, useBillingStore } from '~/stores/billing';
 import { changeKey, moduleListKey, useModulesStore, type ModuleChange } from '~/stores/modules';
 import type { SiteSummary } from '~/stores/sites';
 
@@ -49,6 +50,40 @@ const strataIncluded = computed<boolean | null>(() => {
 	if (entitlement.value === undefined || entitlement.value === null) return null;
 	return entitlement.value.features?.strata === true;
 });
+const strataFree = computed(() => entitlement.value?.planId === FREE_PLAN_ID);
+const strataStatus = ref<StrataStatus | null>(null);
+const strataSaving = ref(false);
+const strataError = ref<string | null>(null);
+const strataConfirmed = ref(false);
+
+const strataPath = () =>
+	`/orgs/${encodeURIComponent(orgId.value ?? '')}/sites/${encodeURIComponent(siteId)}/strata`;
+
+async function loadStrata(): Promise<void> {
+	if (orgId.value === null || strataIncluded.value !== true) return;
+	try {
+		strataStatus.value = await useApi().get<StrataStatus>(strataPath());
+	} catch {
+		strataStatus.value = null;
+	}
+}
+
+async function setAllocation(allocation: StrataAllocation): Promise<void> {
+	strataError.value = null;
+	strataSaving.value = true;
+	try {
+		strataStatus.value = await useApi().put<StrataStatus>(strataPath(), { allocation });
+	} catch (cause) {
+		strataError.value = toApiClientError(cause).message;
+	} finally {
+		strataSaving.value = false;
+	}
+}
+
+async function startStrata(): Promise<void> {
+	strataConfirmed.value = true;
+	if (strata.value) await runCheck(strata.value.name);
+}
 const shownName = ref<string | null>(null);
 const check = computed<ModuleCheck | null>(
 	() => modules.checks.get(`${siteId}|${shownName.value ?? ''}`) ?? null
@@ -82,6 +117,7 @@ async function loadSite(): Promise<void> {
 		if (orgId.value === null) return;
 		await billing.loadEntitlement(orgId.value);
 		strataRows.value = (await modules.search(orgId.value, siteId, { q: 'strata' })) ?? [];
+		await loadStrata();
 		await load();
 	} catch (failure) {
 		siteError.value = toApiClientError(failure);
@@ -115,7 +151,10 @@ async function runChange(change: 'install' | 'enable', name: string, confirm = f
 	try {
 		const operation = await modules.change(orgId.value, siteId, change, {
 			name,
-			...(change === 'install' ? { confirm } : {})
+			...(change === 'install' ? { confirm } : {}),
+			...(change === 'enable' && name === STRATA_MODULE && strataConfirmed.value
+				? { confirm: true }
+				: {})
 		});
 		starting.value = null;
 		await modules.follow(orgId.value, siteId, change, operation, name);
@@ -124,6 +163,13 @@ async function runChange(change: 'install' | 'enable', name: string, confirm = f
 	} finally {
 		starting.value = null;
 	}
+}
+
+// the storage is set up by the enable operation, so a retry runs it again and then reads the status
+async function retryStore(): Promise<void> {
+	strataConfirmed.value = true;
+	await runChange('enable', STRATA_MODULE);
+	await loadStrata();
 }
 
 // the refusal of a removal is the site's own reason, shown as it is
@@ -181,6 +227,14 @@ useHead({ title: () => (site.value ? `Modules for ${site.value.name}` : 'Modules
 				:included="strataIncluded"
 				:unlock-plan="null"
 				:state="strata.state"
+				:free="strataFree"
+				:status="strataStatus"
+				:saving="strataSaving"
+				:error="strataError"
+				:managed="site ? site.plane === 'managed' : null"
+				@start="startStrata"
+				@allocate="setAllocation"
+				@retry-store="retryStore"
 			/>
 		</section>
 
