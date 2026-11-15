@@ -18,7 +18,8 @@ export default defineApi(
 		body: z.strictObject({
 			kind: siteKind,
 			name: z.string().min(1).max(63),
-			hostnameLabel: z.string().min(1).max(63).optional()
+			hostnameLabel: z.string().min(1).max(63).optional(),
+			templateEntryId: z.string().min(1).max(40).optional()
 		}),
 		response: operationSchema,
 		successStatus: 202
@@ -37,6 +38,7 @@ export default defineApi(
 			kind: body.kind,
 			name: body.name,
 			hostnameLabel: body.hostnameLabel,
+			templateEntryId: body.templateEntryId,
 			idempotencyKey
 		});
 		return operation;

@@ -218,6 +218,11 @@ describe('route scan: live route tree', () => {
 		expect(listRouteFiles(API_ROOT)).toContain('hooks/github.post.ts');
 	});
 
+	it('lists the release hook as a file outside the scan', () => {
+		expect(isAllowListed('hooks/release.post.ts')).toBe(true);
+		expect(listRouteFiles(API_ROOT)).toContain('hooks/release.post.ts');
+	});
+
 	it('gives every live route a non-empty action in the permission table', async () => {
 		const { routes } = await scanRoutes(API_ROOT);
 		for (const route of routes) {

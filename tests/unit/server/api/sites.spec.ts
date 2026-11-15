@@ -12,6 +12,7 @@ import { loadFacts, type FactsStore } from '../../../../src/server/services/fact
 import { resetSiteServices, setSiteServices } from '../../../../src/server/services/sites';
 import { resetApiDeps } from '../../../../src/server/utils/define-api';
 import type { OrgRole } from '../../../../src/shared/permissions';
+import { TEMPLATE_HELD_REASON } from '../../../../src/shared/template-entries';
 import { TEMPLATES } from '../../../../src/shared/templates';
 import { DEPT, ORG, OTHER_ORG, facts, fresh, member } from '../../domain/fixtures';
 import {
@@ -116,6 +117,17 @@ describe('GET /api/v1/templates', () => {
 			expect(Object.keys(item).sort()).toEqual(
 				['category', 'comingSoon', 'enabled', 'free', 'id', 'name'].sort()
 			);
+		}
+	});
+
+	it('holds every Drupal template with the update reason while code delivery is off', async () => {
+		world();
+		const reply = await send(templates, '/api/v1/templates', { headers: asUser });
+		const drupal = (reply.json as { drupal: { usable: boolean; reason: string | null }[] })
+			.drupal;
+		expect(drupal).toHaveLength(3);
+		for (const item of drupal) {
+			expect(item).toMatchObject({ usable: false, reason: TEMPLATE_HELD_REASON });
 		}
 	});
 
