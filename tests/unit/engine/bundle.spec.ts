@@ -11,7 +11,9 @@ import {
 	MODULE_CONTENT_TYPES,
 	parseManifest,
 	planChunks,
+	readAssetChunk,
 	validateBundle,
+	type BundleAsset,
 	type BundleErrorCode,
 	type BundleLimits,
 	type BundleManifest
@@ -227,6 +229,73 @@ describe('planChunks', () => {
 		for (const bad of [0, -5, 2.5]) {
 			expect(codeOf(() => planChunks([['a1']], size, bad))).toBe('invalid_limits');
 		}
+	});
+});
+
+describe('reading a chunk of assets', () => {
+	const encoder = new TextEncoder();
+
+	async function chunkOf(count: number) {
+		const byHash = new Map<string, BundleAsset>();
+		const parts = new Map<string, Uint8Array>();
+		for (let i = 0; i < count; i++) {
+			const bytes = encoder.encode(`asset ${i}`);
+			const hash = await assetHashOf(bytes);
+			byHash.set(hash, { path: `/a/${i}.txt`, hash, size: bytes.byteLength });
+			parts.set(hash, bytes);
+		}
+		return { chunk: [...byHash.keys()], byHash, parts };
+	}
+
+	it('returns the files in chunk order and never has more than the lane count in flight', async () => {
+		const { chunk, byHash, parts } = await chunkOf(30);
+		let flying = 0;
+		let peak = 0;
+		const files = await readAssetChunk(
+			chunk,
+			byHash,
+			async (hash) => {
+				flying++;
+				peak = Math.max(peak, flying);
+				await new Promise((resolve) => setTimeout(resolve, 2));
+				flying--;
+				return parts.get(hash)!;
+			},
+			4
+		);
+		expect(files.map((file) => file.hash)).toEqual(chunk);
+		expect(peak).toBe(4);
+	});
+
+	it('refuses changed bytes and stops starting reads', async () => {
+		const { chunk, byHash, parts } = await chunkOf(40);
+		let reads = 0;
+		const result = rejectedWith(
+			readAssetChunk(
+				chunk,
+				byHash,
+				async (hash) => {
+					reads++;
+					await new Promise((resolve) => setTimeout(resolve, 1));
+					return hash === chunk[2] ? encoder.encode('asset X') : parts.get(hash)!;
+				},
+				3
+			)
+		);
+		expect(await result).toBe('hash_mismatch');
+		expect(reads).toBeLessThan(40);
+	});
+
+	it('refuses a hash the manifest does not list', async () => {
+		const { chunk, byHash } = await chunkOf(2);
+		await expect(
+			readAssetChunk([...chunk, 'f'.repeat(32)], byHash, async () => new Uint8Array())
+		).rejects.toMatchObject({ code: 'unknown_asset' });
+	});
+
+	it('reads an empty chunk without a lane', async () => {
+		const { byHash } = await chunkOf(1);
+		expect(await readAssetChunk([], byHash, async () => new Uint8Array())).toEqual([]);
 	});
 });
 

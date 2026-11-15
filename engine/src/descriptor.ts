@@ -40,7 +40,11 @@ export interface DescriptorInput {
 	secrets: Readonly<Record<string, string>>;
 	release: { id: string; assetsToken?: string | null };
 	recipe?: RecipeBindings;
+	// adds the tag a sweep finds scratch and preview copies by
+	temporary?: boolean;
 }
+
+export const TEMPORARY_TAG = 'wf:ttl';
 
 export interface Descriptor {
 	metadata: UploadMetadata;
@@ -234,7 +238,8 @@ export function buildDescriptor(input: DescriptorInput): Descriptor {
 			`p:${site.plane}`,
 			`r:${site.ring}`,
 			`v:${release.id}`,
-			...(lastTag === undefined ? [] : [`m:${lastTag}`])
+			...(lastTag === undefined ? [] : [`m:${lastTag}`]),
+			...(input.temporary === true ? [TEMPORARY_TAG] : [])
 		]
 	};
 	if (release.assetsToken) metadata.assets = { jwt: release.assetsToken };

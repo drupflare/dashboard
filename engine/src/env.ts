@@ -1,5 +1,6 @@
 import { fromBase64Url, signingKeyFromSeed } from '@contracts/common';
 import { dispatch, Resources, SESSION_MARGIN_MS, SESSION_TTL_MS } from '@drupflare/workforce';
+import { DEFAULT_REPAIR_BUDGET } from '../../src/server/domain/incidents';
 import { dohResolver } from '../../src/server/integrations/dns-resolver';
 import { dohResolve } from '../../src/server/integrations/url-guard';
 import { runPreflight } from '../../src/server/services/preflight';
@@ -9,8 +10,11 @@ import {
 	type ChallengeKeys
 } from '../../src/shared/custody/challenge';
 import { CryptoError } from '../../src/shared/custody/envelope';
+import { D1AccessLedger } from './adapters/access';
 import { authorityOf, type SiteAuthStub } from './adapters/authority';
 import { D1BackupLedger, r2BackupBlobs } from './adapters/backups';
+import { D1ConfigLedger } from './adapters/config-changes';
+import { D1CopyStore } from './adapters/copies';
 import { custodyOf } from './adapters/custody';
 import { cutoverPortsOf } from './adapters/cutover';
 import { dohReader } from './adapters/cutover-dns';
@@ -23,12 +27,19 @@ import { createImportLander } from './adapters/import-lander';
 import { importStoreOf } from './adapters/import-store';
 import { namespaceKvOf } from './adapters/kv';
 import { leasesOf, type LeaseStub } from './adapters/leases';
+import { moduleWorkerOf } from './adapters/modules';
 import { namesOf, type NamesStub } from './adapters/names';
 import { D1NodeSites, nodeCommandsOf, type NodeSessionStub } from './adapters/nodes';
+import { pitrWorkerOf } from './adapters/pitr';
 import { releasesInBucket, releasesOf } from './adapters/releases';
+import { D1RepairLedger, repairWorkerOf } from './adapters/repair';
+import { rollbackFactsOf } from './adapters/rollback';
+import { D1RolloutStore, ringObserverOf, siteMoverOf } from './adapters/rollout';
+import { settingsWorkerOf } from './adapters/settings';
 import { backupWorkerOf, siteOf } from './adapters/site';
 import { createSqlConverter } from './adapters/sql-converter';
 import { createSshSurvey } from './adapters/ssh-survey';
+import { D1TemplateStore, jobRunnerOf } from './adapters/templates';
 import { workforceCloudflare } from './adapters/workforce';
 import { writeMarkWorkerOf } from './adapters/write-mark';
 import { readConfig } from './config';
@@ -36,30 +47,53 @@ import { D1NodeStore } from './node-store';
 import { D1OperationStore } from './operations/store';
 import { D1ResourceLedger } from './ownership';
 import type {
+	AccessDeps,
 	BackupDeps,
+	ConfigDeps,
+	CopyDeps,
 	CutoverDeps,
 	DomainDeps,
 	EngineDeps,
 	EstateDeps,
 	GitDeps,
 	ImportDeps,
-	NodeSiteDeps
+	ModuleDeps,
+	NodeSiteDeps,
+	PitrDeps,
+	RepairDeps,
+	RollbackDeps,
+	RolloutDeps,
+	TemplateBuildDeps
 } from './ports';
 import { PermanentError } from './step';
+import type { AccessSyncInput } from './workflows/access-sync';
 import type { BackupCreateInput } from './workflows/backup-create';
 import type { BackupRestoreInput } from './workflows/backup-restore';
+import type { ConfigApplyInput } from './workflows/config-apply';
 import type { DomainAttachInput } from './workflows/domain-attach';
+import type { EnvCreateInput } from './workflows/env-create';
+import type { EnvDeleteInput } from './workflows/env-delete';
 import type { EstateAssessInput } from './workflows/estate-assess';
 import type { GitPullInput } from './workflows/git-pull';
 import type { ImportSurveyInput } from './workflows/import-survey';
 import type { MigrationCutoverInput } from './workflows/migration-cutover';
+import type { ModuleEnableInput } from './workflows/module-enable';
+import type { ModuleInstallInput } from './workflows/module-install';
+import type { ModuleRemoveInput } from './workflows/module-remove';
 import type { NodeSiteCreateInput } from './workflows/node-site-create';
+import type { ReleaseRingInput } from './workflows/release-ring';
+import type { CopyInput } from './workflows/restored-copy';
 import type { SiteAdoptInput } from './workflows/site-adopt';
 import type { SiteCleanupInput } from './workflows/site-cleanup';
 import type { SiteCreateInput } from './workflows/site-create';
 import type { SiteDeleteInput, SitePurgeInput } from './workflows/site-delete';
 import type { SiteImportInput } from './workflows/site-import';
+import type { SitePitrInput } from './workflows/site-pitr';
+import type { SiteRepairInput } from './workflows/site-repair';
+import type { SiteRollbackInput } from './workflows/site-rollback';
 import type { SiteUpgradeInput } from './workflows/site-upgrade';
+import type { TemplateBuildInput } from './workflows/template-build';
+import type { ThemeDefaultInput } from './workflows/theme-default';
 
 export interface EngineEnv {
 	DB: D1Database;
@@ -76,8 +110,21 @@ export interface EngineEnv {
 	SITE_PURGE: Workflow<SitePurgeInput>;
 	SITE_CLEANUP: Workflow<SiteCleanupInput>;
 	SITE_ADOPT: Workflow<SiteAdoptInput>;
+	SITE_REPAIR: Workflow<SiteRepairInput>;
+	SITE_ROLLBACK: Workflow<SiteRollbackInput>;
+	RELEASE_RING: Workflow<ReleaseRingInput>;
 	BACKUP_CREATE: Workflow<BackupCreateInput>;
 	BACKUP_RESTORE: Workflow<BackupRestoreInput>;
+	BACKUP_VERIFY: Workflow<CopyInput>;
+	ACCESS_SYNC: Workflow<AccessSyncInput>;
+	ENV_CREATE: Workflow<EnvCreateInput>;
+	ENV_DELETE: Workflow<EnvDeleteInput>;
+	SITE_PITR: Workflow<SitePitrInput>;
+	CONFIG_APPLY: Workflow<ConfigApplyInput>;
+	MODULE_INSTALL: Workflow<ModuleInstallInput>;
+	MODULE_ENABLE: Workflow<ModuleEnableInput>;
+	MODULE_REMOVE: Workflow<ModuleRemoveInput>;
+	THEME_DEFAULT: Workflow<ThemeDefaultInput>;
 	MIGRATION_CUTOVER: Workflow<MigrationCutoverInput>;
 	SITE_IMPORT: Workflow<SiteImportInput>;
 	IMPORT_SURVEY: Workflow<ImportSurveyInput>;
@@ -85,6 +132,9 @@ export interface EngineEnv {
 	GIT_PULL: Workflow<GitPullInput>;
 	DOMAIN_ATTACH: Workflow<DomainAttachInput>;
 	NODE_SITE_CREATE: Workflow<NodeSiteCreateInput>;
+	TEMPLATE_BUILD: Workflow<TemplateBuildInput>;
+	// bound on the stage deployment only; without it a template build records that it cannot run
+	JOB_RUNNER?: DurableObjectNamespace;
 	RELEASES_URL: string;
 	// 'blob' reads releases from the BLOB bucket and ignores RELEASES_URL
 	RELEASES_STORE?: string;
@@ -125,6 +175,95 @@ export async function buildBackupDeps(env: EngineEnv): Promise<BackupDeps> {
 		blobs: r2BackupBlobs(env.BLOB),
 		backups: new D1BackupLedger(env.DB),
 		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+	};
+}
+
+export async function buildModuleDeps(env: EngineEnv): Promise<ModuleDeps> {
+	return {
+		...(await buildBackupDeps(env)),
+		modules: moduleWorkerOf(fetch, Number(env.SITE_TIMEOUT_MS))
+	};
+}
+
+export async function buildAccessDeps(env: EngineEnv): Promise<AccessDeps> {
+	return { ...(await buildDeps(env)), access: new D1AccessLedger(env.DB) };
+}
+
+export async function buildCopyDeps(env: EngineEnv): Promise<CopyDeps> {
+	const copies = new D1CopyStore(env.DB);
+	return {
+		...(await buildBackupDeps(env)),
+		environments: copies,
+		verifications: copies,
+		access: new D1AccessLedger(env.DB)
+	};
+}
+
+export async function buildPitrDeps(env: EngineEnv): Promise<PitrDeps> {
+	return {
+		...(await buildBackupDeps(env)),
+		pitr: pitrWorkerOf(fetch, Number(env.SITE_TIMEOUT_MS))
+	};
+}
+
+export async function buildConfigDeps(env: EngineEnv): Promise<ConfigDeps> {
+	return {
+		...(await buildBackupDeps(env)),
+		settings: settingsWorkerOf(fetch, Number(env.SITE_TIMEOUT_MS)),
+		changes: new D1ConfigLedger(env.DB)
+	};
+}
+
+export function buildTemplateBuildDeps(env: EngineEnv): TemplateBuildDeps {
+	return {
+		jobs: env.JOB_RUNNER
+			? jobRunnerOf(env.JOB_RUNNER as never)
+			: {
+					run: async () => {
+						throw new PermanentError(
+							'runner_unbound',
+							'no job runner is bound on this deployment'
+						);
+					}
+				},
+		blobs: r2BackupBlobs(env.BLOB),
+		templates: new D1TemplateStore(env.DB)
+	};
+}
+
+export async function buildRepairDeps(env: EngineEnv): Promise<RepairDeps> {
+	return {
+		...(await buildBackupDeps(env)),
+		repair: repairWorkerOf(fetch, Number(env.SITE_TIMEOUT_MS)),
+		repairs: new D1RepairLedger(env.DB),
+		// no ring state exists in the control plane yet, so no promotion is ever seen
+		ringPromotion: async () => false,
+		budget: DEFAULT_REPAIR_BUDGET
+	};
+}
+
+export async function buildRollbackDeps(env: EngineEnv): Promise<RollbackDeps> {
+	return { ...(await buildDeps(env)), rollbackFacts: rollbackFactsOf(env.DB) };
+}
+
+export async function buildRolloutDeps(env: EngineEnv): Promise<RolloutDeps> {
+	const base = await buildRepairDeps(env);
+	return {
+		...base,
+		mover: siteMoverOf({
+			db: env.DB,
+			store: base.store,
+			upgrade: env.SITE_UPGRADE,
+			rollback: env.SITE_ROLLBACK,
+			now: Date.now
+		}),
+		rollouts: new D1RolloutStore(env.DB),
+		observe: ringObserverOf({
+			backups: base.backups,
+			custody: base.custody,
+			repair: base.repair,
+			site: base.site
+		})
 	};
 }
 

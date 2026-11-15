@@ -1,21 +1,35 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from 'cloudflare:workers';
 import { NonRetryableError } from 'cloudflare:workflows';
 import {
+	buildAccessDeps,
 	buildBackupDeps,
+	buildConfigDeps,
+	buildCopyDeps,
 	buildCutoverDeps,
 	buildDeps,
 	buildDomainDeps,
 	buildEstateDeps,
 	buildGitDeps,
 	buildImportDeps,
+	buildModuleDeps,
 	buildNodeSiteDeps,
+	buildPitrDeps,
+	buildRepairDeps,
+	buildRollbackDeps,
+	buildRolloutDeps,
+	buildTemplateBuildDeps,
 	type EngineEnv
 } from '../env';
 import { PermanentError, StepFailed, type StepRunner } from '../step';
+import { runAccessSync, type AccessSyncInput } from './access-sync';
 import { runBackupCreate, type BackupCreateInput } from './backup-create';
 import { runBackupRestore, type BackupRestoreInput } from './backup-restore';
+import { runBackupVerify } from './backup-verify';
 import type { Outcome } from './common';
+import { runConfigApply, type ConfigApplyInput } from './config-apply';
 import { runDomainAttach, type DomainAttachInput, type DomainRunner } from './domain-attach';
+import { runEnvCreate, type EnvCreateInput } from './env-create';
+import { runEnvDelete, type EnvDeleteInput } from './env-delete';
 import { runEstateAssess, type EstateAssessInput } from './estate-assess';
 import { runGitPull, type GitPullInput } from './git-pull';
 import { runImportSurvey, type ImportSurveyInput } from './import-survey';
@@ -24,7 +38,12 @@ import {
 	type CutoverRunner,
 	type MigrationCutoverInput
 } from './migration-cutover';
+import { runModuleEnable, type ModuleEnableInput } from './module-enable';
+import { runModuleInstall, type ModuleInstallInput } from './module-install';
+import { runModuleRemove, type ModuleRemoveInput } from './module-remove';
 import { runNodeSiteCreate, type NodeRunner, type NodeSiteCreateInput } from './node-site-create';
+import { runReleaseRing, type ReleaseRingInput, type RingRunner } from './release-ring';
+import type { CopyInput } from './restored-copy';
 import { runSiteAdopt, type SiteAdoptInput } from './site-adopt';
 import { runSiteCleanup, type SiteCleanupInput } from './site-cleanup';
 import { runSiteCreate, type SiteCreateInput } from './site-create';
@@ -35,7 +54,12 @@ import {
 	type SitePurgeInput
 } from './site-delete';
 import { runSiteImport, type SiteImportInput } from './site-import';
+import { runSitePitr, type SitePitrInput } from './site-pitr';
+import { runSiteRepair, type SiteRepairInput } from './site-repair';
+import { runSiteRollback, type SiteRollbackInput } from './site-rollback';
 import { runSiteUpgrade, type SiteUpgradeInput } from './site-upgrade';
+import { runTemplateBuild, type TemplateBuildInput } from './template-build';
+import { runThemeDefault, type ThemeDefaultInput } from './theme-default';
 
 // retry counts and timeouts are unmeasured starting points
 const STEP_CONFIG = {
@@ -56,7 +80,11 @@ const IMPORT_STEP_CONFIG = {
 // a permanent refusal skips the retries; whatever escapes after the retries reaches the body as StepFailed
 function runnerOf(
 	step: WorkflowStep,
-	config: typeof STEP_CONFIG | typeof BACKUP_STEP_CONFIG | typeof IMPORT_STEP_CONFIG = STEP_CONFIG
+	config:
+		| typeof STEP_CONFIG
+		| typeof BACKUP_STEP_CONFIG
+		| typeof IMPORT_STEP_CONFIG
+		| typeof TEMPLATE_STEP_CONFIG = STEP_CONFIG
 ): StepRunner {
 	return {
 		async do<T>(name: string, fn: () => Promise<T>): Promise<T> {
@@ -82,7 +110,7 @@ export class SiteCreate extends WorkflowEntrypoint<EngineEnv, SiteCreateInput> {
 		event: Readonly<WorkflowEvent<SiteCreateInput>>,
 		step: WorkflowStep
 	): Promise<Outcome> {
-		return runSiteCreate(runnerOf(step), await buildDeps(this.env), event.payload);
+		return runSiteCreate(runnerOf(step), await buildBackupDeps(this.env), event.payload);
 	}
 }
 
@@ -127,6 +155,114 @@ export class BackupRestore extends WorkflowEntrypoint<EngineEnv, BackupRestoreIn
 			await buildBackupDeps(this.env),
 			event.payload
 		);
+	}
+}
+
+export class ModuleInstall extends WorkflowEntrypoint<EngineEnv, ModuleInstallInput> {
+	async run(
+		event: Readonly<WorkflowEvent<ModuleInstallInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runModuleInstall(
+			runnerOf(step, BACKUP_STEP_CONFIG),
+			await buildModuleDeps(this.env),
+			event.payload
+		);
+	}
+}
+
+export class ModuleEnable extends WorkflowEntrypoint<EngineEnv, ModuleEnableInput> {
+	async run(
+		event: Readonly<WorkflowEvent<ModuleEnableInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runModuleEnable(
+			runnerOf(step, BACKUP_STEP_CONFIG),
+			await buildModuleDeps(this.env),
+			event.payload
+		);
+	}
+}
+
+export class ModuleRemove extends WorkflowEntrypoint<EngineEnv, ModuleRemoveInput> {
+	async run(
+		event: Readonly<WorkflowEvent<ModuleRemoveInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runModuleRemove(
+			runnerOf(step, BACKUP_STEP_CONFIG),
+			await buildModuleDeps(this.env),
+			event.payload
+		);
+	}
+}
+
+export class ThemeDefault extends WorkflowEntrypoint<EngineEnv, ThemeDefaultInput> {
+	async run(
+		event: Readonly<WorkflowEvent<ThemeDefaultInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runThemeDefault(
+			runnerOf(step, BACKUP_STEP_CONFIG),
+			await buildModuleDeps(this.env),
+			event.payload
+		);
+	}
+}
+
+export class BackupVerify extends WorkflowEntrypoint<EngineEnv, CopyInput> {
+	async run(event: Readonly<WorkflowEvent<CopyInput>>, step: WorkflowStep): Promise<Outcome> {
+		return runBackupVerify(
+			runnerOf(step, BACKUP_STEP_CONFIG),
+			await buildCopyDeps(this.env),
+			event.payload
+		);
+	}
+}
+
+export class AccessSync extends WorkflowEntrypoint<EngineEnv, AccessSyncInput> {
+	async run(
+		event: Readonly<WorkflowEvent<AccessSyncInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runAccessSync(runnerOf(step), await buildAccessDeps(this.env), event.payload);
+	}
+}
+
+export class EnvCreate extends WorkflowEntrypoint<EngineEnv, EnvCreateInput> {
+	async run(
+		event: Readonly<WorkflowEvent<EnvCreateInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runEnvCreate(
+			runnerOf(step, BACKUP_STEP_CONFIG),
+			await buildCopyDeps(this.env),
+			event.payload
+		);
+	}
+}
+
+export class EnvDelete extends WorkflowEntrypoint<EngineEnv, EnvDeleteInput> {
+	async run(
+		event: Readonly<WorkflowEvent<EnvDeleteInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runEnvDelete(runnerOf(step), await buildCopyDeps(this.env), event.payload);
+	}
+}
+
+export class ConfigApply extends WorkflowEntrypoint<EngineEnv, ConfigApplyInput> {
+	async run(
+		event: Readonly<WorkflowEvent<ConfigApplyInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runConfigApply(runnerOf(step), await buildConfigDeps(this.env), event.payload);
+	}
+}
+
+export class SitePitr extends WorkflowEntrypoint<EngineEnv, SitePitrInput> {
+	async run(event: Readonly<WorkflowEvent<SitePitrInput>>, step: WorkflowStep): Promise<Outcome> {
+		return runSitePitr(runnerOf(step), await buildPitrDeps(this.env), event.payload);
 	}
 }
 
@@ -267,5 +403,58 @@ export class SitePurge extends WorkflowEntrypoint<EngineEnv, SitePurgeInput> {
 		step: WorkflowStep
 	): Promise<Outcome> {
 		return runSitePurge(runnerOf(step), await buildDomainDeps(this.env), event.payload);
+	}
+}
+
+export class SiteRepair extends WorkflowEntrypoint<EngineEnv, SiteRepairInput> {
+	async run(
+		event: Readonly<WorkflowEvent<SiteRepairInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runSiteRepair(runnerOf(step), await buildRepairDeps(this.env), event.payload);
+	}
+}
+
+export class SiteRollback extends WorkflowEntrypoint<EngineEnv, SiteRollbackInput> {
+	async run(
+		event: Readonly<WorkflowEvent<SiteRollbackInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runSiteRollback(runnerOf(step), await buildRollbackDeps(this.env), event.payload);
+	}
+}
+
+function ringRunnerOf(step: WorkflowStep): RingRunner {
+	return {
+		...runnerOf(step),
+		sleep: (name, ms) => step.sleep(name, ms)
+	};
+}
+
+export class ReleaseRing extends WorkflowEntrypoint<EngineEnv, ReleaseRingInput> {
+	async run(
+		event: Readonly<WorkflowEvent<ReleaseRingInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runReleaseRing(ringRunnerOf(step), await buildRolloutDeps(this.env), event.payload);
+	}
+}
+
+// the build runs inside the container; the workflow only waits on the runner and checks the result
+const TEMPLATE_STEP_CONFIG = {
+	retries: { limit: 3, delay: '30 seconds', backoff: 'exponential' },
+	timeout: '40 minutes'
+} as const;
+
+export class TemplateBuild extends WorkflowEntrypoint<EngineEnv, TemplateBuildInput> {
+	async run(
+		event: Readonly<WorkflowEvent<TemplateBuildInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runTemplateBuild(
+			runnerOf(step, TEMPLATE_STEP_CONFIG),
+			buildTemplateBuildDeps(this.env),
+			event.payload
+		);
 	}
 }

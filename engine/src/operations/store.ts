@@ -439,11 +439,17 @@ export class D1OperationStore implements OperationStore {
 		await this.db
 			.prepare(
 				`INSERT INTO sites (id, organization_id, name, plane, state, account_id, category, config,
-				release_id, admin_name, admin_mail, ready_at, created_at, updated_at)
-				VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				release_id, admin_name, admin_mail, ready_at, created_at, updated_at,
+				data_schema_version)
+				VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, ?,
+				(SELECT schema_version FROM releases WHERE id = ?))
 				ON CONFLICT (id) DO UPDATE SET state = 'active',
 				ready_at = COALESCE(sites.ready_at, excluded.ready_at),
 				release_id = COALESCE(excluded.release_id, sites.release_id),
+				data_schema_version = COALESCE(
+					(SELECT MAX(r.schema_version, COALESCE(sites.data_schema_version, 0))
+						FROM releases r WHERE r.id = excluded.release_id),
+					sites.data_schema_version),
 				admin_name = COALESCE(excluded.admin_name, sites.admin_name),
 				admin_mail = COALESCE(excluded.admin_mail, sites.admin_mail),
 				account_id = excluded.account_id, updated_at = excluded.updated_at`
@@ -461,15 +467,25 @@ export class D1OperationStore implements OperationStore {
 				site.adminMail ?? null,
 				now,
 				now,
-				now
+				now,
+				site.releaseId ?? null
 			)
 			.run();
 	}
 
+	// the data schema version takes the release's value when the release is registered and never
+	// goes down; an unregistered release leaves it as it was
 	async setSiteRelease(siteId: string, releaseId: string, now: number): Promise<void> {
 		await this.db
-			.prepare('UPDATE sites SET release_id = ?, updated_at = ? WHERE id = ?')
-			.bind(releaseId, now, siteId)
+			.prepare(
+				`UPDATE sites SET release_id = ?, updated_at = ?,
+				data_schema_version = COALESCE(
+					(SELECT MAX(r.schema_version, COALESCE(sites.data_schema_version, 0))
+						FROM releases r WHERE r.id = ?),
+					data_schema_version)
+				WHERE id = ?`
+			)
+			.bind(releaseId, now, releaseId, siteId)
 			.run();
 	}
 
@@ -535,7 +551,8 @@ export class D1OperationStore implements OperationStore {
 				`SELECT o.id AS operation_id, s.id AS site_id, s.account_id, s.plane, s.config,
 				 s.primary_hostname FROM operations o
 				 JOIN sites s ON s.id = json_extract(o.target_ids, '$[0]')
-				 WHERE o.type = 'site.create' AND o.status IN ('failed', 'rolled-back', 'planned')
+				 WHERE o.type IN ('site.create', 'env.create', 'backup.verify')
+				 AND o.status IN ('failed', 'rolled-back', 'planned')
 				 AND o.updated_at < ?
 				 AND s.ready_at IS NULL AND s.state <> 'deleted'
 				 ORDER BY o.updated_at LIMIT ?`

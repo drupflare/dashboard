@@ -5,24 +5,39 @@ import { D1NodeStore } from './node-store';
 import { handleStart } from './start';
 import { sweepAndLog } from './sweep';
 
+export { JobRunner } from './containers/job-runner';
 export { NodeSession } from './node-session';
 export { SiteLease } from './site-lease';
 export {
+	AccessSync,
 	BackupCreate,
 	BackupRestore,
+	BackupVerify,
+	ConfigApply,
 	DomainAttach,
+	EnvCreate,
+	EnvDelete,
 	EstateAssess,
 	GitPull,
 	ImportSurvey,
 	MigrationCutover,
+	ModuleEnable,
+	ModuleInstall,
+	ModuleRemove,
 	NodeSiteCreate,
+	ReleaseRing,
 	SiteAdopt,
 	SiteCleanup,
 	SiteCreate,
 	SiteDelete,
 	SiteImport,
+	SitePitr,
 	SitePurge,
-	SiteUpgrade
+	SiteRepair,
+	SiteRollback,
+	SiteUpgrade,
+	TemplateBuild,
+	ThemeDefault
 } from './workflows/classes';
 
 export default {
@@ -46,15 +61,29 @@ export default {
 						'site-purge': env.SITE_PURGE,
 						'site-cleanup': env.SITE_CLEANUP,
 						'site-adopt': env.SITE_ADOPT,
+						'site-repair': env.SITE_REPAIR,
 						'backup-create': env.BACKUP_CREATE,
 						'backup-restore': env.BACKUP_RESTORE,
+						'backup-verify': env.BACKUP_VERIFY,
+						'access-sync': env.ACCESS_SYNC,
+						'env-create': env.ENV_CREATE,
+						'env-delete': env.ENV_DELETE,
+						'site-pitr': env.SITE_PITR,
+						'config-apply': env.CONFIG_APPLY,
+						'module-install': env.MODULE_INSTALL,
+						'module-enable': env.MODULE_ENABLE,
+						'module-remove': env.MODULE_REMOVE,
+						'theme-default': env.THEME_DEFAULT,
 						'migration-cutover': env.MIGRATION_CUTOVER,
 						'site-import': env.SITE_IMPORT,
 						'import-survey': env.IMPORT_SURVEY,
 						'estate-assess': env.ESTATE_ASSESS,
 						'git-pull': env.GIT_PULL,
 						'domain-attach': env.DOMAIN_ATTACH,
-						'node-site-create': env.NODE_SITE_CREATE
+						'node-site-create': env.NODE_SITE_CREATE,
+						'site-rollback': env.SITE_ROLLBACK,
+						'release-ring': env.RELEASE_RING,
+						'template-build': env.TEMPLATE_BUILD
 					}
 				});
 	},

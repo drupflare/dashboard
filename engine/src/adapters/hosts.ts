@@ -14,7 +14,8 @@ export function hostValue(route: HostRoute): string {
 		v: 1,
 		siteId: route.siteId,
 		script: route.script,
-		epoch: route.epoch
+		epoch: route.epoch,
+		...(route.environment === undefined ? {} : { environment: route.environment })
 	});
 }
 

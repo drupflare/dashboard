@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { runSiteCreate } from '../../../engine/src/workflows/site-create';
+import { encodeBundle } from '../../../engine/src/containers/image/template-build.mjs';
+import { planSiteCreate, runSiteCreate } from '../../../engine/src/workflows/site-create';
 import {
 	beginCreate,
 	custodyRows,
@@ -577,5 +578,227 @@ describe('a rollback and a hostname that another site holds', () => {
 		const world = await start();
 		await attempt(world, new Map(), { failAt: { step: 'verify', when: 'before' } }).done;
 		expect(world.authority.snapshot().hosts).toEqual([]);
+	});
+});
+
+describe('a create from a template', () => {
+	const COMMIT = 'c'.repeat(40);
+	const KEY = 'templates/thunder/tpl_aaaaaaaa/bundle';
+	const enc = new TextEncoder();
+
+	const bundleOf = (sql: Uint8Array, over: Record<string, unknown> = {}) =>
+		new Uint8Array(
+			encodeBundle(
+				{
+					version: 1,
+					entryId: 'thunder',
+					commit: COMMIT,
+					phpVersion: '8.4.27',
+					buildSeconds: 1,
+					rows: 3,
+					advisories: [],
+					patchesFailed: [],
+					packages: 1,
+					...over
+				},
+				[
+					{ name: 'database.sql', bytes: sql },
+					{ name: 'composer.lock', bytes: enc.encode('{}') }
+				]
+			)
+		);
+
+	// the site answers pending once for each wait before it answers applied
+	async function withTemplate(
+		options: {
+			blob?: Uint8Array | null;
+			states?: ('absent' | 'pending' | 'applied' | 'failed')[];
+			firstRun?: boolean;
+		} = {}
+	) {
+		const world = await makeWorld();
+		world.input.template = { entryId: 'thunder', commit: COMMIT, bundleKey: KEY };
+		if (options.firstRun === false) delete world.input.firstRun;
+		await beginCreate(world);
+		const blobs = new Map<string, Uint8Array>();
+		const stored =
+			options.blob === undefined
+				? bundleOf(enc.encode('INSERT INTO a VALUES(1);'))
+				: options.blob;
+		if (stored !== null) blobs.set(KEY, stored);
+		const restores: { hostname: string; body: Uint8Array; label: string }[] = [];
+		const states = [...(options.states ?? ['pending', 'applied'])];
+		let sent = false;
+		const worker = {
+			importState: async () => (sent ? (states.shift() ?? 'applied') : 'absent'),
+			importReason: async () => 'users',
+			restore: async (hostname: string, body: Uint8Array, label: string) => {
+				sent = true;
+				restores.push({ hostname, body, label });
+			}
+		};
+		const deps = {
+			...world.deps,
+			worker: worker as never,
+			blobs: { get: async (key: string) => blobs.get(key) ?? null } as never,
+			sleep: async (): Promise<void> => undefined,
+			templateCodeDelivery: true
+		};
+		const run = (
+			memo: Memo = new Map(),
+			custom: Parameters<typeof runSiteCreate>[1] = deps
+		) => {
+			const { runner, executed } = makeRunner(memo, {});
+			return { executed, done: runSiteCreate(runner, custom, world.input) };
+		};
+		return { world, run, restores, deps };
+	}
+
+	it('restores the template database after the first run and before the probe', async () => {
+		const { world, run, restores } = await withTemplate();
+		const { executed, done } = run();
+		expect(await done).toEqual({ status: 'succeeded' });
+		expect(restores).toHaveLength(1);
+		expect(restores[0]).toMatchObject({
+			hostname: world.input.hostname,
+			label: world.operationId
+		});
+		expect(new TextDecoder().decode(restores[0]?.body)).toBe('INSERT INTO a VALUES(1);');
+		const at = (step: string) => executed.indexOf(step);
+		expect(at('first-run')).toBeLessThan(at('template-restore'));
+		expect(at('template-restore')).toBeLessThan(at('template-apply'));
+		expect(at('template-apply')).toBeLessThan(at('verify'));
+	});
+
+	it('tells the owner the template replaced the first admin account', async () => {
+		const { world, run } = await withTemplate();
+		await run().done;
+		const operation = await world.store.get(world.operationId);
+		expect(operation?.finalObservation?.summary).toContain('thunder template replaced');
+	});
+
+	it('does not send the database twice when the engine dies inside the restore step', async () => {
+		const reference = await withTemplate();
+		const steps = reference.run();
+		await steps.done;
+		const at = steps.executed.indexOf('template-restore') + 1;
+		const { world, run, restores, deps } = await withTemplate();
+		const memo: Memo = new Map();
+		const first = makeRunner(memo, { killDuring: at });
+		await expect(runSiteCreate(first.runner, deps, world.input)).rejects.toBeInstanceOf(Killed);
+		expect(restores).toHaveLength(1);
+		expect(await run(memo).done).toEqual({ status: 'succeeded' });
+		expect(restores).toHaveLength(1);
+	});
+
+	it('refuses a bundle that is missing and rolls the site back', async () => {
+		const { run, restores } = await withTemplate({ blob: null });
+		const outcome = await run().done;
+		expect(outcome).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringContaining('template_missing')
+		});
+		expect(restores).toEqual([]);
+	});
+
+	it.each([
+		['another commit', { commit: 'd'.repeat(40) }],
+		['another template', { entryId: 'govcms' }]
+	])('refuses a bundle built for %s', async (_name, over) => {
+		const { run, restores } = await withTemplate({
+			blob: bundleOf(enc.encode('INSERT INTO a VALUES(1);'), over)
+		});
+		const outcome = await run().done;
+		expect(outcome).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringContaining('template_changed')
+		});
+		expect(restores).toEqual([]);
+	});
+
+	it('refuses a database above the restore ceiling with the plain reason and sends nothing', async () => {
+		const { run, restores } = await withTemplate({
+			blob: bundleOf(new Uint8Array(16 * 1024 * 1024 + 1))
+		});
+		const outcome = await run().done;
+		expect(outcome).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringContaining('A larger restore path is not available yet')
+		});
+		expect(restores).toEqual([]);
+	});
+
+	it('refuses a bundle that was cut', async () => {
+		const whole = bundleOf(enc.encode('INSERT INTO a VALUES(1);'));
+		const { run } = await withTemplate({ blob: whole.slice(0, whole.length - 4) });
+		expect(await run().done).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringContaining('bundle_malformed')
+		});
+	});
+
+	it('needs the owner token the first run seals', async () => {
+		const { run, restores } = await withTemplate({ firstRun: false });
+		expect(await run().done).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringContaining('template_needs_owner_token')
+		});
+		expect(restores).toEqual([]);
+	});
+
+	it('rolls back when the site reports the import failed, and says where', async () => {
+		const { run } = await withTemplate({ states: ['pending', 'failed'] });
+		expect(await run().done).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringContaining('failed at users')
+		});
+	});
+
+	it('rolls back when the site never applies the template', async () => {
+		const { world, run, deps } = await withTemplate({ states: Array(100).fill('pending') });
+		let ticks = 0;
+		const slow = {
+			...deps,
+			sleep: async () => {
+				ticks++;
+				world.clock.advance(60_000);
+			}
+		};
+		expect(await run(new Map(), slow).done).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringContaining('template_import_timeout')
+		});
+		expect(ticks).toBeGreaterThan(1);
+	});
+
+	it('refuses when the engine has no restore dependencies', async () => {
+		const { world, run } = await withTemplate();
+		expect(
+			await run(new Map(), { ...world.deps, templateCodeDelivery: true }).done
+		).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringContaining('template_unavailable')
+		});
+	});
+
+	it('refuses a template before any resource while code delivery is off', async () => {
+		const { run, deps } = await withTemplate();
+		const { executed, done } = run(new Map(), { ...deps, templateCodeDelivery: undefined });
+		expect(await done).toMatchObject({
+			status: 'failed',
+			reason: expect.stringContaining('template_code_delivery')
+		});
+		expect(executed).not.toContain('reserve-name');
+		expect(executed.some((step) => step.startsWith('resource.'))).toBe(false);
+	});
+
+	it('leaves a create without a template with no template steps', async () => {
+		const world = await start();
+		const { executed, done } = attempt(world, new Map());
+		await done;
+		expect(executed).not.toContain('template-restore');
+		expect(planSiteCreate(world.input).steps.map((step) => step.id)).not.toContain(
+			'template-restore'
+		);
 	});
 });

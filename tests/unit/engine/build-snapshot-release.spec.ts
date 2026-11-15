@@ -1,4 +1,6 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,9 +13,11 @@ import {
 	checkArgs,
 	engineLimits,
 	gitRead,
+	resolveRef,
 	run,
 	snapshotOf,
 	stagingLinkHost,
+	treeAtRef,
 	treeHash,
 	type Args,
 	type GitRunner
@@ -467,5 +471,105 @@ appendFileSync(arg('sums'), digest + '  ' + name + '\\n');
 			)
 		).rejects.toThrow('cannot be above');
 		made.push(`${dir}-out`);
+	});
+});
+
+describe('treeAtRef', () => {
+	const git = (cwd: string, ...args: string[]) =>
+		execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], {
+			cwd,
+			encoding: 'utf8'
+		}).trim();
+
+	async function repo(): Promise<string> {
+		const dir = await mkdtemp(join(tmpdir(), 'snapshot-ref-spec-'));
+		made.push(dir);
+		git(dir, 'init', '-q', '-b', 'main');
+		git(dir, 'config', 'user.email', 'spec@example.test');
+		git(dir, 'config', 'user.name', 'spec');
+		await writeFile(join(dir, '.gitignore'), 'hydrated/\n.dev.vars\n');
+		await mkdir(join(dir, 'src'), { recursive: true });
+		await writeFile(join(dir, 'src/a.txt'), 'one');
+		await writeFile(join(dir, 'b.txt'), 'two');
+		git(dir, 'add', '.');
+		git(dir, 'commit', '-q', '-m', 'first');
+		await mkdir(join(dir, 'hydrated'), { recursive: true });
+		await writeFile(join(dir, 'hydrated/pack.bin'), 'hydrated');
+		await writeFile(join(dir, '.dev.vars'), 'SECRET=1');
+		return dir;
+	}
+
+	it('names the same id as a clean checkout at that commit', async () => {
+		const dir = await repo();
+		const tree = await treeAtRef(dir, 'HEAD');
+		try {
+			expect(tree.snapshot).toEqual(await snapshotOf(dir));
+		} finally {
+			await tree.cleanup();
+		}
+	});
+
+	it('ignores edits and new files in the working tree', async () => {
+		const dir = await repo();
+		const clean = await treeAtRef(dir, 'HEAD');
+		await clean.cleanup();
+		await writeFile(join(dir, 'b.txt'), 'edited');
+		await writeFile(join(dir, 'new.txt'), 'untracked');
+		const tree = await treeAtRef(dir, 'HEAD');
+		try {
+			expect(tree.snapshot.id).toBe(clean.snapshot.id);
+			expect(await readFile(join(tree.dir, 'b.txt'), 'utf8')).toBe('two');
+			expect(existsSync(join(tree.dir, 'new.txt'))).toBe(false);
+		} finally {
+			await tree.cleanup();
+		}
+	});
+
+	it('resolves a branch and a short sha to the same commit', async () => {
+		const dir = await repo();
+		const sha = git(dir, 'rev-parse', 'HEAD');
+		expect(await resolveRef(dir, 'main')).toBe(sha);
+		expect(await resolveRef(dir, sha.slice(0, 7))).toBe(sha);
+	});
+
+	it('builds an older commit while the working tree has moved on', async () => {
+		const dir = await repo();
+		const first = git(dir, 'rev-parse', 'HEAD');
+		await writeFile(join(dir, 'b.txt'), 'second');
+		git(dir, 'commit', '-q', '-am', 'second');
+		const tree = await treeAtRef(dir, first);
+		try {
+			expect(tree.snapshot.head).toBe(first);
+			expect(await readFile(join(tree.dir, 'b.txt'), 'utf8')).toBe('two');
+		} finally {
+			await tree.cleanup();
+		}
+	});
+
+	it('links ignored files from the checkout and never links a secrets file', async () => {
+		const dir = await repo();
+		const tree = await treeAtRef(dir, 'main');
+		try {
+			expect(await readFile(join(tree.dir, 'hydrated/pack.bin'), 'utf8')).toBe('hydrated');
+			expect(existsSync(join(tree.dir, '.dev.vars'))).toBe(false);
+		} finally {
+			await tree.cleanup();
+		}
+	});
+
+	it('removes its folder on cleanup and refuses a bad ref', async () => {
+		const dir = await repo();
+		const tree = await treeAtRef(dir, 'HEAD');
+		await tree.cleanup();
+		expect(existsSync(tree.dir)).toBe(false);
+		await expect(resolveRef(dir, '--output=x')).rejects.toThrow('is not a commit or a branch');
+		await expect(resolveRef(dir, 'no-such-branch')).rejects.toThrow('names no commit');
+	});
+
+	it('reads the ref from the arguments', async () => {
+		const dir = await worker({});
+		const args = checkArgs(['--id-only', '--ref', 'main', '--worker', dir]);
+		expect(args).not.toBe('help');
+		if (args !== 'help') expect(args.ref).toBe('main');
 	});
 });

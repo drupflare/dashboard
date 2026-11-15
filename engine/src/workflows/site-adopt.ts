@@ -128,7 +128,7 @@ export function planSiteAdopt(input: SiteAdoptInput): Plan {
 
 // the reused step functions run under their own step names, so the same name in a create, a backup
 // and a restore never meets in one workflow instance
-function phase(ctx: Ctx, prefix: string, stepIds: Record<string, string> = {}): Ctx {
+export function phase(ctx: Ctx, prefix: string, stepIds: Record<string, string> = {}): Ctx {
 	return {
 		...ctx,
 		step: { do: (name, fn) => ctx.step.do(`${prefix}.${name}`, fn) },

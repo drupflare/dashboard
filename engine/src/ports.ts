@@ -2,14 +2,21 @@ import type { EstateReport, RowVerdict } from '@contracts/estate';
 import type { AuthorityState } from '@contracts/site-auth';
 import type { SitePlane } from '@contracts/sites';
 import type { UploadMetadata } from '@drupflare/workforce';
+import type { Ring } from '../../src/server/domain/cohorts';
 import type { DnsResolver } from '../../src/server/domain/dns-check';
 import type { ClaimRow, Observation } from '../../src/server/domain/domain-attach';
 import type { CommandRequest } from '../../src/server/domain/fleet';
+import type { RepairBudget } from '../../src/server/domain/incidents';
+import type { RingObservation, RolloutState } from '../../src/server/domain/rings';
+import type { AccessRule } from '../../src/shared/access-presets';
 import type { Challenge, ChallengeInput } from '../../src/shared/custody/challenge';
 import type { EstateRowRecord } from '../../src/shared/estate-sql';
+import type { Observation as HealthObservation } from '../../src/shared/health/predicate';
 import type { PreflightResult } from '../../src/shared/preflight';
+import type { SettingsResponse } from '../../src/shared/site-config/levers';
 import type { BackupRecord, ExportPage } from './backup-parts';
 import type { BundleLimits, BundleManifest, BundleModule } from './bundle';
+import type { RunRecord, RunRefusal } from './containers/jobs';
 import type { Custody, FirstRunAdmin, FirstRunReads, FirstRunSecrets } from './custody';
 import type {
 	GitPullResult,
@@ -23,6 +30,7 @@ import type { CommandStatus, SendResult } from './node-link';
 import type { OperationStore, SiteRowState } from './operations/store';
 import type { ResourceLedger } from './ownership';
 import type { ResourceKind } from './provision-plan';
+import type { LadderSwitches, RepairRecord, RepairStatus } from './repair/rows';
 import type { SiteSurvey } from './vendor/drangler/survey';
 
 // #region cloudflare
@@ -105,6 +113,8 @@ export interface HostRoute {
 	siteId: string;
 	script: string;
 	epoch: number;
+	// the environment this host serves; a host with none is production
+	environment?: string;
 }
 
 export interface Authority {
@@ -320,6 +330,176 @@ export interface BackupDeps extends EngineDeps {
 	blobs: BackupBlobs;
 	backups: BackupLedger;
 	sleep(ms: number): Promise<void>;
+}
+
+// #region restored copies, environments and point-in-time recovery
+
+// the status vocabulary is src/shared/environments.ts; an unknown one is refused
+export interface EnvironmentStore {
+	setStatus(organizationId: string, id: string, status: string, now: number): Promise<void>;
+}
+
+export interface VerificationStore {
+	// a backup that is not in the organisation stays as it is
+	markVerified(organizationId: string, backupId: string, now: number): Promise<void>;
+}
+
+// the live access rules of one site and the sites its environments run as; a revoked rule and a
+// deleted environment are never returned
+export interface AccessLedger {
+	load(
+		organizationId: string,
+		siteId: string
+	): Promise<{
+		rules: AccessRule[];
+		environments: { id: string; siteId: string | null }[];
+	}>;
+	// the production site an environment belongs to, null when the organisation has no such environment
+	parentOf(organizationId: string, environmentId: string): Promise<string | null>;
+}
+
+export interface AccessDeps extends EngineDeps {
+	access: AccessLedger;
+}
+
+export interface CopyDeps extends BackupDeps {
+	environments: EnvironmentStore;
+	verifications: VerificationStore;
+	access: AccessLedger;
+}
+
+export interface PitrScheduled {
+	scheduled: string;
+	// the bookmark that reverses the restore, returned only by the call that schedules it
+	undo: string;
+}
+
+// the site's owner route for point-in-time recovery; a refused token throws, a back end with no
+// change log throws a permanent error
+export interface PitrWorker {
+	bookmarkAt(hostname: string, at: number, auth: OwnerAuth): Promise<string>;
+	schedule(hostname: string, bookmark: string, auth: OwnerAuth): Promise<PitrScheduled>;
+}
+
+export interface PitrDeps extends BackupDeps {
+	pitr: PitrWorker;
+}
+
+// #endregion
+
+// #endregion
+
+// #region site settings
+
+export type SettingLever = SettingsResponse['levers'][number];
+
+export interface SettingsPatchAnswer {
+	refused: string[];
+	invalid: { name: string; reason: string }[];
+}
+
+// the site's owner route for runtime settings; a refused token or a changed etag throws a permanent error
+export interface SettingsWorker {
+	read(hostname: string, auth: OwnerAuth): Promise<SettingLever[]>;
+	// a null value clears the override; ifMatch is sent as If-Match when the caller holds an etag
+	write(
+		hostname: string,
+		patch: Record<string, unknown>,
+		auth: OwnerAuth,
+		ifMatch: string | null
+	): Promise<SettingsPatchAnswer>;
+}
+
+export const CONFIG_CHANGE_STATUSES = ['pending', 'applied', 'unverified', 'failed'] as const;
+export type ConfigChangeStatus = (typeof CONFIG_CHANGE_STATUSES)[number];
+
+// before and after are stored as the JSON text they were written as
+export interface ConfigChangeRecord {
+	id: string;
+	organizationId: string;
+	siteId: string;
+	operationId: string;
+	key: string;
+	before: string;
+	after: string;
+	actor: string;
+	status: ConfigChangeStatus;
+	createdAt: number;
+	revertedBy: string | null;
+}
+
+export interface ConfigLedger {
+	forOperation(organizationId: string, operationId: string): Promise<ConfigChangeRecord[]>;
+	// a row that already exists is left as it is, so a replay keeps the first reading
+	begin(rows: readonly ConfigChangeRecord[]): Promise<void>;
+	settle(organizationId: string, operationId: string, status: ConfigChangeStatus): Promise<void>;
+	markReverted(
+		organizationId: string,
+		ids: readonly string[],
+		operationId: string
+	): Promise<void>;
+}
+
+export interface ConfigDeps extends BackupDeps {
+	settings: SettingsWorker;
+	changes: ConfigLedger;
+}
+
+// #endregion
+
+// #region modules
+
+export interface InstallVerdict {
+	verdict: 'installable' | 'blocked' | 'unverifiable' | 'not-found';
+	conflicts: { requires: string; constraint: string; installed: string | null; reason: string }[];
+}
+
+// what the site says about one module without changing anything
+export interface ModuleReading {
+	// the code is on the site's disk and Drupal can see it
+	present: boolean;
+	enabled: boolean;
+}
+
+// a route the site does not have yet answers not_available, never an error
+export type UninstallAnswer =
+	| { kind: 'not_available' }
+	| {
+			kind: 'plan';
+			enabledModules: string[];
+			dependents: string[];
+			wouldDelete: string[];
+	  }
+	| { kind: 'removed' };
+
+export type ThemeDefaultAnswer =
+	{ kind: 'not_available' } | { kind: 'set'; default: string | null; admin: string | null };
+
+// the site's owner routes for modules and themes; every call takes the owner token the caller opened
+export interface ModuleWorker {
+	installable(hostname: string, name: string, auth: OwnerAuth): Promise<InstallVerdict>;
+	read(hostname: string, project: string, auth: OwnerAuth): Promise<ModuleReading>;
+	// true when the site reports the package in place
+	install(hostname: string, name: string, auth: OwnerAuth): Promise<{ ok: boolean }>;
+	enable(hostname: string, project: string, auth: OwnerAuth): Promise<{ ok: boolean }>;
+	// dryRun reports the plan and removes nothing
+	uninstall(
+		hostname: string,
+		project: string,
+		options: { dryRun: boolean },
+		auth: OwnerAuth
+	): Promise<UninstallAnswer>;
+	// dryRun reads the current default and admin themes and changes nothing
+	setDefaultTheme(
+		hostname: string,
+		change: { project: string; target: 'default' | 'admin' },
+		options: { dryRun: boolean },
+		auth: OwnerAuth
+	): Promise<ThemeDefaultAnswer>;
+}
+
+export interface ModuleDeps extends BackupDeps {
+	modules: ModuleWorker;
 }
 
 // #endregion
@@ -582,6 +762,80 @@ export interface GitDeps extends BackupDeps {
 
 // #endregion
 
+// #region repair
+
+export interface RepairCall {
+	method: 'GET' | 'POST';
+	path: string;
+}
+
+export interface RepairAnswer {
+	status: number;
+	json: unknown;
+}
+
+// what the site shows now, read from its health and reconcile answers
+export interface RepairReading extends HealthObservation {
+	// undefined means the site did not say, which the ladder reads as unsafe
+	transactionDepth: number | undefined;
+	shedding: boolean;
+	quarantined: boolean;
+}
+
+// the site's own owner routes; a refused token throws, any other answer comes back as a status
+export interface RepairWorker {
+	observe(hostname: string, auth: OwnerAuth): Promise<RepairReading>;
+	call(hostname: string, call: RepairCall, auth: OwnerAuth): Promise<RepairAnswer>;
+}
+
+export interface NewRepair {
+	id: string;
+	organizationId: string;
+	siteId: string;
+	repairId: string;
+	rung: string;
+	status: RepairStatus;
+	observationBefore: string;
+	operationId: string;
+	undoOf: string | null;
+	createdAt: number;
+	finishedAt: number | null;
+}
+
+export interface RepairLedger {
+	// a row whose id exists is returned unchanged
+	begin(row: NewRepair): Promise<RepairRecord>;
+	// moves a running row to its end state; any other row stays as it is
+	finish(
+		organizationId: string,
+		id: string,
+		end: { status: RepairStatus; observationAfter: string | null; finishedAt: number }
+	): Promise<void>;
+	// marks a succeeded repair as undone; any other row stays as it is
+	undone(organizationId: string, id: string): Promise<void>;
+	get(organizationId: string, id: string): Promise<RepairRecord | null>;
+	// newest first
+	history(
+		organizationId: string,
+		siteId: string,
+		repairId: string,
+		limit: number
+	): Promise<RepairRecord[]>;
+	// repairs begun since the time given, for the repair budget; a refused one spent nothing
+	since(sinceMs: number): Promise<{ orgId: string; atMs: number }[]>;
+	switches(organizationId: string, siteId: string): Promise<LadderSwitches>;
+}
+
+export interface RepairDeps extends BackupDeps {
+	repair: RepairWorker;
+	repairs: RepairLedger;
+	// whether a release is moving this site between rings
+	ringPromotion(siteId: string): Promise<boolean>;
+	budget: RepairBudget;
+}
+
+// #endregion
+
 // #region domains
 
 export interface CustomHostnameState {
@@ -738,6 +992,107 @@ export interface EstateDeps extends ImportDeps {
 	estate: EstateStore;
 	// the public URL-only check for one hostname
 	preflight(hostname: string): Promise<PreflightResult>;
+}
+
+// #endregion
+
+// #region rollback
+
+export interface RollbackFacts {
+	// null when the site never recorded one
+	dataSchemaVersion: number | null;
+	// null when the release is not registered
+	target: { schemaVersion: number; acceptsSchema: number } | null;
+}
+
+export interface RollbackDeps extends EngineDeps {
+	rollbackFacts(siteId: string, targetId: string): Promise<RollbackFacts>;
+}
+
+// #endregion
+
+// #region rollout
+
+export type MoveStatus = 'running' | 'succeeded' | 'failed';
+
+// starts site.upgrade and site.rollback for one site; a repeat with the same key starts nothing new
+export interface SiteMover {
+	// the release the site runs now, null when the row does not say
+	current(siteId: string): Promise<string | null>;
+	upgrade(site: { id: string; plan: string }, releaseId: string, key: string): Promise<string>;
+	rollback(site: { id: string; plan: string }, releaseId: string, key: string): Promise<string>;
+	status(operationId: string): Promise<MoveStatus>;
+}
+
+export interface RingProgress {
+	upgraded: string[];
+	failed: string[];
+	reverted: string[];
+	// sites a revert could not put back, with the plain reason
+	stuck: string[];
+}
+
+export interface StoredRollout {
+	id: string;
+	releaseId: string;
+	state: RolloutState;
+	progress: Record<string, RingProgress>;
+	// the release each site ran before this rollout moved it
+	previous: Record<string, string | null>;
+	firstRingAt: number | null;
+	lastRingAt: number | null;
+}
+
+export interface RolloutStore {
+	load(id: string): Promise<StoredRollout | null>;
+	save(rollout: StoredRollout): Promise<void>;
+	stopRequested(id: string): Promise<boolean>;
+}
+
+export interface RingProbe {
+	ring: Ring;
+	releaseId: string;
+	siteIds: string[];
+	// the synthetic sites among them
+	syntheticIds: string[];
+}
+
+// reads what the ring's sites report now; a field it cannot read stays out of the answer
+export type ObserveRing = (probe: RingProbe) => Promise<RingObservation>;
+
+export interface RolloutDeps extends EngineDeps {
+	mover: SiteMover;
+	rollouts: RolloutStore;
+	observe: ObserveRing;
+}
+
+// #endregion
+
+// #region templates
+
+// the job runner answers with the record of the run, or with the reason it refused the job
+export type TemplateJobAnswer = RunRecord | RunRefusal;
+
+export interface TemplateRunner {
+	run(request: { key: string; input: Uint8Array }): Promise<TemplateJobAnswer>;
+}
+
+export interface TemplateStore {
+	ready(id: string, patch: { bundleKey: string; manifest: string }): Promise<void>;
+	fail(id: string, failure: string): Promise<void>;
+}
+
+export interface TemplateBuildDeps {
+	jobs: TemplateRunner;
+	blobs: BackupBlobs;
+	templates: TemplateStore;
+}
+
+// a create from a template restores the bundle's database into the new site
+export interface TemplateCreateDeps extends EngineDeps {
+	worker: BackupWorker;
+	blobs: BackupBlobs;
+	sleep(ms: number): Promise<void>;
 }
 
 // #endregion

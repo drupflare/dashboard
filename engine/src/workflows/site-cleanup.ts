@@ -90,7 +90,7 @@ const forgetSite: Action = async (deps, target) => {
 	}
 };
 
-const ACTIONS: readonly (readonly [id: string, action: Action])[] = [
+export const ACTIONS: readonly (readonly [id: string, action: Action])[] = [
 	['stop', stopServing],
 	['script', dropScript],
 	['resources', dropResources],

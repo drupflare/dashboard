@@ -231,3 +231,38 @@ export async function checkAssetBytes(asset: BundleAsset, bytes: Uint8Array): Pr
 		throw new BundleError('hash_mismatch', `${asset.path} does not match its hash`);
 	}
 }
+
+// one read at a time cost about 95 ms per asset on stage (414 s for 4,339 files); per 1,000 files
+// 8 lanes took 8.7 s, 16 took 7.5 s and 32 took 7.1 s, so the runtime's connection limit flattens it
+export const ASSET_READ_LANES = 16;
+
+export async function readAssetChunk(
+	chunk: readonly string[],
+	byHash: ReadonlyMap<string, BundleAsset>,
+	read: (hash: string) => Promise<Uint8Array>,
+	lanes = ASSET_READ_LANES
+): Promise<{ hash: string; bytes: Uint8Array }[]> {
+	const files = new Array<{ hash: string; bytes: Uint8Array }>(chunk.length);
+	let next = 0;
+	let failed = false;
+	async function lane(): Promise<void> {
+		while (!failed && next < chunk.length) {
+			const index = next++;
+			const hash = chunk[index]!;
+			try {
+				const asset = byHash.get(hash);
+				if (asset === undefined) {
+					throw new PermanentError('unknown_asset', `${hash} is not in the manifest`);
+				}
+				const bytes = await read(hash);
+				await checkAssetBytes(asset, bytes);
+				files[index] = { hash, bytes };
+			} catch (error) {
+				failed = true;
+				throw error;
+			}
+		}
+	}
+	await Promise.all(Array.from({ length: Math.min(lanes, chunk.length) }, lane));
+	return files;
+}

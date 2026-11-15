@@ -24,8 +24,19 @@
 		{ "name": "site-purge", "binding": "SITE_PURGE", "class_name": "SitePurge" },
 		{ "name": "site-cleanup", "binding": "SITE_CLEANUP", "class_name": "SiteCleanup" },
 		{ "name": "site-adopt", "binding": "SITE_ADOPT", "class_name": "SiteAdopt" },
+		{ "name": "site-repair", "binding": "SITE_REPAIR", "class_name": "SiteRepair" },
 		{ "name": "backup-create", "binding": "BACKUP_CREATE", "class_name": "BackupCreate" },
 		{ "name": "backup-restore", "binding": "BACKUP_RESTORE", "class_name": "BackupRestore" },
+		{ "name": "backup-verify", "binding": "BACKUP_VERIFY", "class_name": "BackupVerify" },
+		{ "name": "access-sync", "binding": "ACCESS_SYNC", "class_name": "AccessSync" },
+		{ "name": "env-create", "binding": "ENV_CREATE", "class_name": "EnvCreate" },
+		{ "name": "env-delete", "binding": "ENV_DELETE", "class_name": "EnvDelete" },
+		{ "name": "site-pitr", "binding": "SITE_PITR", "class_name": "SitePitr" },
+		{ "name": "config-apply", "binding": "CONFIG_APPLY", "class_name": "ConfigApply" },
+		{ "name": "module-install", "binding": "MODULE_INSTALL", "class_name": "ModuleInstall" },
+		{ "name": "module-enable", "binding": "MODULE_ENABLE", "class_name": "ModuleEnable" },
+		{ "name": "module-remove", "binding": "MODULE_REMOVE", "class_name": "ModuleRemove" },
+		{ "name": "theme-default", "binding": "THEME_DEFAULT", "class_name": "ThemeDefault" },
 		{
 			"name": "migration-cutover",
 			"binding": "MIGRATION_CUTOVER",
@@ -40,7 +51,10 @@
 			"name": "node-site-create",
 			"binding": "NODE_SITE_CREATE",
 			"class_name": "NodeSiteCreate"
-		}
+		},
+		{ "name": "site-rollback", "binding": "SITE_ROLLBACK", "class_name": "SiteRollback" },
+		{ "name": "release-ring", "binding": "RELEASE_RING", "class_name": "ReleaseRing" },
+		{ "name": "template-build", "binding": "TEMPLATE_BUILD", "class_name": "TemplateBuild" }
 	],
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },
@@ -78,7 +92,8 @@
 						"class_name": "Names",
 						"script_name": "drupflare-dispatch-stage"
 					},
-					{ "name": "NODE_SESSION", "class_name": "NodeSession" }
+					{ "name": "NODE_SESSION", "class_name": "NodeSession" },
+					{ "name": "JOB_RUNNER", "class_name": "JobRunner" }
 				]
 			},
 			"workflows": [
@@ -109,6 +124,11 @@
 					"class_name": "SiteAdopt"
 				},
 				{
+					"name": "site-repair-stage",
+					"binding": "SITE_REPAIR",
+					"class_name": "SiteRepair"
+				},
+				{
 					"name": "backup-create-stage",
 					"binding": "BACKUP_CREATE",
 					"class_name": "BackupCreate"
@@ -117,6 +137,44 @@
 					"name": "backup-restore-stage",
 					"binding": "BACKUP_RESTORE",
 					"class_name": "BackupRestore"
+				},
+				{
+					"name": "backup-verify-stage",
+					"binding": "BACKUP_VERIFY",
+					"class_name": "BackupVerify"
+				},
+				{
+					"name": "access-sync-stage",
+					"binding": "ACCESS_SYNC",
+					"class_name": "AccessSync"
+				},
+				{ "name": "env-create-stage", "binding": "ENV_CREATE", "class_name": "EnvCreate" },
+				{ "name": "env-delete-stage", "binding": "ENV_DELETE", "class_name": "EnvDelete" },
+				{ "name": "site-pitr-stage", "binding": "SITE_PITR", "class_name": "SitePitr" },
+				{
+					"name": "config-apply-stage",
+					"binding": "CONFIG_APPLY",
+					"class_name": "ConfigApply"
+				},
+				{
+					"name": "module-install-stage",
+					"binding": "MODULE_INSTALL",
+					"class_name": "ModuleInstall"
+				},
+				{
+					"name": "module-enable-stage",
+					"binding": "MODULE_ENABLE",
+					"class_name": "ModuleEnable"
+				},
+				{
+					"name": "module-remove-stage",
+					"binding": "MODULE_REMOVE",
+					"class_name": "ModuleRemove"
+				},
+				{
+					"name": "theme-default-stage",
+					"binding": "THEME_DEFAULT",
+					"class_name": "ThemeDefault"
 				},
 				{
 					"name": "migration-cutover-stage",
@@ -148,11 +206,39 @@
 					"name": "node-site-create-stage",
 					"binding": "NODE_SITE_CREATE",
 					"class_name": "NodeSiteCreate"
+				},
+				{
+					"name": "site-rollback-stage",
+					"binding": "SITE_ROLLBACK",
+					"class_name": "SiteRollback"
+				},
+				{
+					"name": "release-ring-stage",
+					"binding": "RELEASE_RING",
+					"class_name": "ReleaseRing"
+				},
+				{
+					"name": "template-build-stage",
+					"binding": "TEMPLATE_BUILD",
+					"class_name": "TemplateBuild"
+				}
+			],
+			"containers": [
+				{
+					"class_name": "JobRunner",
+					"scheduling_policy": "durable_object",
+					"images": {
+						"runner": {
+							"dockerfile": "./src/containers/image/Dockerfile",
+							"build_context": "./src/containers/image"
+						}
+					}
 				}
 			],
 			"migrations": [
 				{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },
-				{ "tag": "v2", "new_sqlite_classes": ["NodeSession"] }
+				{ "tag": "v2", "new_sqlite_classes": ["NodeSession"] },
+				{ "tag": "v3", "new_sqlite_classes": ["JobRunner"] }
 			],
 			"vars": {
 				"DISPATCH_NAMESPACE": "drupflare-stage",

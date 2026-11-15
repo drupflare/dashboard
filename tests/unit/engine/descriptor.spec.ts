@@ -206,6 +206,15 @@ describe('the descriptor against the Worker configs', () => {
 		for (const ref of a.resources) expect(text).toContain(ref.providerId);
 	});
 
+	it('adds the temporary tag for a scratch or preview copy and stays within eight tags', () => {
+		const base = input('managed');
+		const plain = buildDescriptor(base).metadata.tags ?? [];
+		const temporary = buildDescriptor({ ...base, temporary: true }).metadata.tags ?? [];
+		expect(plain).not.toContain('wf:ttl');
+		expect(temporary).toEqual([...plain, 'wf:ttl']);
+		expect(temporary.length).toBeLessThanOrEqual(8);
+	});
+
 	it('sets PLAN and SITE_ID per site and tags the script', () => {
 		const built = buildDescriptor(input('managed'));
 		const plain = Object.fromEntries(

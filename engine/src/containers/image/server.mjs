@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { pathToFileURL } from 'node:url';
+import { templateBuild } from './template-build.mjs';
 
 export const KINDS = ['composer-tree', 'template-build', 'echo-import', 'drupal-hop'];
 export const EXIT_HEADER = 'x-job-exit';
@@ -133,9 +134,11 @@ const notBuilt =
 		return EXIT_NOT_BUILT;
 	};
 
+const templateBuilder = (job) => templateBuild(job, { run: runCommand, env: childEnv });
+
 export const RUNNERS = {
 	'composer-tree': composerTree,
-	'template-build': notBuilt('template-build'),
+	'template-build': templateBuilder,
 	'echo-import': echoImport,
 	'drupal-hop': notBuilt('drupal-hop')
 };

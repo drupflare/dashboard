@@ -69,7 +69,8 @@ const DISPATCH_SET_AT_DEPLOY = [
 	'CONTROL_HOST',
 	'SPIKE_MODE'
 ];
-const STAGE_ONLY = new Set(['SPIKE_MODE']);
+const STAGE_ONLY = new Set(['SPIKE_MODE', 'JOB_RUNNER']);
+const STAGE_ONLY_CLASSES = new Set(['JobRunner']);
 
 function boundIn(config: Config): Set<string> {
 	const names = new Set<string>();
@@ -152,11 +153,10 @@ describe('missingFrom', () => {
 	});
 });
 
-describe.each(environments('engine'))('the engine config, %s', (_env, config) => {
+describe.each(environments('engine'))('the engine config, %s', (env, config) => {
 	it('has every binding the engine code reads, apart from secrets and unreviewed numbers', () => {
-		expect(missingFrom(config, readsOf('engine', CONFIG_VARS), ENGINE_SET_AT_DEPLOY)).toEqual(
-			[]
-		);
+		const unbound = missingFrom(config, readsOf('engine', CONFIG_VARS), ENGINE_SET_AT_DEPLOY);
+		expect(unbound.filter((name) => env === 'stage' || !STAGE_ONLY.has(name))).toEqual([]);
 	});
 
 	it('exports every class it binds or runs', () => {
@@ -265,7 +265,11 @@ describe('the engine and the dispatch unit agree', () => {
 			];
 			const stageBound = [...boundIn(stage)].filter((name) => !STAGE_ONLY.has(name));
 			expect(stageBound.sort(), unit).toEqual([...boundIn(prod)].sort());
-			expect(stage.migrations, unit).toEqual(prod.migrations);
+			const stageMigrations = (stage.migrations ?? []).filter(
+				(step) =>
+					!(step.new_sqlite_classes ?? []).every((name) => STAGE_ONLY_CLASSES.has(name))
+			);
+			expect(stageMigrations, unit).toEqual(prod.migrations);
 			expect(stage.name, unit).not.toBe(prod.name);
 		}
 		const [prod, stage] = environments('engine').map(([, config]) => config) as [

@@ -358,6 +358,14 @@ export function setCursor(operation: Operation, cursor: string | null, now: numb
 	return { ...operation, cursor, updatedAt: touch(operation, now) };
 }
 
+export function setRollbackPoint(
+	operation: Operation,
+	rollbackPoint: string | null,
+	now: number
+): Operation {
+	return { ...operation, rollbackPoint, updatedAt: touch(operation, now) };
+}
+
 export function bindEpoch(operation: Operation, epoch: number, now: number): Operation {
 	if (operation.fencingEpoch === epoch) return operation;
 	if (operation.fencingEpoch !== 0) {

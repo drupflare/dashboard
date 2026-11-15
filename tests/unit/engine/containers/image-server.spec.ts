@@ -135,17 +135,14 @@ describe('createTail', () => {
 });
 
 describe('kinds that are not built', () => {
-	it.each(['template-build', 'drupal-hop'])(
-		'fails %s with a fixed code and a log line',
-		async (kind) => {
-			const base = await start();
-			const response = await post(base, head(kind));
-			expect(response.status).toBe(200);
-			expect(response.headers.get(EXIT_HEADER)).toBe(String(EXIT_NOT_BUILT));
-			expect(await response.text()).toBe(`[${kind}] ${kind} is not built`);
-			expect(logs).toContain(`[${kind}] ${kind} is not built`);
-		}
-	);
+	it('fails drupal-hop with a fixed code and a log line', async () => {
+		const base = await start();
+		const response = await post(base, head('drupal-hop'));
+		expect(response.status).toBe(200);
+		expect(response.headers.get(EXIT_HEADER)).toBe(String(EXIT_NOT_BUILT));
+		expect(await response.text()).toBe('[drupal-hop] drupal-hop is not built');
+		expect(logs).toContain('[drupal-hop] drupal-hop is not built');
+	});
 });
 
 describe('job outcomes', () => {

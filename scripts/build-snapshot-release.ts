@@ -10,6 +10,7 @@ import {
 	readlink,
 	rm,
 	stat,
+	symlink,
 	writeFile
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -31,11 +32,16 @@ const USAGE = `usage: bun --tsconfig-override engine/tsconfig.json scripts/build
                              route in deploy/engine.staging.json; production passes its own
   [--schema-version <n>]     default the worker's PACK_VERSION
   [--accepts-schema <n>]     default the schema version
+  [--ref <commit|branch>]    build the worker at that commit or branch instead of the working tree;
+                             uncommitted edits are ignored, and files git ignores (node_modules,
+                             the hydrated assets) are linked in from the checkout
   [--id-only]        print the release id and stop
 
 Builds the managed bundle from the worker's pinned commit plus its working tree, the way
 release.yml builds one for a tag, and names it snap-<7 hex of HEAD>-<8 hex of a tree hash>.
-The tree hash covers every tracked and every untracked, non-ignored file. The same run builds the
+The tree hash covers every tracked and every untracked, non-ignored file. With --ref the id names
+that commit and the hash covers its tracked files, so a clean checkout at the commit gets the same
+id either way. The same run builds the
 box bundle from the same tree, puts it at releases/<id>/box/<name>.tar.gz and writes payload.json
 beside the manifest, pointing at https://<link host>/link/payload/<id>/<name>.tar.gz with the
 archive's line from SHA256SUMS. It reads git and never writes to it, and it does not upload, tag or
@@ -43,6 +49,7 @@ push anything.`;
 
 const OPTIONS = {
 	worker: { type: 'string' },
+	ref: { type: 'string' },
 	out: { type: 'string' },
 	withhold: { type: 'string', multiple: true },
 	'link-host': { type: 'string' },
@@ -57,7 +64,7 @@ const BOX_CONFIG = 'wrangler.jsonc';
 const STAGING_ENGINE = 'deploy/engine.staging.json';
 const LINK_HOST = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
 const SUMS_LINE = /^([0-9a-f]{64}) {2}(\S+)$/;
-const READ_ONLY_GIT = new Set(['rev-parse', 'ls-files', 'diff']);
+const READ_ONLY_GIT = new Set(['rev-parse', 'ls-files', 'ls-tree', 'diff']);
 const HEAD = /^[0-9a-f]{40}$/;
 
 export type GitRunner = (args: string[], cwd: string) => Promise<string>;
@@ -141,8 +148,83 @@ export async function snapshotOf(worker: string, git: GitRunner = gitRead): Prom
 	};
 }
 
+// a commit sha or a branch, tag or other revision name, resolved to the commit it points at
+export async function resolveRef(
+	worker: string,
+	ref: string,
+	git: GitRunner = gitRead
+): Promise<string> {
+	if (ref === '' || ref.startsWith('-')) {
+		throw new Error(`--ref ${ref} is not a commit or a branch name`);
+	}
+	const sha = (
+		await git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], worker).catch(() => '')
+	).trim();
+	if (!HEAD.test(sha)) throw new Error(`--ref ${ref} names no commit in ${worker}`);
+	return sha;
+}
+
+const NEVER_LINKED = /^(\.dev\.vars|\.env)(\.|$)/;
+
+export interface RefTree {
+	dir: string;
+	snapshot: Snapshot;
+	cleanup(): Promise<void>;
+}
+
+// writes the commit's tracked files to a new folder with git archive, links in the files git
+// ignores (node_modules, hydrated assets) from the checkout, and names the release from the tree
+export async function treeAtRef(
+	worker: string,
+	ref: string,
+	git: GitRunner = gitRead
+): Promise<RefTree> {
+	const sha = await resolveRef(worker, ref, git);
+	const dir = await mkdtemp(join(tmpdir(), 'snapshot-ref-'));
+	const cleanup = () => rm(dir, { recursive: true, force: true });
+	try {
+		await runFile(
+			'sh',
+			['-c', 'git archive --format=tar "$1" | tar -x -C "$2"', 'archive', sha, dir],
+			worker,
+			process.env
+		);
+		const ignored = split(
+			await git(['ls-files', '-z', '-o', '-i', '--exclude-standard', '--directory'], worker)
+		);
+		for (const entry of ignored) {
+			const path = entry.replace(/\/$/, '');
+			if (path.split('/').some((part) => NEVER_LINKED.test(part))) continue;
+			const to = join(dir, path);
+			if (existsSync(to)) continue;
+			await mkdir(dirname(to), { recursive: true });
+			await symlink(join(worker, path), to);
+		}
+		const paths = split(await git(['ls-tree', '-r', '-z', '--name-only', sha], worker));
+		const entries: TreeEntry[] = [];
+		for (let at = 0; at < paths.length; at += 32) {
+			const batch = paths.slice(at, at + 32);
+			const digests = await Promise.all(batch.map((path) => fileDigest(join(dir, path))));
+			batch.forEach((path, index) => entries.push({ path, sha256: digests[index]! }));
+		}
+		const tree = treeHash(entries);
+		const snapshot = {
+			id: `snap-${sha.slice(0, 7)}-${tree.slice(0, 8)}`,
+			head: sha,
+			tree,
+			files: entries.length,
+			changed: 0
+		};
+		return { dir, snapshot, cleanup };
+	} catch (error) {
+		await cleanup();
+		throw error;
+	}
+}
+
 export interface Args {
 	worker: string;
+	ref?: string;
 	out: string;
 	idOnly: boolean;
 	withhold: string[];
@@ -174,7 +256,10 @@ export function checkArgs(argv: string[], dashboardRoot = DASHBOARD_ROOT): Args 
 	if (values.help) return 'help';
 	const worker = resolve(values.worker ?? join(dashboardRoot, '..', 'worker'));
 	if (!existsSync(join(worker, CONFIG))) throw new Error(`${worker} has no ${CONFIG}`);
-	if (values['id-only']) return { worker, out: '', idOnly: true, withhold: [], linkHost: '' };
+	const ref = values.ref;
+	if (values['id-only']) {
+		return { worker, ref, out: '', idOnly: true, withhold: [], linkHost: '' };
+	}
 	if (values.out === undefined || values.out === '') throw new Error('--out is required');
 	const out = resolve(values.out);
 	const inside = relative(worker, out);
@@ -190,6 +275,7 @@ export function checkArgs(argv: string[], dashboardRoot = DASHBOARD_ROOT): Args 
 	if (!LINK_HOST.test(linkHost)) throw new Error(`--link-host ${linkHost} is not a host name`);
 	return {
 		worker,
+		ref,
 		out,
 		idOnly: false,
 		withhold,
@@ -347,8 +433,28 @@ export async function build(
 	dashboardRoot = DASHBOARD_ROOT,
 	git: GitRunner = gitRead
 ): Promise<Built> {
+	if (args.ref === undefined) {
+		return buildFrom(args, dashboardRoot, () => snapshotOf(args.worker, git));
+	}
+	const tree = await treeAtRef(args.worker, args.ref, git);
+	try {
+		return await buildFrom(
+			{ ...args, worker: tree.dir },
+			dashboardRoot,
+			async () => tree.snapshot
+		);
+	} finally {
+		await tree.cleanup();
+	}
+}
+
+async function buildFrom(
+	args: Args,
+	dashboardRoot: string,
+	snapshotNow: () => Promise<Snapshot>
+): Promise<Built> {
 	const limits = engineLimits(dashboardRoot);
-	const snapshot = await snapshotOf(args.worker, git);
+	const snapshot = await snapshotNow();
 	const work = await mkdtemp(join(tmpdir(), 'snapshot-release-'));
 	let box: BuiltBox;
 	try {
@@ -365,7 +471,7 @@ export async function build(
 			);
 		}
 		const packed = await packBox(args, snapshot, work);
-		const after = await snapshotOf(args.worker, git);
+		const after = await snapshotNow();
 		if (after.id !== snapshot.id) {
 			throw new Error(
 				`the worker tree changed during the build: ${snapshot.id} became ${after.id}`
@@ -438,6 +544,7 @@ export async function build(
 		JSON.stringify({
 			releaseId: snapshot.id,
 			workerCommit: snapshot.head,
+			workerRef: args.ref ?? null,
 			dirty: snapshot.changed > 0,
 			changedFiles: snapshot.changed,
 			trackedAndUntrackedFiles: snapshot.files,
@@ -491,6 +598,11 @@ export async function run(argv: string[]): Promise<{ code: number; out: string }
 	try {
 		const args = checkArgs(argv);
 		if (args === 'help') return { code: 0, out: USAGE };
+		if (args.idOnly && args.ref !== undefined) {
+			const tree = await treeAtRef(args.worker, args.ref);
+			await tree.cleanup();
+			return { code: 0, out: tree.snapshot.id };
+		}
 		if (args.idOnly) return { code: 0, out: (await snapshotOf(args.worker)).id };
 		return { code: 0, out: summary(await build(args)) };
 	} catch (error) {

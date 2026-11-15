@@ -9,13 +9,14 @@ import {
 	type SitePlane,
 	type SiteRing
 } from '@contracts/sites';
+import { TEMPLATE_CODE_DELIVERY, TEMPLATE_HELD_REASON } from '../../../src/shared/template-entries';
 import { checkHeadroom, readAccountUsage } from '../account-usage';
 import {
 	bundleKeys,
-	checkAssetBytes,
 	checkMetadataBytes,
 	checkModuleBytes,
 	planChunks,
+	readAssetChunk,
 	validateBundle,
 	type BundleManifest
 } from '../bundle';
@@ -55,6 +56,13 @@ import {
 	type Outcome
 } from './common';
 import { cleanPrior, CLEANUP_STEP, type CleanupTarget } from './site-cleanup';
+import {
+	restoreTemplate,
+	TEMPLATE_RESTORE_STEPS,
+	TemplateRestoreError,
+	type TemplateCreate,
+	type TemplateRestoreDeps
+} from './template-restore';
 
 export interface SiteCreateInput {
 	operationId: string;
@@ -88,6 +96,10 @@ export interface SiteCreateInput {
 	chunkBytes?: number;
 	// an earlier attempt at this create that failed; it is cleaned up before this one reserves the name
 	prior?: CleanupTarget;
+	// a built template whose database is restored into the site after its first run
+	template?: TemplateCreate;
+	// a scratch or preview copy, tagged so a sweep can find it
+	temporary?: boolean;
 }
 
 export interface FirstRunSealed {
@@ -133,6 +145,7 @@ export function planSiteCreate(input: SiteCreateInput): Plan {
 			{ id: 'authority', name: 'Write site authority' },
 			{ id: 'route', name: `Route ${input.hostname}` },
 			...(input.firstRun ? [{ id: 'first-run', name: 'Run the first-run call' }] : []),
+			...(input.template ? TEMPLATE_RESTORE_STEPS : []),
 			{ id: 'verify', name: 'Probe the site' },
 			{ id: 'activate', name: 'Mark the site active' }
 		],
@@ -256,21 +269,9 @@ export async function uploadAssets(ctx: Ctx, input: SiteCreateInput): Promise<st
 					}
 					const manifest = await loadManifest(deps, input.releaseId);
 					const byHash = new Map(manifest.assets.map((asset) => [asset.hash, asset]));
-					const files: { hash: string; bytes: Uint8Array }[] = [];
-					for (const hash of chunk) {
-						const asset = byHash.get(hash);
-						if (asset === undefined) {
-							throw new PermanentError(
-								'unknown_asset',
-								`${hash} is not in the manifest`
-							);
-						}
-						const bytes = await deps.releases.part(
-							bundleKeys.asset(input.releaseId, hash)
-						);
-						await checkAssetBytes(asset, bytes);
-						files.push({ hash, bytes });
-					}
+					const files = await readAssetChunk(chunk, byHash, (hash) =>
+						deps.releases.part(bundleKeys.asset(input.releaseId, hash))
+					);
 					const returned = await deps.cloudflare.uploadAssetBucket(before, files);
 					await deps.store.mutate(ctx.operationId, (operation) =>
 						setCursor(
@@ -341,7 +342,8 @@ export async function uploadScript(
 				site: input.site,
 				resources,
 				secrets: {},
-				release: { id: manifest.releaseId, assetsToken }
+				release: { id: manifest.releaseId, assetsToken },
+				temporary: input.temporary
 			});
 		} catch (error) {
 			if (error instanceof DescriptorError) {
@@ -370,7 +372,12 @@ export async function applyAuthority(ctx: Ctx, input: SiteCreateInput): Promise<
 	});
 }
 
-export async function putRoute(ctx: Ctx, input: SiteCreateInput): Promise<void> {
+// a host with no environment is production
+export async function putRoute(
+	ctx: Ctx,
+	input: SiteCreateInput,
+	environment?: string
+): Promise<void> {
 	await runStep(ctx, 'route', 'route', async () => {
 		await fenced(ctx);
 		// the customer's zone is read and checked before anything of ours is written
@@ -383,7 +390,8 @@ export async function putRoute(ctx: Ctx, input: SiteCreateInput): Promise<void> 
 		await ctx.deps.authority.putHost(input.hostname, {
 			siteId: input.site.id,
 			script: scriptName(input.site.id),
-			epoch: input.authority.epoch ?? 1
+			epoch: input.authority.epoch ?? 1,
+			...(environment === undefined ? {} : { environment })
 		});
 	});
 }
@@ -784,7 +792,7 @@ export async function recoverCreate(
 
 export async function runSiteCreate(
 	step: StepRunner,
-	deps: EngineDeps,
+	deps: TemplateRestoreDeps,
 	input: SiteCreateInput
 ): Promise<Outcome> {
 	const ctx: Ctx = {
@@ -800,6 +808,15 @@ export async function runSiteCreate(
 	let sealed: FirstRunSealed | null = null;
 	try {
 		await startOperation(ctx);
+		if (
+			input.template !== undefined &&
+			!(deps.templateCodeDelivery ?? TEMPLATE_CODE_DELIVERY)
+		) {
+			throw new StepFailed(
+				'template-check',
+				new TemplateRestoreError('template_code_delivery', TEMPLATE_HELD_REASON)
+			);
+		}
 		await acquireLease(ctx, 'lease');
 		if (input.prior !== undefined) await cleanPrior(ctx, input.prior);
 		await reserveName(ctx, input);
@@ -811,6 +828,18 @@ export async function runSiteCreate(
 		await applyAuthority(ctx, input);
 		await putRoute(ctx, input);
 		sealed = input.firstRun === undefined ? null : await firstRun(ctx, input, input.firstRun);
+		if (input.template !== undefined) {
+			await restoreTemplate(
+				ctx,
+				deps,
+				{
+					siteId: input.site.id,
+					hostname: input.hostname,
+					ownerTokenId: sealed?.ownerTokenId ?? null
+				},
+				input.template
+			);
+		}
 		await verify(ctx, input, sealed);
 		await activate(ctx, input, sealed);
 	} catch (error) {
@@ -821,7 +850,9 @@ export async function runSiteCreate(
 	const note =
 		sealed?.status === 409 && sealed.pendingSecretId === null
 			? '; the first admin password was lost with an answer that never arrived, so reset it from the sign-in page'
-			: '';
+			: input.template === undefined
+				? ''
+				: `; the ${input.template.entryId} template replaced the first admin account, so reset the admin password from the sign-in page`;
 	await finishSuccess(ctx, `${input.site.id} is active at ${input.hostname}${note}`);
 	await releaseLease(ctx);
 	return { status: 'succeeded' };

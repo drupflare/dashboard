@@ -8,10 +8,10 @@ import {
 } from '@contracts/sites';
 import {
 	bundleKeys,
-	checkAssetBytes,
 	checkMetadataBytes,
 	checkModuleBytes,
 	planChunks,
+	readAssetChunk,
 	validateBundle,
 	type BundleManifest
 } from '../bundle';
@@ -104,7 +104,7 @@ export function migrationRefusal(
 	return `the site is at migration ${recorded}, which the release does not list (${target.join(', ') || 'none'})`;
 }
 
-const claimOf = (ctx: Ctx, input: SiteUpgradeInput): Claim => ({
+export const claimOf = (ctx: Ctx, input: SiteUpgradeInput): Claim => ({
 	siteId: input.site.id,
 	accountId: input.site.accountId,
 	operationId: ctx.operationId,
@@ -115,7 +115,7 @@ async function loadManifest(deps: EngineDeps, releaseId: string): Promise<Bundle
 	return validateBundle(await deps.releases.manifest(releaseId), deps.config.limits);
 }
 
-async function loadBundle(deps: EngineDeps, releaseId: string) {
+export async function loadBundle(deps: EngineDeps, releaseId: string) {
 	const manifest = await loadManifest(deps, releaseId);
 	await checkMetadataBytes(manifest, await deps.releases.part(bundleKeys.metadata(releaseId)));
 	const modules: { module: BundleManifest['modules'][number]; bytes: Uint8Array }[] = [];
@@ -128,7 +128,7 @@ async function loadBundle(deps: EngineDeps, releaseId: string) {
 }
 
 // the site's own resources, as the ledger recorded them; nothing is created here
-async function descriptorFor(
+export async function descriptorFor(
 	deps: EngineDeps,
 	input: SiteUpgradeInput,
 	releaseId: string,
@@ -164,7 +164,7 @@ async function descriptorFor(
 }
 
 // health through the probe the create used, then the front page, both through the real hostname
-async function checkSite(ctx: Ctx, input: SiteUpgradeInput): Promise<void> {
+export async function checkSite(ctx: Ctx, input: SiteUpgradeInput): Promise<void> {
 	const { custody, site } = ctx.deps;
 	const probe = input.probe ?? { path: '/', expectStatus: 200 };
 	let answered: { status: number };
@@ -247,7 +247,7 @@ const stepOf = <T>(
 
 // the asset session opens on the existing script, and the API lists only the files it does not hold
 // yet; a rollback runs it again under its own step names, which a workflow keeps apart
-async function uploadAssets(
+export async function uploadAssets(
 	ctx: Ctx,
 	input: SiteUpgradeInput,
 	releaseId: string,
@@ -313,19 +313,9 @@ async function uploadAssets(
 					}
 					const manifest = await loadManifest(deps, releaseId);
 					const byHash = new Map(manifest.assets.map((asset) => [asset.hash, asset]));
-					const files: { hash: string; bytes: Uint8Array }[] = [];
-					for (const hash of chunk) {
-						const asset = byHash.get(hash);
-						if (asset === undefined) {
-							throw new PermanentError(
-								'unknown_asset',
-								`${hash} is not in the manifest`
-							);
-						}
-						const bytes = await deps.releases.part(bundleKeys.asset(releaseId, hash));
-						await checkAssetBytes(asset, bytes);
-						files.push({ hash, bytes });
-					}
+					const files = await readAssetChunk(chunk, byHash, (hash) =>
+						deps.releases.part(bundleKeys.asset(releaseId, hash))
+					);
 					const returned = await deps.cloudflare.uploadAssetBucket(before, files);
 					if (planStep !== null) {
 						await deps.store.mutate(ctx.operationId, (operation) =>
@@ -362,7 +352,7 @@ async function uploadAssets(
 
 // a script that already carries the release was uploaded by an earlier run of this step whose
 // result was lost, and a second upload would name an old tag the script has moved past
-async function putRelease(
+export async function putRelease(
 	ctx: Ctx,
 	input: SiteUpgradeInput,
 	releaseId: string,
