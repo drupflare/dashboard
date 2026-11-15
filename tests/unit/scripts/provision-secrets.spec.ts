@@ -59,6 +59,7 @@ describe('plan', () => {
 		START_SECRET: 'e',
 		KEK_V1: 'f',
 		AUTH_CODE_SECRET: 'g',
+		NUXT_RELEASE_HOOK_SECRET: 'j',
 		CF_API_TOKEN: 't',
 		CF_ACCOUNT_ID: 'x'
 	};
@@ -89,6 +90,13 @@ describe('plan', () => {
 		expect(names('drupflare-engine')).toContain('FLEET_SEED');
 		expect(names('drupflare-dashboard')).toContain('FLEET_PUBLIC_KEY');
 		expect(names('drupflare-dashboard')).not.toContain('FLEET_SEED');
+	});
+
+	it('gives the release hook secret to the dashboard alone', () => {
+		const holders = plan('production', values)
+			.filter((a) => a.kind === 'worker' && a.name === 'NUXT_RELEASE_HOOK_SECRET')
+			.map((a) => (a.kind === 'worker' ? a.worker : ''));
+		expect(holders).toEqual(['drupflare-dashboard']);
 	});
 
 	it('sets the preview keys and deploy credentials on GitHub only, never on a Worker', () => {

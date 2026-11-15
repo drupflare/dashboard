@@ -102,7 +102,12 @@ const TREE: Record<string, string[]> = {
 		'assess-an-estate',
 		'estate-report-reference'
 	],
-	'guides/self-managed': ['connect-cloudflare', 'token-permissions', 'adopt-to-managed'],
+	'guides/self-managed': [
+		'connect-cloudflare',
+		'token-permissions',
+		'create-and-delete-a-site',
+		'adopt-to-managed'
+	],
 	'guides/self-hosted': [
 		'install-bastion',
 		'pair-a-node',
@@ -235,7 +240,13 @@ const pages = Object.entries(TREE).flatMap(([dir, names]) =>
 	names.map((name) => (dir ? `${dir}/${name}` : name))
 );
 
-const NOT_DRAFT = new Set(['index', 'changelog', 'security/threat-model']);
+const NOT_DRAFT = new Set([
+	'index',
+	'changelog',
+	'security/threat-model',
+	'guides/code/temporary-previews',
+	'guides/sites/create-a-custom-worker-site'
+]);
 
 const fileOf = (page: string) => join(docsDir, `${page}.md`);
 

@@ -44,7 +44,8 @@ export async function generateSecrets(): Promise<Values> {
 		CONTROL_PUBLIC_KEY: (await signingKeyFromSeed(fromBase64Url(control))).publicKey,
 		START_SECRET: random(),
 		KEK_V1: random(),
-		AUTH_CODE_SECRET: random()
+		AUTH_CODE_SECRET: random(),
+		NUXT_RELEASE_HOOK_SECRET: random()
 	};
 }
 
@@ -91,6 +92,7 @@ export function plan(environment: 'staging' | 'production' | 'preview', values: 
 			'KEK_V1',
 			'AUTH_CODE_SECRET',
 			'FLEET_PUBLIC_KEY',
+			'NUXT_RELEASE_HOOK_SECRET',
 			...OPTIONAL_FROM_DEV_VARS.filter((name) => values[name] !== undefined)
 		]),
 		...github

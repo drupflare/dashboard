@@ -124,6 +124,34 @@ describe('gen-openapi: live route tree', () => {
 		}
 	});
 
+	it('documents the Cloudflare connection routes, and the writes refuse a key', () => {
+		const committed = JSON.parse(readFileSync(OUTPUT, 'utf8')) as Json;
+		const base = '/api/v1/orgs/{orgId}/planes/cloudflare';
+		const expected: [string, string, string, string][] = [
+			[base, 'post', 'plane.connect', '201'],
+			[base, 'get', 'plane.read', '200'],
+			[`${base}/{id}/validate`, 'post', 'plane.connect', '200'],
+			[`${base}/{id}`, 'delete', 'plane.revoke', '200']
+		];
+		for (const [path, method, action, status] of expected) {
+			const op = committed.paths[path]?.[method];
+			expect(op, `${method} ${path}`).toBeDefined();
+			expect(op['x-action'], `${method} ${path}`).toBe(action);
+			expect(op.responses[status], `${method} ${path}`).toBeDefined();
+			if (isSessionOnly(action as never)) {
+				expect(op.security, `${method} ${path}`).toEqual([{ session: [] }]);
+			}
+		}
+	});
+
+	it('documents a self-managed site create with its connection and custom host', () => {
+		const committed = JSON.parse(readFileSync(OUTPUT, 'utf8')) as Json;
+		const body = JSON.stringify(committed.paths['/api/v1/orgs/{orgId}/sites'].post.requestBody);
+		for (const field of ['connectionId', 'customHost', 'self-managed']) {
+			expect(body).toContain(field);
+		}
+	});
+
 	it('leaves the signature-checked GitHub hook out, as it is not a defineApi route', async () => {
 		const committed = JSON.parse(readFileSync(OUTPUT, 'utf8')) as Json;
 		expect(Object.keys(committed.paths).filter((path) => path.includes('hooks'))).toEqual([]);

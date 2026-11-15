@@ -23,7 +23,7 @@ COPY --from=composer /usr/bin/composer /usr/local/bin/composer
 
 RUN php -v | head -n 1; php -r 'exit(function_exists("gd_info") ? 0 : 1);'; node -v; composer --version
 
-COPY server.mjs /srv/runner/server.mjs
+COPY server.mjs template-build.mjs /srv/runner/
 
 COPY <<'EOF' /srv/runner/hold.mjs
 import { RUNNERS, createRunner } from './server.mjs';

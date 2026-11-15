@@ -70,15 +70,13 @@ describe('the committed deploy files', () => {
 		}
 	});
 
-	it('names the Gate address and public key in both dispatch environments, with no value set', () => {
+	it('names the Gate address and public key in both dispatch environments, with no address set', () => {
 		for (const environment of ['staging', 'production'] as const) {
 			const config = render('dispatch', environment, built) as Config & {
 				vars: Record<string, string>;
 			};
-			expect(config.vars, environment).toMatchObject({
-				GATE_ORIGIN: '',
-				GATE_PUBLIC_KEY: ''
-			});
+			expect(config.vars.GATE_ORIGIN, environment).toBe('');
+			expect(config.vars.GATE_PUBLIC_KEY, environment).toMatch(/^[A-Za-z0-9_-]{0,43}$/);
 		}
 	});
 

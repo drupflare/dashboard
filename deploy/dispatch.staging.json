@@ -1,5 +1,5 @@
 {
 	"workers_dev": false,
-	"vars": { "GATE_ORIGIN": "", "GATE_PUBLIC_KEY": "" },
+	"vars": { "GATE_ORIGIN": "", "GATE_PUBLIC_KEY": "QBvZy4sexJvEyYjEk5dZHkqi4hRVmHF0R0Y1nRAR7F0" },
 	"kv_namespaces": [{ "binding": "HOSTS_KV", "id": "dd28ab148af84001ac883c96b4b5042b" }]
 }
