@@ -134,6 +134,14 @@ export function inferRecipe(config: Row): InferenceResult {
 					);
 					continue;
 				}
+				if (row.script_name !== undefined || row.environment !== undefined) {
+					refuse(
+						'durable_objects',
+						`${binding} names a Durable Object that belongs to another script, which would reach another account's data.`,
+						'durable-object-foreign'
+					);
+					continue;
+				}
 				durableObjects.push({ binding, className, provenance: at('durable_objects') });
 			}
 		}
