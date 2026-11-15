@@ -112,8 +112,8 @@ describe('access store', () => {
 				status: 403,
 				body: {
 					code: 'forbidden',
-					message: 'This access type needs the Site plan',
-					details: { unlockedBy: 'managed-site' },
+					message: 'This access type needs the Institution Standard plan',
+					details: { unlockedBy: 'institution-standard' },
 					requestId: 'r'
 				}
 			}
@@ -123,12 +123,11 @@ describe('access store', () => {
 		await expect(
 			access.addRule('org_a', 'site_1', {
 				environment: 'prod',
-				preset: 'github-user',
-				values: ['a']
+				preset: 'sso'
 			})
 		).rejects.toMatchObject({
 			code: 'forbidden',
-			message: 'This access type needs the Site plan'
+			message: 'This access type needs the Institution Standard plan'
 		});
 	});
 

@@ -5,7 +5,7 @@ import {
 	type SiteRollbackInput
 } from '../../../engine/src/workflows/site-rollback';
 import { ApiError } from '../../shared/errors';
-import { recipeFor } from '../../shared/recipes';
+import { recipeFor, type Recipe } from '../../shared/recipes';
 import { nowUtc } from '../../shared/utils/time';
 import { createOperationRecord } from '../db/repos/backups';
 import {
@@ -16,6 +16,15 @@ import {
 import { getReadySite } from '../db/repos/sites';
 import { checkRollback } from './rollback-check';
 import { startRecorded, type SiteServices } from './sites';
+
+// a bundle names no health path, so the front page is what a custom site's check reads
+const CUSTOM_PROBE: Pick<Recipe, 'probe'> = {
+	probe: {
+		method: 'GET',
+		path: '/',
+		provenance: { unverified: true, confirm: 'a bundle names no health path' }
+	}
+};
 
 export interface RollbackSiteInput {
 	orgId: string;
@@ -46,7 +55,7 @@ export async function rollbackSite(
 	if (site === null) throw new ApiError('not_found', 'Not found');
 	if (
 		site.state !== 'active' ||
-		site.plane !== 'managed' ||
+		(site.plane !== 'managed' && site.plane !== 'self-managed') ||
 		site.accountId === null ||
 		site.primaryHostname === null
 	) {
@@ -67,7 +76,8 @@ export async function rollbackSite(
 			offers: verdict.offers
 		});
 	}
-	const recipe = recipeFor(site.kind);
+	const recipe: Pick<Recipe, 'probe'> | undefined =
+		site.kind === 'custom' ? CUSTOM_PROBE : recipeFor(site.kind);
 	if (recipe === undefined) {
 		throw new ApiError('unprocessable', `There is no recipe for ${site.kind}`, {
 			reason: 'no_recipe'
@@ -92,7 +102,7 @@ export async function rollbackSite(
 			plane: site.plane,
 			config: site.config,
 			ring: 'R0',
-			plan: (await services.planOf(input.orgId)).planId,
+			plan: (await services.planOf(input.orgId)).managedPlanId,
 			accountId: site.accountId
 		},
 		hostname: site.primaryHostname,

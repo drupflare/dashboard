@@ -5,6 +5,7 @@ import removeRule from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/ac
 import addRule from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/access/rules/index.post';
 import syncRules from '../../../../src/server/api/v1/orgs/[orgId]/sites/[id]/access/sync.post';
 import { createEnvironment } from '../../../../src/server/db/repos/environments';
+import { derive, type Entitlement } from '../../../../src/server/domain/entitlements';
 import type { EngineStartRequest } from '../../../../src/server/integrations/engine';
 import {
 	resetAccessServices,
@@ -27,6 +28,12 @@ let started: EngineStartRequest[];
 let plan: string;
 let startFails: boolean;
 let clock: number;
+
+const entitlementOf = (planId: string): Entitlement => {
+	const result = derive(planId);
+	if (!result.ok) throw new Error(result.reason);
+	return result.entitlement;
+};
 
 beforeEach(async () => {
 	fixture = sqliteClient();
@@ -61,7 +68,7 @@ beforeEach(async () => {
 	} as unknown as typeof fixture.client;
 	setAccessServices({
 		getDb: async () => withBatch,
-		planOf: async () => plan,
+		planOf: async () => entitlementOf(plan),
 		startOperation: async (request) => {
 			if (startFails) throw new Error('down');
 			started.push(request);
@@ -90,9 +97,11 @@ describe('GET access', () => {
 		expect(body.rules).toEqual([]);
 		expect(body.inviteeLimit).toBe(5);
 		const review = body.presets.find((p: any) => p.id === 'review-link');
-		expect(review.available).toBe(false);
-		expect(review.unlockedBy).toBe('Managed Agency');
+		expect(review.available).toBe(true);
 		expect(body.presets.find((p: any) => p.id === 'members').available).toBe(true);
+		const sso = body.presets.find((p: any) => p.id === 'sso');
+		expect(sso.available).toBe(false);
+		expect(sso.unlockedBy).toBe('Institution Standard');
 	});
 
 	it('answers not found for a site the caller cannot see', async () => {
@@ -176,13 +185,21 @@ describe('POST access rules', () => {
 		expect((listed.json as any).rules[0].expiresAt).toBe(5_000 + 168 * 3_600_000);
 	});
 
-	it('refuses a preset the plan does not include and names the plan that unlocks it', async () => {
+	it('allows a review link on the free plan', async () => {
 		setup({ role: 'admin' });
-		plan = 'managed-site';
-		const reply = await add({ environment: 'prod', preset: 'review-link' });
+		plan = 'managed-free';
+		const reply = await add({ environment: 'env_stage', preset: 'review-link' });
+		expect(reply.status).toBe(201);
+		expect(started).toHaveLength(1);
+	});
+
+	it('refuses single sign-on below Institution Standard and names that plan', async () => {
+		setup({ role: 'admin' });
+		plan = 'managed-pro';
+		const reply = await add({ environment: 'prod', preset: 'sso' });
 		expect(reply.status).toBe(403);
-		expect((reply.json as any).details).toEqual({ unlockedBy: 'managed-agency' });
-		expect((reply.json as any).message).toContain('Agency');
+		expect((reply.json as any).details).toEqual({ unlockedBy: 'institution-standard' });
+		expect((reply.json as any).message).toContain('Institution Standard');
 		expect(started).toEqual([]);
 	});
 

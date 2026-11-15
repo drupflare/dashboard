@@ -120,7 +120,7 @@ export async function startReleaseRollout(
 	const rings = ringsFor(candidates, input.body);
 	const plans = new Map<string, string>();
 	for (const orgId of new Set(candidates.map((site) => site.orgId))) {
-		plans.set(orgId, (await services.planOf(orgId)).planId);
+		plans.set(orgId, (await services.planOf(orgId)).managedPlanId);
 	}
 	const ringSites = rings.map((entry) => ({
 		ring: entry.ring,

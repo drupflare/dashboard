@@ -6,6 +6,7 @@ import listRoute from '../../../src/server/api/v1/admin/releases/index.get';
 import { applySchema, createCollegeDB, ensureCollegeDB } from '../../../src/server/db/collegedb';
 import { withAtomicBatch } from '../../../src/server/db/repos/atomic-shards';
 import { registerRelease } from '../../../src/server/db/repos/releases';
+import { siteInRollingRollout } from '../../../src/server/db/repos/rollouts';
 import { FREE_PLAN_ID, derive } from '../../../src/server/domain/entitlements';
 import type { EngineStartRequest } from '../../../src/server/integrations/engine';
 import { setReleaseServices } from '../../../src/server/services/releases';
@@ -293,5 +294,34 @@ describe('GET and stop', () => {
 		const again = await stop(id);
 		expect(again.status).toBe(409);
 		expect((await stop('op_missing')).status).toBe(404);
+	});
+});
+
+describe('a site inside a rollout', () => {
+	const insert = (id: string, status: string, previous: Record<string, string>) =>
+		env.DB.prepare(
+			`INSERT INTO release_rollouts (id, release_id, operation_id, status, state, progress,
+				previous, stop_requested, created_at, updated_at)
+			 VALUES (?, 'rel-a', ?, ?, '{}', '{}', ?, 0, 1, 1)`
+		)
+			.bind(id, id, status, JSON.stringify(previous))
+			.run();
+
+	it('is in one from the time its ring begins until the rollout ends', async () => {
+		await endRollouts();
+		await insert('op_ring_live', 'rolling', { site_ro0: 'rel-old' });
+		const db = await getDb();
+
+		expect(await siteInRollingRollout(db, 'site_ro0')).toBe(true);
+		expect(await siteInRollingRollout(db, 'site_ro1')).toBe(false);
+
+		await endRollouts();
+		expect(await siteInRollingRollout(db, 'site_ro0')).toBe(false);
+	});
+
+	it('is not in one when the rollout was halted', async () => {
+		await insert('op_ring_halted', 'halted', { site_ro2: 'rel-old' });
+
+		expect(await siteInRollingRollout(await getDb(), 'site_ro2')).toBe(false);
 	});
 });

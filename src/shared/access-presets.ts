@@ -15,19 +15,14 @@ export const ACCESS_PRESET_IDS = [
 	'public'
 ] as const;
 
-const PRESET_TIERS = [
-	'managed-free',
-	'managed-site',
-	'managed-agency',
-	'institution-standard'
-] as const;
-
 const accessPresetSchema = z.object({
 	id: z.enum(ACCESS_PRESET_IDS),
 	label: z.string().min(1),
-	unlockedBy: z.enum(PRESET_TIERS).nullable(),
+	unlockedBy: z.literal('institution-standard').nullable(),
 	source: z.string().min(1)
 });
+
+const SAME_EVERYWHERE = 'owner decision 2026-11-14; same on every plan, invitees are the meter';
 
 type AccessPreset = z.infer<typeof accessPresetSchema>;
 
@@ -47,14 +42,14 @@ export const ACCESS_PRESETS: readonly AccessPreset[] = z.array(accessPresetSchem
 	{
 		id: 'email-invite',
 		label: 'Email Invite',
-		unlockedBy: 'managed-free',
-		source: 'plan:420; plan:428 free 5 by email code'
+		unlockedBy: null,
+		source: SAME_EVERYWHERE
 	},
 	{
 		id: 'github-user',
 		label: 'GitHub User',
-		unlockedBy: 'managed-site',
-		source: 'plan:421; plan:428 Site adds GitHub'
+		unlockedBy: null,
+		source: SAME_EVERYWHERE
 	},
 	{
 		id: 'gitlab-user',
@@ -89,8 +84,8 @@ export const ACCESS_PRESETS: readonly AccessPreset[] = z.array(accessPresetSchem
 	{
 		id: 'review-link',
 		label: 'Review Link',
-		unlockedBy: 'managed-agency',
-		source: 'plan:425; plan:428 Agency 500 with review links'
+		unlockedBy: null,
+		source: SAME_EVERYWHERE
 	},
 	{
 		id: 'public',
@@ -99,13 +94,6 @@ export const ACCESS_PRESETS: readonly AccessPreset[] = z.array(accessPresetSchem
 		source: 'plan:426 default for prod; plan states no tier'
 	}
 ]);
-
-export const INVITEE_LIMITS = {
-	'managed-free': { value: 5, label: 'assumption', source: 'plan:428; roadmap:270' },
-	'managed-site': { value: 25, label: 'assumption', source: 'plan:428; roadmap:270' },
-	'managed-studio': { value: 100, label: 'assumption', source: 'plan:428; roadmap:270' },
-	'managed-agency': { value: 500, label: 'assumption', source: 'plan:428; roadmap:270' }
-} as const;
 
 // #region evaluation
 
@@ -233,25 +221,13 @@ export async function evaluateAccess(
 	return { allow: false, reason: 'no-match' };
 }
 
-const TIER_ORDER = [
-	'managed-free',
-	'managed-site',
-	'managed-studio',
-	'managed-agency',
-	'institution-standard'
-] as const;
-
-// a plan outside the ladder (self-hosted, enterprise) unlocks nothing it has to rank
+// only single sign-on is tied to a plan; every other preset is open and the invitee count is metered
 export function presetUnlocked(
 	preset: AccessPresetId,
 	planId: string
 ): { ok: true } | { ok: false; unlockedBy: string } {
 	const needed = ACCESS_PRESETS.find((item) => item.id === preset)?.unlockedBy ?? null;
-	if (needed === null) return { ok: true };
-	const have = (TIER_ORDER as readonly string[]).indexOf(planId);
-	return have >= (TIER_ORDER as readonly string[]).indexOf(needed)
-		? { ok: true }
-		: { ok: false, unlockedBy: needed };
+	return needed === null || planId === needed ? { ok: true } : { ok: false, unlockedBy: needed };
 }
 
 // #endregion

@@ -1,4 +1,4 @@
-import { FREE_PLAN_ID, siteLimits, type Entitlement } from './entitlements';
+import { managedIsFree, siteLimits, type Entitlement } from './entitlements';
 
 export interface ReconcileFlags {
 	// billing.overage.enabled
@@ -120,8 +120,10 @@ export function reconcile(
 		}
 
 		const limitsOk = !held || lowersOnly(site.limits, wantLimits);
-		if (limitsOk && site.plan !== entitlement.planId) {
-			out.actions.push(request(site.siteId, { target: 'plan', plan: entitlement.planId }));
+		if (limitsOk && site.plan !== entitlement.managedPlanId) {
+			out.actions.push(
+				request(site.siteId, { target: 'plan', plan: entitlement.managedPlanId })
+			);
 		}
 		if (limitsOk && !same(site.limits, wantLimits)) {
 			out.actions.push(
@@ -144,7 +146,7 @@ export function reconcile(
 		flags.overageEnabled &&
 		overage !== null &&
 		overage.views > 0 &&
-		entitlement.planId !== FREE_PLAN_ID
+		!managedIsFree(entitlement)
 	) {
 		out.actions.push(
 			request(null, {

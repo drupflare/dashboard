@@ -10,6 +10,7 @@ export interface OrgSummary {
 
 export interface PlanSummary {
 	planId: string;
+	managedPlanId: string;
 	features: Record<string, boolean>;
 }
 

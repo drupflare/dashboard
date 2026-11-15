@@ -43,7 +43,7 @@ const step = computed<OnboardingStep>(() => draft.value.step);
 const paidAllowed = computed(() => org.currentPlan?.features.customCode);
 const templates = ref<Template[] | null>(null);
 const drupalTemplates = ref<DrupalTemplate[]>([]);
-const freePlan = computed(() => org.currentPlan?.planId === 'managed-free');
+const freePlan = computed(() => org.currentPlan?.managedPlanId === 'managed-free');
 const templatesError = ref<ApiClientError | null>(null);
 
 async function loadTemplates(): Promise<void> {
@@ -75,10 +75,14 @@ const canNext = computed(
 	() => kindFor(draft.value.template) !== null || draft.value.template === IMPORT_TEMPLATE
 );
 
-// the import card leaves the wizard; every other template moves to the name step
+// the import and bring-your-own cards leave the wizard; every other template moves to the name step
 function proceed(): void {
 	if (draft.value.template === IMPORT_TEMPLATE) {
 		void router.push('/new/import');
+		return;
+	}
+	if (draft.value.template === 'bring-your-own') {
+		void router.push('/new/custom');
 		return;
 	}
 	go(2);

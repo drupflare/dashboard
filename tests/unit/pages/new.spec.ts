@@ -55,7 +55,16 @@ let cleanup: () => void = () => undefined;
 let createReply: () => Reply | Promise<Reply>;
 let planReply: () => Reply;
 let templatesReply: () => Reply | Promise<Reply>;
-const paidPlan = { planId: 'site', features: { customCode: true } };
+const paidPlan = {
+	planId: 'site',
+	managedPlanId: 'managed-pro',
+	features: { customCode: true }
+};
+const freePlan = {
+	planId: 'managed-free',
+	managedPlanId: 'managed-free',
+	features: { customCode: false }
+};
 const mounted: { unmount: () => void }[] = [];
 
 beforeEach(async () => {
@@ -164,9 +173,7 @@ describe('create a site, template step', () => {
 	});
 
 	it('disables Bring Your Own with the reason when the plan lacks custom code', async () => {
-		planReply = () => ({
-			body: { planId: 'managed-free', features: { customCode: false } }
-		});
+		planReply = () => ({ body: freePlan });
 		const wrapper = await mountPage();
 
 		await vi.waitFor(() =>
@@ -292,7 +299,7 @@ describe('create a site, Drupal start point', () => {
 	});
 
 	it('disables a template that does not fit the Free plan, and enables it on a paid plan', async () => {
-		planReply = () => ({ body: { planId: 'managed-free', features: { customCode: false } } });
+		planReply = () => ({ body: freePlan });
 		let wrapper = await openEntries();
 		await vi.waitFor(() =>
 			expect(wrapper.find<HTMLInputElement>('#drupal-entry-farmos').element.disabled).toBe(

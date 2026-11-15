@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { derive } from '../../../src/server/domain/entitlements';
 import {
 	ACCESS_PRESET_IDS,
 	ACCESS_PRESETS,
@@ -6,7 +7,6 @@ import {
 	evaluateAccess,
 	hashLinkToken,
 	hashPassword,
-	INVITEE_LIMITS,
 	presetUnlocked,
 	ruleHash,
 	type AccessPresetId,
@@ -38,31 +38,21 @@ describe('access presets', () => {
 		expect(ACCESS_PRESETS.map((item) => item.id)).toEqual([...ACCESS_PRESET_IDS]);
 	});
 
-	it('unlocks email invites on the free plan and review links on Agency', () => {
-		expect(preset('email-invite').unlockedBy).toBe('managed-free');
-		expect(preset('review-link').unlockedBy).toBe('managed-agency');
-		expect(preset('github-user').unlockedBy).toBe('managed-site');
-	});
-
-	it('leaves the tier null where the plan does not state one', () => {
-		for (const id of ['members', 'grants', 'gitlab-user', 'github-org', 'gitlab-group']) {
-			expect(preset(id).unlockedBy).toBe(null);
+	it('leaves every preset open except single sign-on', () => {
+		expect(preset('sso').unlockedBy).toBe('institution-standard');
+		for (const item of ACCESS_PRESETS.filter((row) => row.id !== 'sso')) {
+			expect(item.unlockedBy, item.id).toBe(null);
 		}
-		expect(preset('public').unlockedBy).toBe(null);
 	});
 
-	it('labels every invitee count as an assumption from the plan', () => {
-		expect(INVITEE_LIMITS['managed-free']).toEqual({
-			value: 5,
-			label: 'assumption',
-			source: 'plan:428; roadmap:270'
+	it('counts invitees on the plan meter, not on a preset', () => {
+		expect(preset('email-invite').source).toBe(preset('review-link').source);
+		expect(derive('managed-free')).toMatchObject({ ok: true, entitlement: { invitees: 5 } });
+		expect(derive('managed-pro')).toMatchObject({ ok: true, entitlement: { invitees: 100 } });
+		expect(derive('managed-agency')).toMatchObject({
+			ok: true,
+			entitlement: { invitees: 500 }
 		});
-		expect(INVITEE_LIMITS['managed-site'].value).toBe(25);
-		expect(INVITEE_LIMITS['managed-studio'].value).toBe(100);
-		expect(INVITEE_LIMITS['managed-agency'].value).toBe(500);
-		for (const limit of Object.values(INVITEE_LIMITS)) {
-			expect(limit.label).toBe('assumption');
-		}
 	});
 });
 
@@ -235,24 +225,25 @@ describe('evaluateAccess', () => {
 });
 
 describe('presetUnlocked', () => {
-	it('refuses a preset the plan lacks and names the plan that unlocks it', () => {
-		expect(presetUnlocked('review-link', 'managed-site')).toEqual({
-			ok: false,
-			unlockedBy: 'managed-agency'
-		});
+	it('refuses single sign-on on a plan below Institution Standard and names that plan', () => {
 		expect(presetUnlocked('sso', 'managed-agency')).toEqual({
+			ok: false,
+			unlockedBy: 'institution-standard'
+		});
+		expect(presetUnlocked('sso', 'managed-pro')).toEqual({
 			ok: false,
 			unlockedBy: 'institution-standard'
 		});
 	});
 
-	it('allows a preset at or above its tier and any preset with no tier', () => {
-		expect(presetUnlocked('github-user', 'managed-studio')).toEqual({ ok: true });
+	it('allows every open preset on any plan', () => {
+		expect(presetUnlocked('review-link', 'managed-pro')).toEqual({ ok: true });
+		expect(presetUnlocked('github-user', 'managed-free')).toEqual({ ok: true });
 		expect(presetUnlocked('members', 'self-hosted')).toEqual({ ok: true });
 	});
 
-	it('refuses a tiered preset on a plan outside the ladder', () => {
-		expect(presetUnlocked('email-invite', 'self-hosted').ok).toBe(false);
+	it('refuses single sign-on outside the ladder', () => {
+		expect(presetUnlocked('sso', 'self-hosted').ok).toBe(false);
 	});
 });
 

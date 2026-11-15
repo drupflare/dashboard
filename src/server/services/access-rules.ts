@@ -7,7 +7,6 @@ import {
 	ACCESS_PRESETS,
 	hashLinkToken,
 	hashPassword,
-	INVITEE_LIMITS,
 	presetUnlocked,
 	type AccessPresetId,
 	type AccessRule
@@ -24,6 +23,7 @@ import {
 import { getEnvironment } from '../db/repos/environments';
 import { getReadySite } from '../db/repos/sites';
 import type { Principal } from '../domain/authorize';
+import type { Entitlement } from '../domain/entitlements';
 import type { EngineStartRequest } from '../integrations/engine';
 import type { AuditInput } from './audit';
 import { newOperation, startAndReturn } from './backups';
@@ -32,7 +32,7 @@ import { principalActor } from './owner-tokens';
 
 export interface AccessServices {
 	getDb: () => Promise<CollegeDBClient>;
-	planOf: (orgId: string) => Promise<string>;
+	planOf: (orgId: string) => Promise<Entitlement>;
 	// starts the operation that writes the new digests to the site; the lease carries them within one interval
 	startOperation: (request: EngineStartRequest) => Promise<void>;
 	audit: (orgId: string, input: AuditInput) => Promise<unknown>;
@@ -134,11 +134,6 @@ export const addedRuleSchema = z.strictObject({
 
 // #endregion
 
-function inviteeLimit(planId: string): number | null {
-	const limits = INVITEE_LIMITS as Record<string, { value: number }>;
-	return limits[planId]?.value ?? null;
-}
-
 function planName(id: string): string {
 	return findPlan(id)?.name ?? id;
 }
@@ -217,11 +212,12 @@ export async function readSiteAccess(
 ): Promise<z.infer<typeof accessViewSchema>> {
 	const db = await s.getDb();
 	await requireSite(db, input.orgId, input.siteId);
-	const [records, planId, state] = await Promise.all([
+	const [records, entitlement, state] = await Promise.all([
 		listAccessRules(db, input.orgId, input.siteId),
 		s.planOf(input.orgId),
 		accessSyncState(db, input.orgId, input.siteId)
 	]);
+	const planId = entitlement.planId;
 	const caughtUp =
 		state.changedAt === 0 || (state.syncedAt !== null && state.syncedAt >= state.changedAt);
 	return {
@@ -236,7 +232,7 @@ export async function readSiteAccess(
 				unlockedBy: unlocked.ok ? null : planName(unlocked.unlockedBy)
 			};
 		}),
-		inviteeLimit: inviteeLimit(planId)
+		inviteeLimit: entitlement.invitees
 	};
 }
 
@@ -295,8 +291,8 @@ export async function addAccessRule(
 	const { body } = input;
 	const db = await s.getDb();
 	await requireSite(db, input.orgId, input.siteId);
-	const planId = await s.planOf(input.orgId);
-	const unlocked = presetUnlocked(body.preset, planId);
+	const entitlement = await s.planOf(input.orgId);
+	const unlocked = presetUnlocked(body.preset, entitlement.planId);
 	if (!unlocked.ok) {
 		throw new ApiError(
 			'forbidden',
@@ -311,7 +307,7 @@ export async function addAccessRule(
 	const now = s.now();
 	const { config, linkToken } = await configFor(body, now);
 	if (body.preset === 'email-invite') {
-		const limit = inviteeLimit(planId);
+		const limit = entitlement.invitees;
 		const held = (await listAccessRules(db, input.orgId, input.siteId))
 			.filter((rule) => rule.preset === 'email-invite')
 			.flatMap((rule) => (Array.isArray(rule.config.emails) ? rule.config.emails : []));

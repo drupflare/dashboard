@@ -16,8 +16,8 @@ const ent = (id: string): Entitlement => {
 
 const applied = (siteId: string, over: Partial<AppliedSite> = {}): AppliedSite => ({
 	siteId,
-	plan: 'managed-studio',
-	limits: siteLimits(ent('managed-studio')),
+	plan: 'managed-pro',
+	limits: siteLimits(ent('managed-pro')),
 	state: 'active',
 	suspendedBy: null,
 	securityPending: false,
@@ -27,7 +27,7 @@ const applied = (siteId: string, over: Partial<AppliedSite> = {}): AppliedSite =
 const desired = (over: Partial<Desired> = {}): Desired => ({
 	orgId: 'org-1',
 	revision: 4,
-	entitlement: ent('managed-studio'),
+	entitlement: ent('managed-pro'),
 	sites: [
 		{ siteId: 'a', createdAt: 1 },
 		{ siteId: 'b', createdAt: 2 }
@@ -54,7 +54,7 @@ describe('reconcile', () => {
 	});
 
 	it('asks for the plan and the limits as operation requests with stable keys', () => {
-		const stale = applied('a', { plan: 'managed-site', limits: { views: 1 } });
+		const stale = applied('a', { plan: 'managed-free', limits: { views: 1 } });
 		const first = reconcile(desired(), [stale]);
 		expect(targets(first)).toEqual(['a:plan', 'a:site-auth-limits']);
 		expect(first.actions[0]).toEqual({
@@ -62,7 +62,7 @@ describe('reconcile', () => {
 			organizationId: 'org-1',
 			siteId: 'a',
 			idempotencyKey: 'billing:org-1:r4:a:plan',
-			params: { target: 'plan', plan: 'managed-studio' }
+			params: { target: 'plan', plan: 'managed-pro' }
 		});
 		expect(reconcile(desired(), [stale])).toEqual(first);
 		const later = reconcile(desired({ revision: 5 }), [stale]);
@@ -87,14 +87,18 @@ describe('reconcile', () => {
 
 	it('breaks a creation-time tie by site id', () => {
 		const sites = [
+			{ siteId: 'd', createdAt: 1 },
+			{ siteId: 'a', createdAt: 1 },
 			{ siteId: 'b', createdAt: 1 },
-			{ siteId: 'a', createdAt: 1 }
+			{ siteId: 'c', createdAt: 1 }
 		];
-		const result = reconcile(desired({ entitlement: ent('managed-site'), sites }), [
-			applied('a', { plan: 'managed-site', limits: siteLimits(ent('managed-site')) }),
-			applied('b', { plan: 'managed-site', limits: siteLimits(ent('managed-site')) })
-		]);
-		expect(targets(result)).toEqual(['b:site-auth-state']);
+		const result = reconcile(
+			desired({ entitlement: ent('managed-pro'), sites }),
+			sites.map((s) =>
+				applied(s.siteId, { plan: 'managed-pro', limits: siteLimits(ent('managed-pro')) })
+			)
+		);
+		expect(targets(result)).toEqual(['d:site-auth-state']);
 	});
 
 	it('never suspends when the limit is unknown', () => {
@@ -133,7 +137,7 @@ describe('reconcile', () => {
 	it('lets a security-suspended site lose limits but never gain them', () => {
 		const held = { state: 'suspended', suspendedBy: 'security' } as const;
 		const raise = reconcile(desired(), [
-			applied('a', { ...held, plan: 'managed-site', limits: { views: 1, customDomains: 0 } })
+			applied('a', { ...held, plan: 'managed-pro', limits: { views: 1, customDomains: 0 } })
 		]);
 		expect(raise.actions).toEqual([]);
 		const lower = reconcile(desired(), [

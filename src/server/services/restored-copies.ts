@@ -8,9 +8,12 @@ import { planEnvCreate, type EnvCreateInput } from '../../../engine/src/workflow
 import { planEnvDelete, type EnvDeleteInput } from '../../../engine/src/workflows/env-delete';
 import type { CopyInput } from '../../../engine/src/workflows/restored-copy';
 import {
+	clampPreviewTtl,
 	ENVIRONMENT_KIND_LABELS,
 	environmentLabel,
+	freePreviewNumber,
 	labelOfHost,
+	previewNumberOf,
 	scratchLabel,
 	type EnvironmentKind
 } from '../../shared/environments';
@@ -22,6 +25,8 @@ import { createOperationRecord, getBackup, listBackups } from '../db/repos/backu
 import {
 	createEnvironment,
 	getEnvironment,
+	listEnvironments,
+	listExpiredEnvironments,
 	setEnvironmentStatus,
 	type EnvironmentRecord
 } from '../db/repos/environments';
@@ -33,6 +38,7 @@ import {
 	getOperationInputs,
 	type StoredOperation
 } from '../db/repos/operations';
+import { getOrganizationOwnerId, listDrillCandidates } from '../db/repos/restore-drills';
 import { getReadySite, getSite, setSiteState, type SiteRecord } from '../db/repos/sites';
 import type { Principal } from '../domain/authorize';
 import { backupServices } from './backups';
@@ -237,7 +243,7 @@ export async function startVerify(input: VerifyBackupInput): Promise<StoredOpera
 		copyId: newId('site'),
 		name: `${site.name} (Test Restore)`,
 		label: scratchLabel(operationId),
-		planId: (await services.planOf(input.orgId)).planId,
+		planId: (await services.planOf(input.orgId)).managedPlanId,
 		operationId,
 		backup,
 		temporary: true
@@ -324,9 +330,30 @@ export async function startEnvCreate(
 		return { environment: existing, operation: known };
 	}
 	const siteLabel = labelOfHost(site.primaryHostname, services.config.labelSuffix);
+	let number = input.number;
+	let ttlMs = input.ttlMs;
+	if (input.kind === 'preview') {
+		ttlMs = clampPreviewTtl(ttlMs);
+		if (number === undefined) {
+			const taken = (await listEnvironments(db, input.orgId, site.id))
+				.filter((row) => row.kind === 'preview')
+				.flatMap((row) => previewNumberOf(row.name) ?? []);
+			const free = freePreviewNumber(taken);
+			if (free === null) {
+				throw new ApiError(
+					'conflict',
+					'This site already has the most previews it can hold',
+					{
+						reason: 'preview_limit'
+					}
+				);
+			}
+			number = free;
+		}
+	}
 	let label: string;
 	try {
-		label = environmentLabel(siteLabel, input.kind, input.number);
+		label = environmentLabel(siteLabel, input.kind, number);
 	} catch {
 		throw new ApiError('unprocessable', 'This site name cannot take an environment name', {
 			reason: 'bad_label'
@@ -359,7 +386,7 @@ export async function startEnvCreate(
 		copyId,
 		name: `${site.name} (${ENVIRONMENT_KIND_LABELS[input.kind]})`,
 		label,
-		planId: entitlement.planId,
+		planId: entitlement.managedPlanId,
 		operationId,
 		backup,
 		temporary: input.kind === 'preview'
@@ -379,7 +406,7 @@ export async function startEnvCreate(
 			status: 'creating',
 			envSiteId: copyId,
 			sourceBackupId: backup.id,
-			ttlAt: input.ttlMs === undefined ? null : now + input.ttlMs,
+			ttlAt: ttlMs === undefined ? null : now + ttlMs,
 			createdAt: now
 		});
 	} catch {
@@ -522,6 +549,103 @@ export async function startEnvDelete(input: DeleteEnvironmentInput): Promise<Sto
 		);
 		throw error;
 	}
+}
+
+// #endregion
+
+// #region restore drills
+
+const WEEK_MS = 7 * 86_400_000;
+
+// one drill per tick keeps the account's API budget and the scratch-site churn bounded
+export const DRILLS_PER_TICK = 1;
+
+// a site that cannot start a drill stays due, so a few failures end the tick instead of scanning on
+const DRILL_MAX_FAILURES = 5;
+
+export interface DrillSummary {
+	skipped?: string;
+	due: number;
+	started: string[];
+	failed: { siteId: string; message: string }[];
+}
+
+// the key carries the week, so a drill that is still running or has finished is not started
+// again, and a drill that failed is not retried until the next week
+export async function runRestoreDrills(nowMs: number): Promise<DrillSummary> {
+	const services = siteServices();
+	if (services.config.restoreDrills === false) {
+		return { skipped: 'restore drills are off', due: 0, started: [], failed: [] };
+	}
+	const db = await services.getDb();
+	const { restoreCeilingBytes } = backupServices();
+	const due = (await listDrillCandidates(db, nowMs - WEEK_MS)).filter(
+		(candidate) => candidate.bytes <= restoreCeilingBytes
+	);
+	const summary: DrillSummary = { due: due.length, started: [], failed: [] };
+	for (const candidate of due) {
+		if (
+			summary.started.length >= DRILLS_PER_TICK ||
+			summary.failed.length >= DRILL_MAX_FAILURES
+		) {
+			break;
+		}
+		try {
+			const userId = await getOrganizationOwnerId(db, candidate.organizationId);
+			if (userId === null) throw new Error('the organization has no owner');
+			await startVerify({
+				orgId: candidate.organizationId,
+				siteId: candidate.siteId,
+				backupId: candidate.backupId,
+				userId,
+				idempotencyKey: `drill:${candidate.siteId}:${Math.floor(nowMs / WEEK_MS)}`
+			});
+			summary.started.push(candidate.siteId);
+		} catch (error) {
+			summary.failed.push({
+				siteId: candidate.siteId,
+				message: error instanceof Error ? error.message : String(error)
+			});
+		}
+	}
+	return summary;
+}
+
+// #endregion
+
+// #region ttl sweep
+
+const DAY_MS = 86_400_000;
+
+export interface SweepSummary {
+	expired: number;
+	started: string[];
+	failed: { environmentId: string; message: string }[];
+}
+
+// a delete that fails is tried again on the next tick, and a new attempt after a failed one starts
+// on the next day, because the key carries the day
+export async function sweepExpiredEnvironments(nowMs: number): Promise<SweepSummary> {
+	const db = await siteServices().getDb();
+	const expired = await listExpiredEnvironments(db, nowMs);
+	const summary: SweepSummary = { expired: expired.length, started: [], failed: [] };
+	for (const environment of expired) {
+		try {
+			await startEnvDelete({
+				orgId: environment.organizationId,
+				siteId: environment.siteId,
+				environmentId: environment.id,
+				idempotencyKey: `ttl:${environment.id}:${Math.floor(nowMs / DAY_MS)}`
+			});
+			summary.started.push(environment.id);
+		} catch (error) {
+			summary.failed.push({
+				environmentId: environment.id,
+				message: error instanceof Error ? error.message : String(error)
+			});
+		}
+	}
+	return summary;
 }
 
 // #endregion
