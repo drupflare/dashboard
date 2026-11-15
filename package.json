@@ -27,9 +27,9 @@
 		"prepare": "husky"
 	},
 	"dependencies": {
-		"@drupflare/spool": "^0.2.0",
+		"@drupflare/spool": "^0.3.0",
 		"@drupflare/untarl": "^0.1.1",
-		"@drupflare/workforce": "^0.2.0",
+		"@drupflare/workforce": "^0.3.1",
 		"@earth-app/collegedb": "^1.4.0",
 		"@iconify-json/lucide": "^1.2.151",
 		"@internationalized/date": "^3.12.4",
