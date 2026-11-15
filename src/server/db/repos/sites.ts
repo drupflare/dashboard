@@ -33,6 +33,8 @@ export interface SiteRecord {
 	// when the box last stopped reporting a site that is still listed
 	boxMissingSince: number | null;
 	readyAt: number | null;
+	// the highest data schema any release has taken this site's data to; null when unknown
+	dataSchemaVersion: number | null;
 	createdAt: number;
 	updatedAt: number;
 }
@@ -56,13 +58,14 @@ interface SiteRow {
 	box_found_as: string | null;
 	box_missing_since: number | null;
 	ready_at: number | null;
+	data_schema_version: number | null;
 	created_at: number;
 	updated_at: number;
 }
 
 const SITE_COLUMNS = `id, organization_id, name, kind, category, plane, config, account_id, state,
 	primary_hostname, release_id, admin_name, admin_mail, adopted_to, adopted_from, box_found_as,
-	box_missing_since, ready_at, created_at, updated_at`;
+	box_missing_since, ready_at, data_schema_version, created_at, updated_at`;
 
 function toRecord(row: SiteRow): SiteRecord {
 	return {
@@ -84,6 +87,7 @@ function toRecord(row: SiteRow): SiteRecord {
 		boxFoundAs: row.box_found_as,
 		boxMissingSince: row.box_missing_since,
 		readyAt: row.ready_at,
+		dataSchemaVersion: row.data_schema_version,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at
 	};

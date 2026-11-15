@@ -5,9 +5,11 @@ import {
 	STEP_STATES,
 	VERIFICATION_STATES
 } from '@contracts/operations';
+import { RELEASE_KINDS } from '@contracts/releases';
 import { SITE_CATEGORIES, SITE_CONFIGS, SITE_KINDS } from '@contracts/sites';
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import { PENDING_SECRET_KINDS } from '../../shared/custody/records';
+import { ENVIRONMENT_KINDS, ENVIRONMENT_STATUSES } from '../../shared/environments';
 import { ESTATE_SCHEMA_STATEMENTS } from '../../shared/estate-sql';
 import { BILLING_SCHEMA_STATEMENTS, BILLING_TABLES } from './billing-schema';
 
@@ -177,6 +179,7 @@ export const sites = sqliteTable('sites', {
 	boxFoundAs: text('box_found_as'),
 	boxMissingSince: integer('box_missing_since'),
 	readyAt: integer('ready_at'),
+	dataSchemaVersion: integer('data_schema_version'),
 	createdAt: integer('created_at').notNull(),
 	updatedAt: integer('updated_at').notNull()
 });
@@ -351,6 +354,114 @@ export const apiKeyLookup = sqliteTable('api_key_lookup', {
 	keyId: text('key_id').notNull()
 });
 
+export const siteEnvironments = sqliteTable('site_environments', {
+	id: text('id').primaryKey(),
+	organizationId: text('organization_id').notNull(),
+	siteId: text('site_id').notNull(),
+	kind: text('kind', { enum: ENVIRONMENT_KINDS }).notNull(),
+	name: text('name').notNull(),
+	host: text('host').notNull(),
+	status: text('status', { enum: ENVIRONMENT_STATUSES }).notNull(),
+	envSiteId: text('env_site_id'),
+	sourceBackupId: text('source_backup_id'),
+	ttlAt: integer('ttl_at'),
+	createdAt: integer('created_at').notNull(),
+	deletedAt: integer('deleted_at')
+});
+
+export const releases = sqliteTable('releases', {
+	id: text('id').primaryKey(),
+	kind: text('kind', { enum: RELEASE_KINDS }).notNull(),
+	version: text('version').notNull(),
+	manifestDigest: text('manifest_digest').notNull(),
+	schemaVersion: integer('schema_version').notNull(),
+	acceptsSchema: integer('accepts_schema').notNull(),
+	publishedAt: integer('published_at').notNull(),
+	advisoryAt: integer('advisory_at'),
+	createdAt: integer('created_at').notNull()
+});
+
+export const releaseRollouts = sqliteTable('release_rollouts', {
+	id: text('id').primaryKey(),
+	releaseId: text('release_id').notNull(),
+	operationId: text('operation_id').notNull(),
+	status: text('status', { enum: ['rolling', 'complete', 'halted', 'reverted'] }).notNull(),
+	state: text('state').notNull(),
+	progress: text('progress').notNull(),
+	previous: text('previous').notNull(),
+	firstRingAt: integer('first_ring_at'),
+	lastRingAt: integer('last_ring_at'),
+	stopRequested: integer('stop_requested').notNull(),
+	createdAt: integer('created_at').notNull(),
+	updatedAt: integer('updated_at').notNull()
+});
+
+export const repairs = sqliteTable('repairs', {
+	id: text('id').primaryKey(),
+	organizationId: text('organization_id').notNull(),
+	siteId: text('site_id').notNull(),
+	repairId: text('repair_id').notNull(),
+	rung: text('rung').notNull(),
+	status: text('status', {
+		enum: ['running', 'succeeded', 'failed', 'refused', 'undone']
+	}).notNull(),
+	observationBefore: text('observation_before').notNull(),
+	observationAfter: text('observation_after'),
+	operationId: text('operation_id').notNull(),
+	undoOf: text('undo_of'),
+	createdAt: integer('created_at').notNull(),
+	finishedAt: integer('finished_at')
+});
+
+export const ladderSwitches = sqliteTable(
+	'ladder_switches',
+	{
+		scope: text('scope', { enum: ['global', 'organization', 'site'] }).notNull(),
+		scopeId: text('scope_id').notNull(),
+		auto: integer('auto').notNull(),
+		updatedAt: integer('updated_at').notNull(),
+		updatedBy: text('updated_by').notNull()
+	},
+	(table) => [primaryKey({ columns: [table.scope, table.scopeId] })]
+);
+
+export const templateBundles = sqliteTable('template_bundles', {
+	id: text('id').primaryKey(),
+	entryId: text('entry_id').notNull(),
+	commitSha: text('commit_sha').notNull(),
+	status: text('status', { enum: ['building', 'ready', 'failed'] }).notNull(),
+	bundleKey: text('bundle_key'),
+	manifest: text('manifest'),
+	failure: text('failure'),
+	createdAt: integer('created_at').notNull()
+});
+
+export const siteAccessRules = sqliteTable('site_access_rules', {
+	id: text('id').primaryKey(),
+	organizationId: text('organization_id').notNull(),
+	siteId: text('site_id').notNull(),
+	environment: text('environment').notNull(),
+	preset: text('preset').notNull(),
+	config: text('config').notNull(),
+	createdBy: text('created_by').notNull(),
+	createdAt: integer('created_at').notNull(),
+	revokedAt: integer('revoked_at')
+});
+
+export const siteConfigChanges = sqliteTable('site_config_changes', {
+	id: text('id').primaryKey(),
+	organizationId: text('organization_id').notNull(),
+	siteId: text('site_id').notNull(),
+	operationId: text('operation_id').notNull(),
+	key: text('key').notNull(),
+	before: text('before').notNull(),
+	after: text('after').notNull(),
+	actor: text('actor').notNull(),
+	status: text('status', { enum: ['pending', 'applied', 'unverified', 'failed'] }).notNull(),
+	createdAt: integer('created_at').notNull(),
+	revertedBy: text('reverted_by')
+});
+
 export const TABLES = [
 	schemaMeta,
 	users,
@@ -377,6 +488,14 @@ export const TABLES = [
 	apiKeyLookup,
 	pairings,
 	nodes,
+	siteEnvironments,
+	releases,
+	releaseRollouts,
+	repairs,
+	ladderSwitches,
+	templateBundles,
+	siteAccessRules,
+	siteConfigChanges,
 	...BILLING_TABLES
 ] as const;
 
@@ -497,6 +616,7 @@ export const SCHEMA_STATEMENTS: string[] = [
 	box_found_as TEXT,
 	box_missing_since INTEGER,
 	ready_at INTEGER,
+	data_schema_version INTEGER CHECK (data_schema_version IS NULL OR data_schema_version >= 0),
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
 )`,
@@ -666,6 +786,23 @@ export const SCHEMA_STATEMENTS: string[] = [
 	`CREATE INDEX IF NOT EXISTS pending_secrets_expiry ON pending_secrets (expires_at)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS backups_operation ON backups (operation_id)`,
 	`CREATE INDEX IF NOT EXISTS backups_site ON backups (organization_id, site_id, created_at, id)`,
+	`CREATE TABLE IF NOT EXISTS site_environments (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	site_id TEXT NOT NULL,
+	kind TEXT NOT NULL CHECK (kind IN ('staging', 'dev', 'preview')),
+	name TEXT NOT NULL,
+	host TEXT NOT NULL,
+	status TEXT NOT NULL CHECK (status IN ('creating', 'ready', 'failed', 'deleting', 'deleted')),
+	env_site_id TEXT,
+	source_backup_id TEXT,
+	ttl_at INTEGER,
+	created_at INTEGER NOT NULL,
+	deleted_at INTEGER
+)`,
+	`CREATE INDEX IF NOT EXISTS site_environments_site ON site_environments (organization_id, site_id, created_at, id)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS site_environments_host ON site_environments (host)
+	WHERE deleted_at IS NULL`,
 	`CREATE INDEX IF NOT EXISTS identities_user ON identities (user_id)`,
 	`CREATE INDEX IF NOT EXISTS members_org ON members (organization_id, id)`,
 	`CREATE INDEX IF NOT EXISTS invites_org ON invites (organization_id, id)`,
@@ -779,6 +916,94 @@ export const SCHEMA_STATEMENTS: string[] = [
 	updated_at INTEGER NOT NULL
 )`,
 	`CREATE INDEX IF NOT EXISTS custom_domains_site ON custom_domains (organization_id, site_id, hostname)`,
+	`CREATE TABLE IF NOT EXISTS releases (
+	id TEXT PRIMARY KEY,
+	kind TEXT NOT NULL CHECK (kind IN (${quoted(RELEASE_KINDS)})),
+	version TEXT NOT NULL,
+	manifest_digest TEXT NOT NULL,
+	schema_version INTEGER NOT NULL CHECK (schema_version >= 0),
+	accepts_schema INTEGER NOT NULL CHECK (accepts_schema >= 0),
+	published_at INTEGER NOT NULL,
+	advisory_at INTEGER,
+	created_at INTEGER NOT NULL
+)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS releases_kind_version ON releases (kind, version)`,
+	`CREATE TABLE IF NOT EXISTS release_rollouts (
+	id TEXT PRIMARY KEY,
+	release_id TEXT NOT NULL,
+	operation_id TEXT NOT NULL,
+	status TEXT NOT NULL CHECK (status IN ('rolling', 'complete', 'halted', 'reverted')),
+	state TEXT NOT NULL,
+	progress TEXT NOT NULL,
+	previous TEXT NOT NULL,
+	first_ring_at INTEGER,
+	last_ring_at INTEGER,
+	stop_requested INTEGER NOT NULL DEFAULT 0 CHECK (stop_requested IN (0, 1)),
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS release_rollouts_release ON release_rollouts (release_id, created_at)`,
+	`CREATE TABLE IF NOT EXISTS repairs (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	site_id TEXT NOT NULL,
+	repair_id TEXT NOT NULL,
+	rung TEXT NOT NULL,
+	status TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed', 'refused', 'undone')),
+	observation_before TEXT NOT NULL,
+	observation_after TEXT,
+	operation_id TEXT NOT NULL,
+	undo_of TEXT,
+	created_at INTEGER NOT NULL,
+	finished_at INTEGER
+)`,
+	`CREATE INDEX IF NOT EXISTS repairs_site_time ON repairs (organization_id, site_id, created_at)`,
+	`CREATE TABLE IF NOT EXISTS ladder_switches (
+	scope TEXT NOT NULL CHECK (scope IN ('global', 'organization', 'site')),
+	scope_id TEXT NOT NULL,
+	auto INTEGER NOT NULL CHECK (auto IN (0, 1)),
+	updated_at INTEGER NOT NULL,
+	updated_by TEXT NOT NULL,
+	PRIMARY KEY (scope, scope_id)
+)`,
+	`CREATE TABLE IF NOT EXISTS template_bundles (
+	id TEXT PRIMARY KEY,
+	entry_id TEXT NOT NULL,
+	commit_sha TEXT NOT NULL,
+	status TEXT NOT NULL CHECK (status IN ('building', 'ready', 'failed')),
+	bundle_key TEXT,
+	manifest TEXT,
+	failure TEXT,
+	created_at INTEGER NOT NULL
+)`,
+	`CREATE INDEX IF NOT EXISTS template_bundles_entry ON template_bundles (entry_id, status, created_at)`,
+	`CREATE TABLE IF NOT EXISTS site_access_rules (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	site_id TEXT NOT NULL,
+	environment TEXT NOT NULL,
+	preset TEXT NOT NULL,
+	config TEXT NOT NULL,
+	created_by TEXT NOT NULL,
+	created_at INTEGER NOT NULL,
+	revoked_at INTEGER
+)`,
+	`CREATE INDEX IF NOT EXISTS site_access_rules_site ON site_access_rules (organization_id, site_id, created_at, id)`,
+	`CREATE TABLE IF NOT EXISTS site_config_changes (
+	id TEXT PRIMARY KEY,
+	organization_id TEXT NOT NULL,
+	site_id TEXT NOT NULL,
+	operation_id TEXT NOT NULL,
+	key TEXT NOT NULL,
+	before TEXT NOT NULL,
+	after TEXT NOT NULL,
+	actor TEXT NOT NULL,
+	status TEXT NOT NULL CHECK (status IN ('pending', 'applied', 'unverified', 'failed')),
+	created_at INTEGER NOT NULL,
+	reverted_by TEXT
+)`,
+	`CREATE INDEX IF NOT EXISTS site_config_changes_site ON site_config_changes (organization_id, site_id, created_at, id)`,
+	`CREATE INDEX IF NOT EXISTS site_config_changes_operation ON site_config_changes (organization_id, operation_id)`,
 	...ESTATE_SCHEMA_STATEMENTS,
 	...BILLING_SCHEMA_STATEMENTS
 ];
