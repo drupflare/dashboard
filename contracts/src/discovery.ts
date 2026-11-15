@@ -76,9 +76,10 @@ export const redirectSchema = z.object({
 export const discoveryDocumentSchema = z.object({
 	v: z.literal(DISCOVERY_VERSION.major),
 	kind: siteKind,
-	version: z.string().min(1),
+	// null when the release is not registered or the data schema is not read yet
+	version: z.string().min(1).nullable(),
 	releaseId: z.string().min(1),
-	schemaVersion: z.int().nonnegative(),
+	schemaVersion: z.int().nonnegative().nullable(),
 	capabilities: z.array(capabilitySchema),
 	settings: settingsSchema,
 	routes: z.array(routeSchema),

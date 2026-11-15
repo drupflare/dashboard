@@ -42,6 +42,93 @@
 		{ "name": "system", "description": "Liveness and API documentation." }
 	],
 	"paths": {
+		"/api/v1/admin/audit": {
+			"get": {
+				"operationId": "getApiV1AdminAudit",
+				"summary": "Read the platform audit table",
+				"description": "Changes an administrator made that belong to no organisation, such as the global automatic repair switch, newest first. Page with the id of the last row you have.",
+				"tags": ["admin"],
+				"x-action": "admin.audit.read",
+				"x-rate-class": "read",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "limit",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"default": 100,
+							"type": "integer",
+							"minimum": 1,
+							"maximum": 200
+						}
+					},
+					{
+						"name": "before",
+						"in": "query",
+						"required": false,
+						"schema": {
+							"type": "integer",
+							"exclusiveMinimum": 0,
+							"maximum": 9007199254740991
+						}
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"rows": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "number" },
+													"actor": { "type": "string" },
+													"action": { "type": "string" },
+													"target": { "type": "string" },
+													"detail": {},
+													"createdAt": { "type": "number" }
+												},
+												"required": [
+													"id",
+													"actor",
+													"action",
+													"target",
+													"detail",
+													"createdAt"
+												]
+											}
+										}
+									},
+									"required": ["rows"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/admin/capacity": {
 			"get": {
 				"operationId": "getApiV1AdminCapacity",
@@ -2477,11 +2564,199 @@
 				}
 			}
 		},
+		"/api/v1/billing/{orgId}/add-ons": {
+			"post": {
+				"operationId": "postApiV1BillingOrgIdAddOns",
+				"summary": "Buy an add-on",
+				"description": "Buys an add-on as a subscription, billed with the plan, or as a one-time pack. Needs a signed-in session and refuses API keys. A subscription add-on on a running subscription changes at once and answers applied; otherwise a hosted checkout opens and the answer is its url. The quantity changes only when the payment provider confirms it. An add-on that does not exist, is not on sale or has an unreviewed price answers 404.",
+				"tags": ["billing"],
+				"x-action": "billing.manage",
+				"x-rate-class": "write",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"oneOf": [
+									{
+										"type": "object",
+										"properties": {
+											"mode": { "type": "string", "const": "subscription" },
+											"addOn": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 64
+											},
+											"quantity": {
+												"type": "integer",
+												"minimum": 1,
+												"maximum": 100
+											},
+											"interval": {
+												"type": "string",
+												"enum": ["month", "year"]
+											}
+										},
+										"required": ["mode", "addOn", "quantity", "interval"]
+									},
+									{
+										"type": "object",
+										"properties": {
+											"mode": { "type": "string", "const": "pack" },
+											"addOn": {
+												"type": "string",
+												"minLength": 1,
+												"maxLength": 64
+											},
+											"units": {
+												"type": "integer",
+												"exclusiveMinimum": 0,
+												"maximum": 9007199254740991
+											}
+										},
+										"required": ["mode", "addOn", "units"]
+									}
+								]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"anyOf": [
+										{
+											"type": "object",
+											"properties": {
+												"url": { "type": "string", "format": "uri" }
+											},
+											"required": ["url"]
+										},
+										{
+											"type": "object",
+											"properties": {
+												"applied": { "type": "boolean", "const": true }
+											},
+											"required": ["applied"]
+										}
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/billing/{orgId}/add-ons/{addOnId}": {
+			"put": {
+				"operationId": "putApiV1BillingOrgIdAddOnsAddOnId",
+				"summary": "Change an add-on quantity",
+				"description": "Sets how many of an add-on the organisation holds on its running subscription; 0 removes it. Needs a signed-in session and refuses API keys. An add-on the organisation does not hold answers 404. The quantity changes only when the payment provider confirms it.",
+				"tags": ["billing"],
+				"x-action": "billing.manage",
+				"x-rate-class": "write",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "addOnId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1, "maxLength": 64 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"quantity": { "type": "integer", "minimum": 0, "maximum": 100 }
+								},
+								"required": ["quantity"]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"applied": { "type": "boolean", "const": true }
+									},
+									"required": ["applied"]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/billing/{orgId}/checkout": {
 			"post": {
 				"operationId": "postApiV1BillingOrgIdCheckout",
 				"summary": "Start a checkout",
-				"description": "Opens a hosted checkout for a managed plan. Needs a signed-in session and refuses API keys. Plans whose price has not been reviewed answer 404.",
+				"description": "Opens a hosted checkout for a managed plan. Needs a signed-in session and refuses API keys. Plans whose price has not been reviewed answer 404. An organisation with no billing contact, name or country answers 422 until it saves them. An organisation whose running subscription holds add-ons alone gets the plan added to it and the answer is applied.",
 				"tags": ["billing"],
 				"x-action": "billing.manage",
 				"x-rate-class": "write",
@@ -2526,9 +2801,90 @@
 						"content": {
 							"application/json": {
 								"schema": {
+									"anyOf": [
+										{
+											"type": "object",
+											"properties": {
+												"url": { "type": "string", "format": "uri" }
+											},
+											"required": ["url"]
+										},
+										{
+											"type": "object",
+											"properties": {
+												"applied": { "type": "boolean", "const": true }
+											},
+											"required": ["applied"]
+										}
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/billing/{orgId}/details": {
+			"put": {
+				"operationId": "putApiV1BillingOrgIdDetails",
+				"summary": "Save the billing details",
+				"description": "Saves the billing contact name and email and the billing country that a checkout or an add-on purchase needs. Needs a signed-in session and refuses API keys. The checkout page asks for the full address and keeps these in step.",
+				"tags": ["billing"],
+				"x-action": "billing.manage",
+				"x-rate-class": "write",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"name": { "type": "string", "minLength": 1, "maxLength": 200 },
+									"email": { "type": "string", "minLength": 3, "maxLength": 320 },
+									"country": { "type": "string", "minLength": 2, "maxLength": 2 }
+								},
+								"required": ["name", "email", "country"]
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
 									"type": "object",
-									"properties": { "url": { "type": "string", "format": "uri" } },
-									"required": ["url"]
+									"properties": { "saved": { "type": "boolean", "const": true } },
+									"required": ["saved"]
 								}
 							}
 						}
@@ -2596,11 +2952,140 @@
 				}
 			}
 		},
+		"/api/v1/billing/add-ons": {
+			"get": {
+				"operationId": "getApiV1BillingAddOns",
+				"summary": "List add-ons",
+				"description": "Lists what can be bought on top of a plan, as a subscription, a one-time pack or both. Prices follow the same review rule as plans, and an add-on that is not on sale carries the reason.",
+				"tags": ["billing"],
+				"x-action": "account.read",
+				"x-rate-class": "read",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [{ "$ref": "#/components/parameters/ContractHeader" }],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"name": { "type": "string" },
+													"meter": {
+														"type": "string",
+														"enum": [
+															"support-hours",
+															"support-level",
+															"domains",
+															"container-hours",
+															"backup-storage",
+															"mail-sends",
+															"sites",
+															"views",
+															"writes",
+															"storage",
+															"hostnames",
+															"invitees",
+															"assurance"
+														]
+													},
+													"lookupKey": { "type": "string" },
+													"unit": { "type": "string" },
+													"grants": { "type": "number" },
+													"planes": {
+														"type": "array",
+														"items": {
+															"type": "string",
+															"enum": [
+																"self-hosted",
+																"self-managed",
+																"managed"
+															]
+														}
+													},
+													"requires": {
+														"anyOf": [
+															{
+																"type": "array",
+																"items": { "type": "string" }
+															},
+															{ "type": "null" }
+														]
+													},
+													"subscription": { "type": "boolean" },
+													"packSizes": {
+														"type": "array",
+														"items": { "type": "number" }
+													},
+													"available": { "type": "boolean" },
+													"availableNote": { "type": ["string", "null"] },
+													"monthly": { "type": ["number", "null"] },
+													"annual": { "type": ["number", "null"] },
+													"packs": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"units": { "type": "number" },
+																"price": {
+																	"type": ["number", "null"]
+																}
+															},
+															"required": ["units", "price"]
+														}
+													},
+													"unreviewed": { "type": "boolean" }
+												},
+												"required": [
+													"id",
+													"name",
+													"meter",
+													"lookupKey",
+													"unit",
+													"grants",
+													"planes",
+													"requires",
+													"subscription",
+													"packSizes",
+													"available",
+													"availableNote"
+												]
+											}
+										}
+									},
+									"required": ["items"]
+								}
+							}
+						}
+					},
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/billing/plans": {
 			"get": {
 				"operationId": "getApiV1BillingPlans",
 				"summary": "List plans",
-				"description": "Lists the plans. A price appears only after it has been reviewed, and platform administrators see every price.",
+				"description": "Lists the plans with what each includes. A price appears only after it has been reviewed, and platform administrators see every price. A null figure is unknown or negotiated, and sitesUnlimited marks a plan with no site limit.",
 				"tags": ["billing"],
 				"x-action": "account.read",
 				"x-rate-class": "read",
@@ -2631,10 +3116,61 @@
 													"id": { "type": "string" },
 													"name": { "type": "string" },
 													"kind": { "type": "string" },
+													"plane": {
+														"type": "string",
+														"enum": [
+															"self-hosted",
+															"self-managed",
+															"managed"
+														]
+													},
 													"lookupKey": { "type": "string" },
 													"sites": { "type": ["number", "null"] },
+													"sitesUnlimited": { "type": "boolean" },
 													"views": { "type": ["number", "null"] },
 													"support": { "type": "string" },
+													"supportHoursPerYear": {
+														"type": ["number", "null"]
+													},
+													"included": {
+														"type": "object",
+														"properties": {
+															"storageGb": {
+																"type": ["number", "null"]
+															},
+															"writes": {
+																"type": ["number", "null"]
+															},
+															"backupGb": {
+																"type": ["number", "null"]
+															},
+															"mailSends": {
+																"type": ["number", "null"]
+															},
+															"containerHours": {
+																"type": ["number", "null"]
+															},
+															"invitees": {
+																"type": ["number", "null"]
+															},
+															"customDomains": {
+																"type": ["number", "null"]
+															},
+															"backupDays": {
+																"type": ["number", "null"]
+															}
+														},
+														"required": [
+															"storageGb",
+															"writes",
+															"backupGb",
+															"mailSends",
+															"containerHours",
+															"invitees",
+															"customDomains",
+															"backupDays"
+														]
+													},
 													"disabled": { "type": "boolean" },
 													"monthly": { "type": ["number", "null"] },
 													"annual": { "type": ["number", "null"] },
@@ -2644,10 +3180,14 @@
 													"id",
 													"name",
 													"kind",
+													"plane",
 													"lookupKey",
 													"sites",
+													"sitesUnlimited",
 													"views",
 													"support",
+													"supportHoursPerYear",
+													"included",
 													"disabled"
 												]
 											}
@@ -5910,6 +6450,11 @@
 												"properties": {
 													"id": { "type": "string" },
 													"name": { "type": "string" },
+													"title": { "type": "string" },
+													"summary": { "type": "string" },
+													"repo": { "type": ["string", "null"] },
+													"core": { "type": ["string", "null"] },
+													"shape": { "type": ["string", "null"] },
 													"status": {
 														"type": "string",
 														"enum": [
@@ -5945,6 +6490,44 @@
 															}
 														]
 													},
+													"checks": {
+														"type": "object",
+														"properties": {
+															"passed": { "type": "number" },
+															"total": { "type": "number" },
+															"unchecked": { "type": "number" }
+														},
+														"required": ["passed", "total", "unchecked"]
+													},
+													"blockers": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"checks": {
+																	"type": "array",
+																	"items": { "type": "string" }
+																},
+																"reason": { "type": "string" }
+															},
+															"required": ["checks", "reason"]
+														}
+													},
+													"legacy": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"date": { "type": "string" },
+																	"baseOnly": {
+																		"type": "boolean"
+																	}
+																},
+																"required": ["date", "baseOnly"]
+															},
+															{ "type": "null" }
+														]
+													},
 													"cells": {
 														"type": "object",
 														"propertyNames": { "type": "string" },
@@ -5961,8 +6544,16 @@
 												"required": [
 													"id",
 													"name",
+													"title",
+													"summary",
+													"repo",
+													"core",
+													"shape",
 													"status",
 													"install",
+													"checks",
+													"blockers",
+													"legacy",
 													"cells"
 												]
 											}
@@ -5983,11 +6574,1468 @@
 				}
 			}
 		},
+		"/api/v1/orgs/{orgId}/custom-bundles": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdCustomBundles",
+				"summary": "Upload a built Worker bundle",
+				"description": "Takes a built Worker as a .tar.gz request body (Content-Type application/gzip) and returns what the platform made of it. The archive holds a wrangler.jsonc at its top level, the built entry file that wrangler.jsonc names as main, any other built modules next to it and the assets directory it names. The archive is capped at 16 MiB and 40 MiB unpacked, with at most 20,000 entries, and it may hold no absolute path, no .. path and no link; each of those is refused with 422. The answer lists findings, each with a stable code and a severity, and whether the bundle is deployable. A deployable bundle is stored and gets a bundleId, which Create a site and Update a custom site accept. A bundle with a blocking finding is not stored and has a null bundleId. The same archive uploaded twice gives the same bundleId. The bundle is read, never run. Refused with 403 when the plan does not include custom code; the answer names the plan that does. Do not send an Idempotency-Key header; an upload is repeatable on its own.",
+				"tags": ["sites"],
+				"x-action": "site.create",
+				"x-rate-class": "heavy",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "fileName",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "maxLength": 200 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"bundleId": { "type": ["string", "null"] },
+										"sha256": { "type": "string" },
+										"fileName": { "type": "string" },
+										"deployable": { "type": "boolean" },
+										"findings": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"severity": {
+														"type": "string",
+														"enum": ["blocking", "warning", "info"]
+													},
+													"code": { "type": "string", "minLength": 1 },
+													"subject": { "type": "string", "minLength": 1 },
+													"reason": { "type": "string", "minLength": 1 },
+													"provenance": {
+														"anyOf": [
+															{
+																"type": "object",
+																"properties": {
+																	"source": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": ["source"],
+																"additionalProperties": false
+															},
+															{
+																"type": "object",
+																"properties": {
+																	"unverified": {
+																		"type": "boolean",
+																		"const": true
+																	},
+																	"confirm": {
+																		"type": "string",
+																		"minLength": 1
+																	}
+																},
+																"required": [
+																	"unverified",
+																	"confirm"
+																],
+																"additionalProperties": false
+															}
+														]
+													}
+												},
+												"required": [
+													"severity",
+													"code",
+													"subject",
+													"reason",
+													"provenance"
+												],
+												"additionalProperties": false
+											}
+										},
+										"recipe": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"enum": [
+														"drupal",
+														"nuxtpress",
+														"smoke",
+														"mylora",
+														"static-site",
+														"bring-your-own"
+													]
+												},
+												"name": { "type": "string", "minLength": 1 },
+												"category": {
+													"type": "string",
+													"enum": ["workers", "cms"]
+												},
+												"compatibility": {
+													"type": "object",
+													"properties": {
+														"flags": {
+															"type": "array",
+															"items": { "type": "string" }
+														},
+														"provenance": {
+															"anyOf": [
+																{
+																	"type": "object",
+																	"properties": {
+																		"source": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"required": ["source"],
+																	"additionalProperties": false
+																},
+																{
+																	"type": "object",
+																	"properties": {
+																		"unverified": {
+																			"type": "boolean",
+																			"const": true
+																		},
+																		"confirm": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"required": [
+																		"unverified",
+																		"confirm"
+																	],
+																	"additionalProperties": false
+																}
+															]
+														}
+													},
+													"required": ["flags", "provenance"],
+													"additionalProperties": false
+												},
+												"resources": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"enum": [
+																	"kv",
+																	"r2",
+																	"d1",
+																	"send_email"
+																]
+															},
+															"binding": {
+																"type": "string",
+																"minLength": 1
+															},
+															"optional": { "type": "boolean" },
+															"migrationsDir": { "type": "string" },
+															"migrationsTable": { "type": "string" },
+															"provenance": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"source": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["source"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"unverified": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"confirm": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"unverified",
+																			"confirm"
+																		],
+																		"additionalProperties": false
+																	}
+																]
+															}
+														},
+														"required": [
+															"kind",
+															"binding",
+															"optional",
+															"provenance"
+														],
+														"additionalProperties": false
+													}
+												},
+												"durableObjects": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"binding": {
+																"type": "string",
+																"minLength": 1
+															},
+															"className": {
+																"type": "string",
+																"minLength": 1
+															},
+															"provenance": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"source": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["source"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"unverified": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"confirm": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"unverified",
+																			"confirm"
+																		],
+																		"additionalProperties": false
+																	}
+																]
+															}
+														},
+														"required": [
+															"binding",
+															"className",
+															"provenance"
+														],
+														"additionalProperties": false
+													}
+												},
+												"durableMigrations": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"tag": {
+																"type": "string",
+																"minLength": 1
+															},
+															"newSqliteClasses": {
+																"type": "array",
+																"items": { "type": "string" }
+															},
+															"provenance": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"source": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["source"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"unverified": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"confirm": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"unverified",
+																			"confirm"
+																		],
+																		"additionalProperties": false
+																	}
+																]
+															}
+														},
+														"required": [
+															"tag",
+															"newSqliteClasses",
+															"provenance"
+														],
+														"additionalProperties": false
+													}
+												},
+												"crons": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"schedule": {
+																"type": "string",
+																"minLength": 1
+															},
+															"provenance": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"source": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["source"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"unverified": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"confirm": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"unverified",
+																			"confirm"
+																		],
+																		"additionalProperties": false
+																	}
+																]
+															}
+														},
+														"required": ["schedule", "provenance"],
+														"additionalProperties": false
+													}
+												},
+												"versionMetadata": {
+													"type": "object",
+													"properties": {
+														"binding": {
+															"type": "string",
+															"minLength": 1
+														},
+														"provenance": {
+															"anyOf": [
+																{
+																	"type": "object",
+																	"properties": {
+																		"source": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"required": ["source"],
+																	"additionalProperties": false
+																},
+																{
+																	"type": "object",
+																	"properties": {
+																		"unverified": {
+																			"type": "boolean",
+																			"const": true
+																		},
+																		"confirm": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"required": [
+																		"unverified",
+																		"confirm"
+																	],
+																	"additionalProperties": false
+																}
+															]
+														}
+													},
+													"required": ["binding", "provenance"],
+													"additionalProperties": false
+												},
+												"assets": {
+													"type": "object",
+													"properties": {
+														"directory": {
+															"anyOf": [
+																{
+																	"type": "string",
+																	"minLength": 1
+																},
+																{ "type": "null" }
+															]
+														},
+														"provenance": {
+															"anyOf": [
+																{
+																	"type": "object",
+																	"properties": {
+																		"source": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"required": ["source"],
+																	"additionalProperties": false
+																},
+																{
+																	"type": "object",
+																	"properties": {
+																		"unverified": {
+																			"type": "boolean",
+																			"const": true
+																		},
+																		"confirm": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"required": [
+																		"unverified",
+																		"confirm"
+																	],
+																	"additionalProperties": false
+																}
+															]
+														}
+													},
+													"required": ["directory", "provenance"],
+													"additionalProperties": false
+												},
+												"refused": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"kind": {
+																"type": "string",
+																"minLength": 1
+															},
+															"binding": { "type": "string" },
+															"reason": {
+																"type": "string",
+																"minLength": 1
+															},
+															"provenance": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"source": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["source"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"unverified": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"confirm": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"unverified",
+																			"confirm"
+																		],
+																		"additionalProperties": false
+																	}
+																]
+															}
+														},
+														"required": [
+															"kind",
+															"reason",
+															"provenance"
+														],
+														"additionalProperties": false
+													}
+												},
+												"secrets": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"name": {
+																"type": "string",
+																"pattern": "^[A-Z][A-Z0-9_]{0,63}$"
+															},
+															"encoding": {
+																"type": "string",
+																"enum": ["hex", "base64"]
+															},
+															"length": {
+																"type": "integer",
+																"exclusiveMinimum": 0,
+																"maximum": 9007199254740991
+															},
+															"required": { "type": "boolean" },
+															"provenance": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"source": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["source"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"unverified": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"confirm": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"unverified",
+																			"confirm"
+																		],
+																		"additionalProperties": false
+																	}
+																]
+															}
+														},
+														"required": [
+															"name",
+															"encoding",
+															"length",
+															"required",
+															"provenance"
+														],
+														"additionalProperties": false
+													}
+												},
+												"variables": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"name": {
+																"type": "string",
+																"minLength": 1
+															},
+															"optional": { "type": "boolean" },
+															"platformSet": { "type": "boolean" },
+															"provenance": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"source": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["source"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"unverified": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"confirm": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"unverified",
+																			"confirm"
+																		],
+																		"additionalProperties": false
+																	}
+																]
+															}
+														},
+														"required": [
+															"name",
+															"optional",
+															"provenance"
+														],
+														"additionalProperties": false
+													}
+												},
+												"firstRun": {
+													"anyOf": [
+														{
+															"type": "object",
+															"properties": {
+																"method": {
+																	"type": "string",
+																	"const": "POST"
+																},
+																"path": {
+																	"type": "string",
+																	"format": "starts_with",
+																	"pattern": "^\\/.*"
+																},
+																"provenance": {
+																	"anyOf": [
+																		{
+																			"type": "object",
+																			"properties": {
+																				"source": {
+																					"type": "string",
+																					"minLength": 1
+																				}
+																			},
+																			"required": ["source"],
+																			"additionalProperties": false
+																		},
+																		{
+																			"type": "object",
+																			"properties": {
+																				"unverified": {
+																					"type": "boolean",
+																					"const": true
+																				},
+																				"confirm": {
+																					"type": "string",
+																					"minLength": 1
+																				}
+																			},
+																			"required": [
+																				"unverified",
+																				"confirm"
+																			],
+																			"additionalProperties": false
+																		}
+																	]
+																},
+																"body": {
+																	"type": "array",
+																	"items": {
+																		"type": "object",
+																		"properties": {
+																			"name": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"value": {
+																				"type": "string",
+																				"enum": [
+																					"admin-username",
+																					"admin-email",
+																					"admin-password",
+																					"owner-input"
+																				]
+																			},
+																			"required": {
+																				"type": "boolean"
+																			},
+																			"minLength": {
+																				"type": "integer",
+																				"minimum": 0,
+																				"maximum": 9007199254740991
+																			},
+																			"maxLength": {
+																				"type": "integer",
+																				"exclusiveMinimum": 0,
+																				"maximum": 9007199254740991
+																			},
+																			"pattern": {
+																				"type": "string"
+																			},
+																			"format": {
+																				"type": "string",
+																				"const": "email"
+																			},
+																			"provenance": {
+																				"anyOf": [
+																					{
+																						"type": "object",
+																						"properties": {
+																							"source": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"source"
+																						],
+																						"additionalProperties": false
+																					},
+																					{
+																						"type": "object",
+																						"properties": {
+																							"unverified": {
+																								"type": "boolean",
+																								"const": true
+																							},
+																							"confirm": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"unverified",
+																							"confirm"
+																						],
+																						"additionalProperties": false
+																					}
+																				]
+																			}
+																		},
+																		"required": [
+																			"name",
+																			"value",
+																			"required",
+																			"provenance"
+																		],
+																		"additionalProperties": false
+																	}
+																},
+																"settingKeys": {
+																	"type": "array",
+																	"items": {
+																		"type": "object",
+																		"properties": {
+																			"key": {
+																				"type": "string",
+																				"minLength": 1
+																			},
+																			"provenance": {
+																				"anyOf": [
+																					{
+																						"type": "object",
+																						"properties": {
+																							"source": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"source"
+																						],
+																						"additionalProperties": false
+																					},
+																					{
+																						"type": "object",
+																						"properties": {
+																							"unverified": {
+																								"type": "boolean",
+																								"const": true
+																							},
+																							"confirm": {
+																								"type": "string",
+																								"minLength": 1
+																							}
+																						},
+																						"required": [
+																							"unverified",
+																							"confirm"
+																						],
+																						"additionalProperties": false
+																					}
+																				]
+																			}
+																		},
+																		"required": [
+																			"key",
+																			"provenance"
+																		],
+																		"additionalProperties": false
+																	}
+																},
+																"success": {
+																	"type": "object",
+																	"properties": {
+																		"statuses": {
+																			"type": "array",
+																			"items": {
+																				"type": "integer",
+																				"minimum": -9007199254740991,
+																				"maximum": 9007199254740991
+																			}
+																		},
+																		"provenance": {
+																			"anyOf": [
+																				{
+																					"type": "object",
+																					"properties": {
+																						"source": {
+																							"type": "string",
+																							"minLength": 1
+																						}
+																					},
+																					"required": [
+																						"source"
+																					],
+																					"additionalProperties": false
+																				},
+																				{
+																					"type": "object",
+																					"properties": {
+																						"unverified": {
+																							"type": "boolean",
+																							"const": true
+																						},
+																						"confirm": {
+																							"type": "string",
+																							"minLength": 1
+																						}
+																					},
+																					"required": [
+																						"unverified",
+																						"confirm"
+																					],
+																					"additionalProperties": false
+																				}
+																			]
+																		}
+																	},
+																	"required": [
+																		"statuses",
+																		"provenance"
+																	],
+																	"additionalProperties": false
+																},
+																"alreadyDone": {
+																	"type": "object",
+																	"properties": {
+																		"status": {
+																			"type": "integer",
+																			"minimum": -9007199254740991,
+																			"maximum": 9007199254740991
+																		},
+																		"provenance": {
+																			"anyOf": [
+																				{
+																					"type": "object",
+																					"properties": {
+																						"source": {
+																							"type": "string",
+																							"minLength": 1
+																						}
+																					},
+																					"required": [
+																						"source"
+																					],
+																					"additionalProperties": false
+																				},
+																				{
+																					"type": "object",
+																					"properties": {
+																						"unverified": {
+																							"type": "boolean",
+																							"const": true
+																						},
+																						"confirm": {
+																							"type": "string",
+																							"minLength": 1
+																						}
+																					},
+																					"required": [
+																						"unverified",
+																						"confirm"
+																					],
+																					"additionalProperties": false
+																				}
+																			]
+																		}
+																	},
+																	"required": [
+																		"status",
+																		"provenance"
+																	],
+																	"additionalProperties": false
+																},
+																"password": {
+																	"type": "object",
+																	"properties": {
+																		"minLength": {
+																			"anyOf": [
+																				{
+																					"type": "integer",
+																					"exclusiveMinimum": 0,
+																					"maximum": 9007199254740991
+																				},
+																				{ "type": "null" }
+																			]
+																		},
+																		"maxLength": {
+																			"anyOf": [
+																				{
+																					"type": "integer",
+																					"exclusiveMinimum": 0,
+																					"maximum": 9007199254740991
+																				},
+																				{ "type": "null" }
+																			]
+																		},
+																		"requires": {
+																			"type": "array",
+																			"items": {
+																				"type": "string",
+																				"enum": [
+																					"lower",
+																					"upper",
+																					"digit",
+																					"symbol"
+																				]
+																			}
+																		},
+																		"generatedLength": {
+																			"type": "object",
+																			"properties": {
+																				"value": {
+																					"type": "integer",
+																					"exclusiveMinimum": 0,
+																					"maximum": 9007199254740991
+																				},
+																				"provenance": {
+																					"anyOf": [
+																						{
+																							"type": "object",
+																							"properties": {
+																								"source": {
+																									"type": "string",
+																									"minLength": 1
+																								}
+																							},
+																							"required": [
+																								"source"
+																							],
+																							"additionalProperties": false
+																						},
+																						{
+																							"type": "object",
+																							"properties": {
+																								"unverified": {
+																									"type": "boolean",
+																									"const": true
+																								},
+																								"confirm": {
+																									"type": "string",
+																									"minLength": 1
+																								}
+																							},
+																							"required": [
+																								"unverified",
+																								"confirm"
+																							],
+																							"additionalProperties": false
+																						}
+																					]
+																				}
+																			},
+																			"required": [
+																				"value",
+																				"provenance"
+																			],
+																			"additionalProperties": false
+																		},
+																		"delivery": {
+																			"type": "string",
+																			"const": "shown-once"
+																		},
+																		"provenance": {
+																			"anyOf": [
+																				{
+																					"type": "object",
+																					"properties": {
+																						"source": {
+																							"type": "string",
+																							"minLength": 1
+																						}
+																					},
+																					"required": [
+																						"source"
+																					],
+																					"additionalProperties": false
+																				},
+																				{
+																					"type": "object",
+																					"properties": {
+																						"unverified": {
+																							"type": "boolean",
+																							"const": true
+																						},
+																						"confirm": {
+																							"type": "string",
+																							"minLength": 1
+																						}
+																					},
+																					"required": [
+																						"unverified",
+																						"confirm"
+																					],
+																					"additionalProperties": false
+																				}
+																			]
+																		}
+																	},
+																	"required": [
+																		"minLength",
+																		"maxLength",
+																		"requires",
+																		"generatedLength",
+																		"delivery",
+																		"provenance"
+																	],
+																	"additionalProperties": false
+																},
+																"ownerToken": {
+																	"type": "object",
+																	"properties": {
+																		"responseField": {
+																			"type": "string",
+																			"minLength": 1
+																		},
+																		"delivery": {
+																			"type": "string",
+																			"const": "shown-once"
+																		},
+																		"custody": {
+																			"type": "object",
+																			"properties": {
+																				"store": {
+																					"type": "string",
+																					"minLength": 1
+																				},
+																				"provenance": {
+																					"anyOf": [
+																						{
+																							"type": "object",
+																							"properties": {
+																								"source": {
+																									"type": "string",
+																									"minLength": 1
+																								}
+																							},
+																							"required": [
+																								"source"
+																							],
+																							"additionalProperties": false
+																						},
+																						{
+																							"type": "object",
+																							"properties": {
+																								"unverified": {
+																									"type": "boolean",
+																									"const": true
+																								},
+																								"confirm": {
+																									"type": "string",
+																									"minLength": 1
+																								}
+																							},
+																							"required": [
+																								"unverified",
+																								"confirm"
+																							],
+																							"additionalProperties": false
+																						}
+																					]
+																				}
+																			},
+																			"required": [
+																				"store",
+																				"provenance"
+																			],
+																			"additionalProperties": false
+																		},
+																		"provenance": {
+																			"anyOf": [
+																				{
+																					"type": "object",
+																					"properties": {
+																						"source": {
+																							"type": "string",
+																							"minLength": 1
+																						}
+																					},
+																					"required": [
+																						"source"
+																					],
+																					"additionalProperties": false
+																				},
+																				{
+																					"type": "object",
+																					"properties": {
+																						"unverified": {
+																							"type": "boolean",
+																							"const": true
+																						},
+																						"confirm": {
+																							"type": "string",
+																							"minLength": 1
+																						}
+																					},
+																					"required": [
+																						"unverified",
+																						"confirm"
+																					],
+																					"additionalProperties": false
+																				}
+																			]
+																		}
+																	},
+																	"required": [
+																		"responseField",
+																		"delivery",
+																		"custody",
+																		"provenance"
+																	],
+																	"additionalProperties": false
+																},
+																"admin": {
+																	"type": "object",
+																	"properties": {
+																		"nameField": {
+																			"type": "string",
+																			"minLength": 1
+																		},
+																		"mailField": {
+																			"type": "string",
+																			"minLength": 1
+																		},
+																		"provenance": {
+																			"anyOf": [
+																				{
+																					"type": "object",
+																					"properties": {
+																						"source": {
+																							"type": "string",
+																							"minLength": 1
+																						}
+																					},
+																					"required": [
+																						"source"
+																					],
+																					"additionalProperties": false
+																				},
+																				{
+																					"type": "object",
+																					"properties": {
+																						"unverified": {
+																							"type": "boolean",
+																							"const": true
+																						},
+																						"confirm": {
+																							"type": "string",
+																							"minLength": 1
+																						}
+																					},
+																					"required": [
+																						"unverified",
+																						"confirm"
+																					],
+																					"additionalProperties": false
+																				}
+																			]
+																		}
+																	},
+																	"required": [
+																		"nameField",
+																		"mailField",
+																		"provenance"
+																	],
+																	"additionalProperties": false
+																}
+															},
+															"required": [
+																"method",
+																"path",
+																"provenance",
+																"body",
+																"settingKeys",
+																"success",
+																"alreadyDone",
+																"password"
+															],
+															"additionalProperties": false
+														},
+														{ "type": "null" }
+													]
+												},
+												"probe": {
+													"type": "object",
+													"properties": {
+														"method": {
+															"type": "string",
+															"const": "GET"
+														},
+														"path": {
+															"type": "string",
+															"format": "starts_with",
+															"pattern": "^\\/.*"
+														},
+														"auth": {
+															"type": "string",
+															"enum": ["owner-token"]
+														},
+														"provenance": {
+															"anyOf": [
+																{
+																	"type": "object",
+																	"properties": {
+																		"source": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"required": ["source"],
+																	"additionalProperties": false
+																},
+																{
+																	"type": "object",
+																	"properties": {
+																		"unverified": {
+																			"type": "boolean",
+																			"const": true
+																		},
+																		"confirm": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"required": [
+																		"unverified",
+																		"confirm"
+																	],
+																	"additionalProperties": false
+																}
+															]
+														}
+													},
+													"required": ["method", "path", "provenance"],
+													"additionalProperties": false
+												},
+												"settings": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"key": {
+																"type": "string",
+																"minLength": 1
+															},
+															"label": {
+																"type": "string",
+																"minLength": 1
+															},
+															"access": {
+																"type": "string",
+																"const": "read-only"
+															},
+															"maxLength": {
+																"type": "integer",
+																"exclusiveMinimum": 0,
+																"maximum": 9007199254740991
+															},
+															"format": {
+																"type": "string",
+																"const": "email"
+															},
+															"provenance": {
+																"anyOf": [
+																	{
+																		"type": "object",
+																		"properties": {
+																			"source": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": ["source"],
+																		"additionalProperties": false
+																	},
+																	{
+																		"type": "object",
+																		"properties": {
+																			"unverified": {
+																				"type": "boolean",
+																				"const": true
+																			},
+																			"confirm": {
+																				"type": "string",
+																				"minLength": 1
+																			}
+																		},
+																		"required": [
+																			"unverified",
+																			"confirm"
+																		],
+																		"additionalProperties": false
+																	}
+																]
+															}
+														},
+														"required": [
+															"key",
+															"label",
+															"access",
+															"maxLength",
+															"provenance"
+														],
+														"additionalProperties": false
+													}
+												},
+												"release": {
+													"type": "object",
+													"properties": {
+														"workerAsset": {
+															"type": ["string", "null"]
+														},
+														"provenance": {
+															"anyOf": [
+																{
+																	"type": "object",
+																	"properties": {
+																		"source": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"required": ["source"],
+																	"additionalProperties": false
+																},
+																{
+																	"type": "object",
+																	"properties": {
+																		"unverified": {
+																			"type": "boolean",
+																			"const": true
+																		},
+																		"confirm": {
+																			"type": "string",
+																			"minLength": 1
+																		}
+																	},
+																	"required": [
+																		"unverified",
+																		"confirm"
+																	],
+																	"additionalProperties": false
+																}
+															]
+														}
+													},
+													"required": ["workerAsset", "provenance"],
+													"additionalProperties": false
+												}
+											},
+											"required": [
+												"id",
+												"name",
+												"category",
+												"compatibility",
+												"resources",
+												"durableObjects",
+												"durableMigrations",
+												"crons",
+												"assets",
+												"refused",
+												"secrets",
+												"variables",
+												"firstRun",
+												"probe",
+												"settings",
+												"release"
+											],
+											"additionalProperties": false
+										}
+									},
+									"required": [
+										"bundleId",
+										"sha256",
+										"fileName",
+										"deployable",
+										"findings",
+										"recipe"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/orgs/{orgId}/entitlement": {
 			"get": {
 				"operationId": "getApiV1OrgsOrgIdEntitlement",
 				"summary": "Read the plan",
-				"description": "Reads what the organisation in the path may do on its current plan. A null limit is unknown or negotiated and counts as no allowance. Only an activated subscription changes the plan; every other account reads as the free plan. billingAccount is true when the organisation has a Stripe customer, so the billing portal can open for it.",
+				"description": "Reads what the organisation in the path may do on its current plan. A null limit is unknown or negotiated and counts as no allowance. Only an activated subscription changes the plan; every other account reads as the free plan. billingAccount is true when the organisation has a Stripe customer, so the billing portal can open for it. credits holds the units bought in one-time packs per meter, with zeros left out.",
 				"tags": ["orgs"],
 				"x-action": "org.read",
 				"x-rate-class": "read",
@@ -6019,20 +8067,42 @@
 									"type": "object",
 									"properties": {
 										"planId": { "type": "string" },
+										"managedPlanId": { "type": "string" },
+										"plane": {
+											"type": "string",
+											"enum": ["self-hosted", "self-managed", "managed"]
+										},
 										"addOns": {
 											"type": "array",
-											"items": { "type": "string" }
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"quantity": {
+														"type": "integer",
+														"minimum": -9007199254740991,
+														"maximum": 9007199254740991
+													}
+												},
+												"required": ["id", "quantity"]
+											}
 										},
 										"dashboard": { "type": "boolean" },
 										"sites": { "type": ["number", "null"] },
 										"views": { "type": ["number", "null"] },
 										"viewsPooled": { "type": ["boolean", "null"] },
+										"storageGb": { "type": ["number", "null"] },
+										"writes": { "type": ["number", "null"] },
+										"backupGb": { "type": ["number", "null"] },
+										"mailSends": { "type": ["number", "null"] },
+										"containerHours": { "type": ["number", "null"] },
+										"invitees": { "type": ["number", "null"] },
 										"nodes": { "type": ["number", "null"] },
 										"support": {
 											"type": "string",
 											"enum": ["community", "core", "business", "critical"]
 										},
-										"supportHours": { "type": ["number", "null"] },
+										"supportHoursPerYear": { "type": ["number", "null"] },
 										"assurance": { "type": "boolean" },
 										"environments": { "type": "boolean" },
 										"customDomains": { "type": ["number", "null"] },
@@ -6058,24 +8128,38 @@
 												"ssoSaml"
 											]
 										},
-										"billingAccount": { "type": "boolean" }
+										"billingAccount": { "type": "boolean" },
+										"credits": {
+											"type": "object",
+											"propertyNames": { "type": "string" },
+											"additionalProperties": { "type": "number" }
+										}
 									},
 									"required": [
 										"planId",
+										"managedPlanId",
+										"plane",
 										"addOns",
 										"dashboard",
 										"sites",
 										"views",
 										"viewsPooled",
+										"storageGb",
+										"writes",
+										"backupGb",
+										"mailSends",
+										"containerHours",
+										"invitees",
 										"nodes",
 										"support",
-										"supportHours",
+										"supportHoursPerYear",
 										"assurance",
 										"environments",
 										"customDomains",
 										"backupDays",
 										"features",
-										"billingAccount"
+										"billingAccount",
+										"credits"
 									]
 								}
 							}
@@ -8288,6 +10372,599 @@
 				}
 			}
 		},
+		"/api/v1/orgs/{orgId}/planes/cloudflare": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdPlanesCloudflare",
+				"summary": "List Cloudflare connections",
+				"description": "Lists the Cloudflare accounts the organisation connected, oldest first, with each connection state, what its token can do and when it was last checked. A connection never shows its stored token.",
+				"tags": ["planes"],
+				"x-action": "plane.read",
+				"x-rate-class": "read",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"provider": {
+														"type": "string",
+														"const": "cloudflare"
+													},
+													"accountId": { "type": "string" },
+													"accountName": { "type": "string" },
+													"tokenKind": {
+														"type": "string",
+														"enum": ["user", "account"]
+													},
+													"expiresOn": { "type": ["string", "null"] },
+													"state": {
+														"type": "string",
+														"enum": ["active", "invalid", "revoked"]
+													},
+													"capabilities": {
+														"type": "array",
+														"items": {
+															"type": "object",
+															"properties": {
+																"id": {
+																	"type": "string",
+																	"enum": [
+																		"scripts",
+																		"key-value",
+																		"storage",
+																		"databases",
+																		"routes",
+																		"token-management"
+																	]
+																},
+																"label": { "type": "string" },
+																"state": {
+																	"type": "string",
+																	"enum": [
+																		"granted",
+																		"missing",
+																		"not-enabled",
+																		"unknown"
+																	]
+																},
+																"permission": { "type": "string" },
+																"retryHint": {
+																	"type": ["string", "null"]
+																}
+															},
+															"required": [
+																"id",
+																"label",
+																"state",
+																"permission",
+																"retryHint"
+															],
+															"additionalProperties": false
+														}
+													},
+													"workersSubdomain": {
+														"type": ["string", "null"]
+													},
+													"narrowerToken": { "type": "boolean" },
+													"createdAt": { "type": "number" },
+													"lastValidatedAt": { "type": "number" },
+													"revokedAt": { "type": ["number", "null"] }
+												},
+												"required": [
+													"id",
+													"provider",
+													"accountId",
+													"accountName",
+													"tokenKind",
+													"expiresOn",
+													"state",
+													"capabilities",
+													"workersSubdomain",
+													"narrowerToken",
+													"createdAt",
+													"lastValidatedAt",
+													"revokedAt"
+												],
+												"additionalProperties": false
+											}
+										}
+									},
+									"required": ["items"],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			},
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdPlanesCloudflare",
+				"summary": "Connect a Cloudflare account",
+				"description": "Checks the token, and stores one only if it can edit Workers scripts. When the token can make other tokens, Drupflare makes a narrower one for this account, keeps only that, and does not keep the one you gave. Otherwise it keeps the token you gave. The stored token is sealed and never returned. It needs a signed-in session, so an API key is refused.",
+				"tags": ["planes"],
+				"x-action": "plane.connect",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"token": { "type": "string", "minLength": 1, "maxLength": 512 },
+									"accountId": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 64
+									}
+								},
+								"required": ["token"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"201": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"connection": {
+											"type": "object",
+											"properties": {
+												"id": { "type": "string" },
+												"provider": {
+													"type": "string",
+													"const": "cloudflare"
+												},
+												"accountId": { "type": "string" },
+												"accountName": { "type": "string" },
+												"tokenKind": {
+													"type": "string",
+													"enum": ["user", "account"]
+												},
+												"expiresOn": { "type": ["string", "null"] },
+												"state": {
+													"type": "string",
+													"enum": ["active", "invalid", "revoked"]
+												},
+												"capabilities": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": "string",
+																"enum": [
+																	"scripts",
+																	"key-value",
+																	"storage",
+																	"databases",
+																	"routes",
+																	"token-management"
+																]
+															},
+															"label": { "type": "string" },
+															"state": {
+																"type": "string",
+																"enum": [
+																	"granted",
+																	"missing",
+																	"not-enabled",
+																	"unknown"
+																]
+															},
+															"permission": { "type": "string" },
+															"retryHint": {
+																"type": ["string", "null"]
+															}
+														},
+														"required": [
+															"id",
+															"label",
+															"state",
+															"permission",
+															"retryHint"
+														],
+														"additionalProperties": false
+													}
+												},
+												"workersSubdomain": { "type": ["string", "null"] },
+												"narrowerToken": { "type": "boolean" },
+												"createdAt": { "type": "number" },
+												"lastValidatedAt": { "type": "number" },
+												"revokedAt": { "type": ["number", "null"] }
+											},
+											"required": [
+												"id",
+												"provider",
+												"accountId",
+												"accountName",
+												"tokenKind",
+												"expiresOn",
+												"state",
+												"capabilities",
+												"workersSubdomain",
+												"narrowerToken",
+												"createdAt",
+												"lastValidatedAt",
+												"revokedAt"
+											],
+											"additionalProperties": false
+										},
+										"message": { "type": "string" }
+									},
+									"required": ["connection", "message"],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/planes/cloudflare/{id}": {
+			"delete": {
+				"operationId": "deleteApiV1OrgsOrgIdPlanesCloudflareId",
+				"summary": "Revoke a Cloudflare connection",
+				"description": "Wipes the stored token. When Drupflare made the token, it also asks Cloudflare to delete it; the narrower token has no permission to manage tokens, so Cloudflare may refuse, and the answer says whether you must delete it yourself. Sites that run on the account refuse the revoke unless force lists each site ID. A second revoke changes nothing. It needs a signed-in session with a fresh sign-in, so an API key is refused.",
+				"tags": ["planes"],
+				"x-action": "plane.revoke",
+				"x-rate-class": "write",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1, "maxLength": 64 }
+					},
+					{
+						"name": "force",
+						"in": "query",
+						"required": false,
+						"schema": { "type": "string", "maxLength": 2048 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"connection": {
+											"type": "object",
+											"properties": {
+												"id": { "type": "string" },
+												"provider": {
+													"type": "string",
+													"const": "cloudflare"
+												},
+												"accountId": { "type": "string" },
+												"accountName": { "type": "string" },
+												"tokenKind": {
+													"type": "string",
+													"enum": ["user", "account"]
+												},
+												"expiresOn": { "type": ["string", "null"] },
+												"state": {
+													"type": "string",
+													"enum": ["active", "invalid", "revoked"]
+												},
+												"capabilities": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": "string",
+																"enum": [
+																	"scripts",
+																	"key-value",
+																	"storage",
+																	"databases",
+																	"routes",
+																	"token-management"
+																]
+															},
+															"label": { "type": "string" },
+															"state": {
+																"type": "string",
+																"enum": [
+																	"granted",
+																	"missing",
+																	"not-enabled",
+																	"unknown"
+																]
+															},
+															"permission": { "type": "string" },
+															"retryHint": {
+																"type": ["string", "null"]
+															}
+														},
+														"required": [
+															"id",
+															"label",
+															"state",
+															"permission",
+															"retryHint"
+														],
+														"additionalProperties": false
+													}
+												},
+												"workersSubdomain": { "type": ["string", "null"] },
+												"narrowerToken": { "type": "boolean" },
+												"createdAt": { "type": "number" },
+												"lastValidatedAt": { "type": "number" },
+												"revokedAt": { "type": ["number", "null"] }
+											},
+											"required": [
+												"id",
+												"provider",
+												"accountId",
+												"accountName",
+												"tokenKind",
+												"expiresOn",
+												"state",
+												"capabilities",
+												"workersSubdomain",
+												"narrowerToken",
+												"createdAt",
+												"lastValidatedAt",
+												"revokedAt"
+											],
+											"additionalProperties": false
+										},
+										"tokenRemoval": {
+											"type": "string",
+											"enum": ["deleted", "owner-must-delete", "not-ours"]
+										},
+										"message": { "type": "string" }
+									},
+									"required": ["connection", "tokenRemoval", "message"],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/planes/cloudflare/{id}/validate": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdPlanesCloudflareIdValidate",
+				"summary": "Check a Cloudflare connection again",
+				"description": "Checks the stored token against Cloudflare and records what it can do now. A token that expired or lost the permission to edit Workers scripts marks the connection invalid. A check that gets no answer from Cloudflare changes nothing. It needs a signed-in session, so an API key is refused.",
+				"tags": ["planes"],
+				"x-action": "plane.connect",
+				"x-rate-class": "heavy",
+				"security": [{ "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1, "maxLength": 64 }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {},
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": { "type": "string" },
+										"provider": { "type": "string", "const": "cloudflare" },
+										"accountId": { "type": "string" },
+										"accountName": { "type": "string" },
+										"tokenKind": {
+											"type": "string",
+											"enum": ["user", "account"]
+										},
+										"expiresOn": { "type": ["string", "null"] },
+										"state": {
+											"type": "string",
+											"enum": ["active", "invalid", "revoked"]
+										},
+										"capabilities": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"enum": [
+															"scripts",
+															"key-value",
+															"storage",
+															"databases",
+															"routes",
+															"token-management"
+														]
+													},
+													"label": { "type": "string" },
+													"state": {
+														"type": "string",
+														"enum": [
+															"granted",
+															"missing",
+															"not-enabled",
+															"unknown"
+														]
+													},
+													"permission": { "type": "string" },
+													"retryHint": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"label",
+													"state",
+													"permission",
+													"retryHint"
+												],
+												"additionalProperties": false
+											}
+										},
+										"workersSubdomain": { "type": ["string", "null"] },
+										"narrowerToken": { "type": "boolean" },
+										"createdAt": { "type": "number" },
+										"lastValidatedAt": { "type": "number" },
+										"revokedAt": { "type": ["number", "null"] }
+									},
+									"required": [
+										"id",
+										"provider",
+										"accountId",
+										"accountName",
+										"tokenKind",
+										"expiresOn",
+										"state",
+										"capabilities",
+										"workersSubdomain",
+										"narrowerToken",
+										"createdAt",
+										"lastValidatedAt",
+										"revokedAt"
+									],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/orgs/{orgId}/planes/cloudflare/probe": {
 			"post": {
 				"operationId": "postApiV1OrgsOrgIdPlanesCloudflareProbe",
@@ -8407,7 +11084,12 @@
 													"label": { "type": "string" },
 													"state": {
 														"type": "string",
-														"enum": ["granted", "missing", "unknown"]
+														"enum": [
+															"granted",
+															"missing",
+															"not-enabled",
+															"unknown"
+														]
 													},
 													"permission": { "type": "string" },
 													"retryHint": { "type": ["string", "null"] }
@@ -9200,7 +11882,7 @@
 			"post": {
 				"operationId": "postApiV1OrgsOrgIdSites",
 				"summary": "Create a site",
-				"description": "Starts a site create in the organisation in the path and returns its operation. The site ID is the operation target. The site is listed once its create finishes. Send an Idempotency-Key header; a repeat returns the same operation.",
+				"description": "Starts a site create in the organisation in the path and returns its operation. The site ID is the operation target. The site is listed once its create finishes. A custom site takes the bundleId of a bundle the organisation uploaded and no other kind takes one. A self-managed site names a Cloudflare connection of the organisation with connectionId and runs at the account workers.dev address, or at customHost, a hostname on a zone the connection can route with that zone ID. Send an Idempotency-Key header; a repeat returns the same operation.",
 				"tags": ["sites"],
 				"x-action": "site.create",
 				"x-rate-class": "heavy",
@@ -9236,6 +11918,36 @@
 										"type": "string",
 										"minLength": 1,
 										"maxLength": 40
+									},
+									"bundleId": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 64
+									},
+									"plane": {
+										"type": "string",
+										"enum": ["managed", "self-managed"]
+									},
+									"connectionId": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 64
+									},
+									"customHost": {
+										"type": "object",
+										"properties": {
+											"hostname": {
+												"type": "string",
+												"maxLength": 253,
+												"pattern": "^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,63}$"
+											},
+											"zoneId": {
+												"type": "string",
+												"pattern": "^[0-9a-f]{32}$"
+											}
+										},
+										"required": ["hostname", "zoneId"],
+										"additionalProperties": false
 									}
 								},
 								"required": ["kind", "name"],
@@ -11185,6 +13897,344 @@
 					{ "$ref": "#/components/parameters/ContractHeader" },
 					{ "$ref": "#/components/parameters/IdempotencyKey" }
 				],
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^op_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"type": {
+											"type": "string",
+											"enum": [
+												"site.create",
+												"site.adopt",
+												"site.import",
+												"import.survey",
+												"migration.cutover",
+												"estate.assess",
+												"site.upgrade",
+												"site.rollback",
+												"site.delete",
+												"site.restore",
+												"site.purge",
+												"site.transfer",
+												"config.apply",
+												"git.pull",
+												"git.preview",
+												"modify.apply",
+												"module.install",
+												"module.enable",
+												"module.remove",
+												"theme.default",
+												"domain.attach",
+												"access.sync",
+												"backup.create",
+												"backup.verify",
+												"backup.restore",
+												"backup.export",
+												"env.create",
+												"env.fork",
+												"env.promote",
+												"env.delete",
+												"preview.create",
+												"preview.delete",
+												"repair.run",
+												"site.repair",
+												"node.pair",
+												"node.command",
+												"fleet.upgrade",
+												"repo.install"
+											]
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"planned",
+												"awaiting-approval",
+												"running",
+												"verifying",
+												"succeeded",
+												"failed",
+												"cancelled",
+												"rolled-back"
+											]
+										},
+										"idempotencyKey": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 128
+										},
+										"targetIds": {
+											"type": "array",
+											"items": { "type": "string", "minLength": 1 }
+										},
+										"preconditions": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"planDigest": {
+											"type": "string",
+											"pattern": "^sha256:[0-9a-f]{64}$"
+										},
+										"fencingEpoch": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"blastRadius": {
+											"type": "object",
+											"properties": {
+												"sites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"destructiveSites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"productionDeploys": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											},
+											"required": [
+												"sites",
+												"destructiveSites",
+												"productionDeploys"
+											]
+										},
+										"rollbackPoint": { "type": ["string", "null"] },
+										"cursor": { "type": ["string", "null"] },
+										"steps": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"running",
+															"succeeded",
+															"failed",
+															"skipped"
+														]
+													},
+													"attempt": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"startedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"finishedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"error": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"state",
+													"attempt",
+													"startedAt",
+													"finishedAt",
+													"error"
+												]
+											}
+										},
+										"verification": {
+											"type": "string",
+											"enum": ["pending", "passed", "failed", "not-required"]
+										},
+										"finalObservation": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"at": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														"summary": { "type": "string" }
+													},
+													"required": ["at", "summary"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"budget": {
+											"type": "object",
+											"properties": {
+												"maxDestructiveSites": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"maxConcurrentProductionDeploys": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"elevated": { "type": "boolean" },
+												"bulkDeleteConfirmation": {
+													"type": ["string", "null"]
+												}
+											},
+											"required": [
+												"maxDestructiveSites",
+												"maxConcurrentProductionDeploys",
+												"elevated",
+												"bulkDeleteConfirmation"
+											]
+										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"type",
+										"status",
+										"idempotencyKey",
+										"targetIds",
+										"preconditions",
+										"planDigest",
+										"fencingEpoch",
+										"blastRadius",
+										"rollbackPoint",
+										"cursor",
+										"steps",
+										"verification",
+										"finalObservation",
+										"budget",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/bundle": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdSitesIdBundle",
+				"summary": "Update a custom site to an uploaded bundle",
+				"description": "Starts an update of the custom site in the path to a bundle the organisation uploaded and returns its operation. The new bundle keeps the stores the site already uses and only adds migration steps; a bundle that removes or renames a class the site stores data in is refused with 422 and the reason. The site keeps serving while the engine uploads the bundle, checks the site, and puts the earlier bundle back if the check fails. An earlier bundle can be put back later with the rollback route. Send an Idempotency-Key header; a repeat returns the same operation. Answers 409 when the site already runs that bundle or another change to it is running, 422 when the site is not live or the bundle is not one of the organisation's uploads, and 403 when the plan does not include custom code.",
+				"tags": ["sites"],
+				"x-action": "site.upgrade",
+				"x-rate-class": "heavy",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"bundleId": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 64
+									}
+								},
+								"required": ["bundleId"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
 				"responses": {
 					"202": {
 						"description": "Success.",
@@ -14122,7 +17172,7 @@
 			"get": {
 				"operationId": "getApiV1OrgsOrgIdSitesIdEnvironments",
 				"summary": "List the environments of a site",
-				"description": "Lists the staging, dev and preview environments of the site, newest first. Environments are not created yet, so the list is empty.",
+				"description": "Lists the staging, dev and preview environments of the site, newest first. A preview carries the time it is deleted at; a staging or dev copy carries none.",
 				"tags": ["sites"],
 				"x-action": "site.environment.read",
 				"x-rate-class": "read",
@@ -15344,6 +18394,703 @@
 				}
 			}
 		},
+		"/api/v1/orgs/{orgId}/sites/{id}/modify": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdSitesIdModify",
+				"summary": "Deliver an edit to a Drupal site",
+				"description": "Sends the files of one custom module, theme or profile to the site and returns the operation. The files are the whole set: any file of that module the request leaves out is removed from the site. Paths must sit in modules/custom/<name>/, themes/custom/<name>/ or profiles/custom/<name>/, and each file is text, given as plain text or base64. A restore point is taken first, the site boots the new files and puts the old ones back if they fail, and a passing edit is added to the code history with its files so it can be rolled back to. Refused with 422 when the site is not an active Drupal site, when Drupflare holds no access to it, when the plan does not include custom code, or when a path or file is not allowed. Send an Idempotency-Key header; a repeat returns the same operation.",
+				"tags": ["sites"],
+				"x-action": "site.modify",
+				"x-rate-class": "heavy",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"files": {
+										"minItems": 1,
+										"maxItems": 500,
+										"type": "array",
+										"items": {
+											"type": "object",
+											"properties": {
+												"path": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 240
+												},
+												"content": {
+													"type": "string",
+													"maxLength": 4194304
+												},
+												"encoding": {
+													"type": "string",
+													"enum": ["utf8", "base64"]
+												}
+											},
+											"required": ["path", "content"],
+											"additionalProperties": false
+										}
+									},
+									"note": { "type": "string", "minLength": 1, "maxLength": 200 }
+								},
+								"required": ["files", "note"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^op_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"type": {
+											"type": "string",
+											"enum": [
+												"site.create",
+												"site.adopt",
+												"site.import",
+												"import.survey",
+												"migration.cutover",
+												"estate.assess",
+												"site.upgrade",
+												"site.rollback",
+												"site.delete",
+												"site.restore",
+												"site.purge",
+												"site.transfer",
+												"config.apply",
+												"git.pull",
+												"git.preview",
+												"modify.apply",
+												"module.install",
+												"module.enable",
+												"module.remove",
+												"theme.default",
+												"domain.attach",
+												"access.sync",
+												"backup.create",
+												"backup.verify",
+												"backup.restore",
+												"backup.export",
+												"env.create",
+												"env.fork",
+												"env.promote",
+												"env.delete",
+												"preview.create",
+												"preview.delete",
+												"repair.run",
+												"site.repair",
+												"node.pair",
+												"node.command",
+												"fleet.upgrade",
+												"repo.install"
+											]
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"planned",
+												"awaiting-approval",
+												"running",
+												"verifying",
+												"succeeded",
+												"failed",
+												"cancelled",
+												"rolled-back"
+											]
+										},
+										"idempotencyKey": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 128
+										},
+										"targetIds": {
+											"type": "array",
+											"items": { "type": "string", "minLength": 1 }
+										},
+										"preconditions": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"planDigest": {
+											"type": "string",
+											"pattern": "^sha256:[0-9a-f]{64}$"
+										},
+										"fencingEpoch": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"blastRadius": {
+											"type": "object",
+											"properties": {
+												"sites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"destructiveSites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"productionDeploys": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											},
+											"required": [
+												"sites",
+												"destructiveSites",
+												"productionDeploys"
+											]
+										},
+										"rollbackPoint": { "type": ["string", "null"] },
+										"cursor": { "type": ["string", "null"] },
+										"steps": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"running",
+															"succeeded",
+															"failed",
+															"skipped"
+														]
+													},
+													"attempt": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"startedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"finishedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"error": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"state",
+													"attempt",
+													"startedAt",
+													"finishedAt",
+													"error"
+												]
+											}
+										},
+										"verification": {
+											"type": "string",
+											"enum": ["pending", "passed", "failed", "not-required"]
+										},
+										"finalObservation": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"at": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														"summary": { "type": "string" }
+													},
+													"required": ["at", "summary"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"budget": {
+											"type": "object",
+											"properties": {
+												"maxDestructiveSites": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"maxConcurrentProductionDeploys": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"elevated": { "type": "boolean" },
+												"bulkDeleteConfirmation": {
+													"type": ["string", "null"]
+												}
+											},
+											"required": [
+												"maxDestructiveSites",
+												"maxConcurrentProductionDeploys",
+												"elevated",
+												"bulkDeleteConfirmation"
+											]
+										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"type",
+										"status",
+										"idempotencyKey",
+										"targetIds",
+										"preconditions",
+										"planDigest",
+										"fencingEpoch",
+										"blastRadius",
+										"rollbackPoint",
+										"cursor",
+										"steps",
+										"verification",
+										"finalObservation",
+										"budget",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/modify/rollback": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdSitesIdModifyRollback",
+				"summary": "Roll a site back to an earlier edit",
+				"description": "Sends the stored files of an earlier edit to the site again and returns the operation. Only the module, theme or profile that edit delivered goes back; the data and the other code stay as they are. The entry is named by its id from the code history, and it must be an edit that kept its files. The data version guard that applies to a release rollback applies here too. Send an Idempotency-Key header; a repeat returns the same operation.",
+				"tags": ["sites"],
+				"x-action": "site.modify",
+				"x-rate-class": "heavy",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"revision": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 128
+									}
+								},
+								"required": ["revision"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"id": {
+											"type": "string",
+											"pattern": "^op_[0-9a-z]{8,40}$"
+										},
+										"orgId": {
+											"type": "string",
+											"pattern": "^org_[0-9a-z]{8,40}$"
+										},
+										"type": {
+											"type": "string",
+											"enum": [
+												"site.create",
+												"site.adopt",
+												"site.import",
+												"import.survey",
+												"migration.cutover",
+												"estate.assess",
+												"site.upgrade",
+												"site.rollback",
+												"site.delete",
+												"site.restore",
+												"site.purge",
+												"site.transfer",
+												"config.apply",
+												"git.pull",
+												"git.preview",
+												"modify.apply",
+												"module.install",
+												"module.enable",
+												"module.remove",
+												"theme.default",
+												"domain.attach",
+												"access.sync",
+												"backup.create",
+												"backup.verify",
+												"backup.restore",
+												"backup.export",
+												"env.create",
+												"env.fork",
+												"env.promote",
+												"env.delete",
+												"preview.create",
+												"preview.delete",
+												"repair.run",
+												"site.repair",
+												"node.pair",
+												"node.command",
+												"fleet.upgrade",
+												"repo.install"
+											]
+										},
+										"status": {
+											"type": "string",
+											"enum": [
+												"planned",
+												"awaiting-approval",
+												"running",
+												"verifying",
+												"succeeded",
+												"failed",
+												"cancelled",
+												"rolled-back"
+											]
+										},
+										"idempotencyKey": {
+											"type": "string",
+											"minLength": 1,
+											"maxLength": 128
+										},
+										"targetIds": {
+											"type": "array",
+											"items": { "type": "string", "minLength": 1 }
+										},
+										"preconditions": {
+											"type": "array",
+											"items": { "type": "string" }
+										},
+										"planDigest": {
+											"type": "string",
+											"pattern": "^sha256:[0-9a-f]{64}$"
+										},
+										"fencingEpoch": {
+											"type": "integer",
+											"minimum": 0,
+											"maximum": 9007199254740991
+										},
+										"blastRadius": {
+											"type": "object",
+											"properties": {
+												"sites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"destructiveSites": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"productionDeploys": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												}
+											},
+											"required": [
+												"sites",
+												"destructiveSites",
+												"productionDeploys"
+											]
+										},
+										"rollbackPoint": { "type": ["string", "null"] },
+										"cursor": { "type": ["string", "null"] },
+										"steps": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 64
+													},
+													"name": {
+														"type": "string",
+														"minLength": 1,
+														"maxLength": 200
+													},
+													"state": {
+														"type": "string",
+														"enum": [
+															"pending",
+															"running",
+															"succeeded",
+															"failed",
+															"skipped"
+														]
+													},
+													"attempt": {
+														"type": "integer",
+														"minimum": 0,
+														"maximum": 9007199254740991
+													},
+													"startedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"finishedAt": {
+														"anyOf": [
+															{
+																"type": "string",
+																"format": "date-time",
+																"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+															},
+															{ "type": "null" }
+														]
+													},
+													"error": { "type": ["string", "null"] }
+												},
+												"required": [
+													"id",
+													"name",
+													"state",
+													"attempt",
+													"startedAt",
+													"finishedAt",
+													"error"
+												]
+											}
+										},
+										"verification": {
+											"type": "string",
+											"enum": ["pending", "passed", "failed", "not-required"]
+										},
+										"finalObservation": {
+											"anyOf": [
+												{
+													"type": "object",
+													"properties": {
+														"at": {
+															"type": "string",
+															"format": "date-time",
+															"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+														},
+														"summary": { "type": "string" }
+													},
+													"required": ["at", "summary"]
+												},
+												{ "type": "null" }
+											]
+										},
+										"budget": {
+											"type": "object",
+											"properties": {
+												"maxDestructiveSites": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"maxConcurrentProductionDeploys": {
+													"type": "integer",
+													"exclusiveMinimum": 0,
+													"maximum": 9007199254740991
+												},
+												"elevated": { "type": "boolean" },
+												"bulkDeleteConfirmation": {
+													"type": ["string", "null"]
+												}
+											},
+											"required": [
+												"maxDestructiveSites",
+												"maxConcurrentProductionDeploys",
+												"elevated",
+												"bulkDeleteConfirmation"
+											]
+										},
+										"retryOf": {
+											"anyOf": [
+												{
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												{ "type": "null" }
+											]
+										},
+										"createdAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										},
+										"updatedAt": {
+											"type": "string",
+											"format": "date-time",
+											"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+										}
+									},
+									"required": [
+										"id",
+										"orgId",
+										"type",
+										"status",
+										"idempotencyKey",
+										"targetIds",
+										"preconditions",
+										"planDigest",
+										"fencingEpoch",
+										"blastRadius",
+										"rollbackPoint",
+										"cursor",
+										"steps",
+										"verification",
+										"finalObservation",
+										"budget",
+										"createdAt",
+										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/orgs/{orgId}/sites/{id}/modules": {
 			"get": {
 				"operationId": "getApiV1OrgsOrgIdSitesIdModules",
@@ -15565,7 +19312,7 @@
 			"post": {
 				"operationId": "postApiV1OrgsOrgIdSitesIdModulesEnable",
 				"summary": "Enable an installed module or theme",
-				"description": "Starts turning on a module or theme that is already on the site and returns its operation. A restore point is taken before anything changes, and the site is checked afterward. A theme is enabled the same way. A module that cannot run here and one on no list are refused. Send an Idempotency-Key header; a repeat returns the same operation.",
+				"description": "Starts turning on a module or theme that is already on the site and returns its operation. A restore point is taken before anything changes, and the site is checked afterward. A theme is enabled the same way. A module that cannot run here and one on no list are refused. Strata on the free plan is refused until the request carries confirm: true, once per site. Send an Idempotency-Key header; a repeat returns the same operation.",
 				"tags": ["sites"],
 				"x-action": "site.module.install",
 				"x-rate-class": "heavy",
@@ -16886,6 +20633,365 @@
 										"createdAt",
 										"updatedAt"
 									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/previews": {
+			"post": {
+				"operationId": "postApiV1OrgsOrgIdSitesIdPreviews",
+				"summary": "Create a preview",
+				"description": "Creates a temporary copy of the site from its newest restorable backup, or from the backup named in the body. The copy is deleted when its time runs out, three days after it is made unless the body names another number of hours (at most 336). A site holds a limited number of previews at once. The copy gets its own database, files and owner token; the original is not changed. Send an Idempotency-Key header; a repeat returns the same operation.",
+				"tags": ["sites"],
+				"x-action": "site.preview.manage",
+				"x-rate-class": "heavy",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"backupId": {
+										"type": "string",
+										"pattern": "^bkp_[0-9a-z]{8,40}$"
+									},
+									"ttlHours": { "type": "integer", "minimum": 1, "maximum": 336 }
+								},
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"202": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"environmentId": { "type": "string" },
+										"ttlAt": {
+											"anyOf": [
+												{
+													"type": "integer",
+													"minimum": -9007199254740991,
+													"maximum": 9007199254740991
+												},
+												{ "type": "null" }
+											]
+										},
+										"operation": {
+											"type": "object",
+											"properties": {
+												"id": {
+													"type": "string",
+													"pattern": "^op_[0-9a-z]{8,40}$"
+												},
+												"orgId": {
+													"type": "string",
+													"pattern": "^org_[0-9a-z]{8,40}$"
+												},
+												"type": {
+													"type": "string",
+													"enum": [
+														"site.create",
+														"site.adopt",
+														"site.import",
+														"import.survey",
+														"migration.cutover",
+														"estate.assess",
+														"site.upgrade",
+														"site.rollback",
+														"site.delete",
+														"site.restore",
+														"site.purge",
+														"site.transfer",
+														"config.apply",
+														"git.pull",
+														"git.preview",
+														"modify.apply",
+														"module.install",
+														"module.enable",
+														"module.remove",
+														"theme.default",
+														"domain.attach",
+														"access.sync",
+														"backup.create",
+														"backup.verify",
+														"backup.restore",
+														"backup.export",
+														"env.create",
+														"env.fork",
+														"env.promote",
+														"env.delete",
+														"preview.create",
+														"preview.delete",
+														"repair.run",
+														"site.repair",
+														"node.pair",
+														"node.command",
+														"fleet.upgrade",
+														"repo.install"
+													]
+												},
+												"status": {
+													"type": "string",
+													"enum": [
+														"planned",
+														"awaiting-approval",
+														"running",
+														"verifying",
+														"succeeded",
+														"failed",
+														"cancelled",
+														"rolled-back"
+													]
+												},
+												"idempotencyKey": {
+													"type": "string",
+													"minLength": 1,
+													"maxLength": 128
+												},
+												"targetIds": {
+													"type": "array",
+													"items": { "type": "string", "minLength": 1 }
+												},
+												"preconditions": {
+													"type": "array",
+													"items": { "type": "string" }
+												},
+												"planDigest": {
+													"type": "string",
+													"pattern": "^sha256:[0-9a-f]{64}$"
+												},
+												"fencingEpoch": {
+													"type": "integer",
+													"minimum": 0,
+													"maximum": 9007199254740991
+												},
+												"blastRadius": {
+													"type": "object",
+													"properties": {
+														"sites": {
+															"type": "integer",
+															"minimum": 0,
+															"maximum": 9007199254740991
+														},
+														"destructiveSites": {
+															"type": "integer",
+															"minimum": 0,
+															"maximum": 9007199254740991
+														},
+														"productionDeploys": {
+															"type": "integer",
+															"minimum": 0,
+															"maximum": 9007199254740991
+														}
+													},
+													"required": [
+														"sites",
+														"destructiveSites",
+														"productionDeploys"
+													]
+												},
+												"rollbackPoint": { "type": ["string", "null"] },
+												"cursor": { "type": ["string", "null"] },
+												"steps": {
+													"type": "array",
+													"items": {
+														"type": "object",
+														"properties": {
+															"id": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 64
+															},
+															"name": {
+																"type": "string",
+																"minLength": 1,
+																"maxLength": 200
+															},
+															"state": {
+																"type": "string",
+																"enum": [
+																	"pending",
+																	"running",
+																	"succeeded",
+																	"failed",
+																	"skipped"
+																]
+															},
+															"attempt": {
+																"type": "integer",
+																"minimum": 0,
+																"maximum": 9007199254740991
+															},
+															"startedAt": {
+																"anyOf": [
+																	{
+																		"type": "string",
+																		"format": "date-time",
+																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+																	},
+																	{ "type": "null" }
+																]
+															},
+															"finishedAt": {
+																"anyOf": [
+																	{
+																		"type": "string",
+																		"format": "date-time",
+																		"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+																	},
+																	{ "type": "null" }
+																]
+															},
+															"error": { "type": ["string", "null"] }
+														},
+														"required": [
+															"id",
+															"name",
+															"state",
+															"attempt",
+															"startedAt",
+															"finishedAt",
+															"error"
+														]
+													}
+												},
+												"verification": {
+													"type": "string",
+													"enum": [
+														"pending",
+														"passed",
+														"failed",
+														"not-required"
+													]
+												},
+												"finalObservation": {
+													"anyOf": [
+														{
+															"type": "object",
+															"properties": {
+																"at": {
+																	"type": "string",
+																	"format": "date-time",
+																	"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+																},
+																"summary": { "type": "string" }
+															},
+															"required": ["at", "summary"]
+														},
+														{ "type": "null" }
+													]
+												},
+												"budget": {
+													"type": "object",
+													"properties": {
+														"maxDestructiveSites": {
+															"type": "integer",
+															"exclusiveMinimum": 0,
+															"maximum": 9007199254740991
+														},
+														"maxConcurrentProductionDeploys": {
+															"type": "integer",
+															"exclusiveMinimum": 0,
+															"maximum": 9007199254740991
+														},
+														"elevated": { "type": "boolean" },
+														"bulkDeleteConfirmation": {
+															"type": ["string", "null"]
+														}
+													},
+													"required": [
+														"maxDestructiveSites",
+														"maxConcurrentProductionDeploys",
+														"elevated",
+														"bulkDeleteConfirmation"
+													]
+												},
+												"retryOf": {
+													"anyOf": [
+														{
+															"type": "string",
+															"pattern": "^op_[0-9a-z]{8,40}$"
+														},
+														{ "type": "null" }
+													]
+												},
+												"createdAt": {
+													"type": "string",
+													"format": "date-time",
+													"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+												},
+												"updatedAt": {
+													"type": "string",
+													"format": "date-time",
+													"pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+												}
+											},
+											"required": [
+												"id",
+												"orgId",
+												"type",
+												"status",
+												"idempotencyKey",
+												"targetIds",
+												"preconditions",
+												"planDigest",
+												"fencingEpoch",
+												"blastRadius",
+												"rollbackPoint",
+												"cursor",
+												"steps",
+												"verification",
+												"finalObservation",
+												"budget",
+												"createdAt",
+												"updatedAt"
+											]
+										}
+									},
+									"required": ["environmentId", "ttlAt", "operation"]
 								}
 							}
 						}
@@ -18596,6 +22702,98 @@
 				}
 			}
 		},
+		"/api/v1/orgs/{orgId}/sites/{id}/revisions": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdSitesIdRevisions",
+				"summary": "List the code history of a site",
+				"description": "Lists the releases the site has run, newest first, up to 50. Each row carries the release id and version, a note when the revision is an edit, and whether it is the code the site runs now. A site of another organisation is not found.",
+				"tags": ["sites"],
+				"x-action": "site.read",
+				"x-rate-class": "read",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"items": {
+											"type": "array",
+											"items": {
+												"type": "object",
+												"properties": {
+													"id": { "type": "string" },
+													"kind": {
+														"type": "string",
+														"enum": ["release", "edit"]
+													},
+													"release": { "type": ["string", "null"] },
+													"version": { "type": ["string", "null"] },
+													"note": { "type": ["string", "null"] },
+													"createdAt": {
+														"type": "integer",
+														"minimum": -9007199254740991,
+														"maximum": 9007199254740991
+													},
+													"current": { "type": "boolean" },
+													"bundle": { "type": "boolean" }
+												},
+												"required": [
+													"id",
+													"kind",
+													"release",
+													"version",
+													"note",
+													"createdAt",
+													"current",
+													"bundle"
+												],
+												"additionalProperties": false
+											}
+										}
+									},
+									"required": ["items"],
+									"additionalProperties": false
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
 		"/api/v1/orgs/{orgId}/sites/{id}/rollback": {
 			"post": {
 				"operationId": "postApiV1OrgsOrgIdSitesIdRollback",
@@ -19997,6 +24195,236 @@
 										"budget",
 										"createdAt",
 										"updatedAt"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"422": { "$ref": "#/components/responses/Unprocessable" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			}
+		},
+		"/api/v1/orgs/{orgId}/sites/{id}/strata": {
+			"get": {
+				"operationId": "getApiV1OrgsOrgIdSitesIdStrata",
+				"summary": "Read the Strata allocation for a site",
+				"description": "Returns how much of the site allowance Strata may use: the setting, whether it records statements, how often history is saved in seconds, whether the site has accepted it, and when the free plan warning was confirmed. A site that never chose gets light.",
+				"tags": ["sites"],
+				"x-action": "site.module.read",
+				"x-rate-class": "read",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" }
+				],
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"allocation": {
+											"type": "string",
+											"enum": ["light", "detailed"]
+										},
+										"capturesStatements": { "type": "boolean" },
+										"recoverySeconds": {
+											"type": "integer",
+											"exclusiveMinimum": 0,
+											"maximum": 9007199254740991
+										},
+										"applied": { "type": "boolean" },
+										"confirmedFreeAt": {
+											"anyOf": [
+												{
+													"type": "integer",
+													"minimum": -9007199254740991,
+													"maximum": 9007199254740991
+												},
+												{ "type": "null" }
+											]
+										},
+										"store": {
+											"type": "string",
+											"enum": ["none", "ready", "failed"]
+										},
+										"storeReason": { "type": ["string", "null"] },
+										"storage": {
+											"anyOf": [
+												{
+													"type": "string",
+													"enum": [
+														"ok",
+														"needs_object_storage",
+														"needs_wider_token",
+														"unchecked"
+													]
+												},
+												{ "type": "null" }
+											]
+										}
+									},
+									"required": [
+										"allocation",
+										"capturesStatements",
+										"recoverySeconds",
+										"applied",
+										"confirmedFreeAt",
+										"store",
+										"storeReason",
+										"storage"
+									]
+								}
+							}
+						}
+					},
+					"400": { "$ref": "#/components/responses/BadRequest" },
+					"401": { "$ref": "#/components/responses/Unauthenticated" },
+					"403": { "$ref": "#/components/responses/Forbidden" },
+					"404": { "$ref": "#/components/responses/NotFound" },
+					"426": { "$ref": "#/components/responses/ContractUnsupported" },
+					"429": { "$ref": "#/components/responses/RateLimited" },
+					"500": { "$ref": "#/components/responses/InternalError" }
+				}
+			},
+			"put": {
+				"operationId": "putApiV1OrgsOrgIdSitesIdStrata",
+				"summary": "Set the Strata allocation for a site",
+				"description": "Sets how much of the site allowance Strata may use: light records changes made through the site, and detailed also records every database statement and uses about twice as much. History is saved every 15 minutes either way. The free plan allows light only. The change is recorded and audited, and the status shows whether the site has accepted it.",
+				"tags": ["sites"],
+				"x-action": "site.module.install",
+				"x-rate-class": "write",
+				"security": [{ "apiKey": [] }, { "session": [] }],
+				"parameters": [
+					{
+						"name": "orgId",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "minLength": 1 }
+					},
+					{
+						"name": "id",
+						"in": "path",
+						"required": true,
+						"schema": { "type": "string", "pattern": "^site_[0-9a-z]{8,40}$" }
+					},
+					{ "$ref": "#/components/parameters/ContractHeader" },
+					{ "$ref": "#/components/parameters/IdempotencyKey" }
+				],
+				"requestBody": {
+					"required": true,
+					"content": {
+						"application/json": {
+							"schema": {
+								"type": "object",
+								"properties": {
+									"allocation": {
+										"type": "string",
+										"enum": ["light", "detailed"]
+									}
+								},
+								"required": ["allocation"],
+								"additionalProperties": false
+							}
+						}
+					}
+				},
+				"responses": {
+					"200": {
+						"description": "Success.",
+						"headers": {
+							"X-Request-Id": { "$ref": "#/components/headers/RequestId" },
+							"Drupflare-Contract": { "$ref": "#/components/headers/Contract" },
+							"RateLimit-Limit": { "$ref": "#/components/headers/RateLimitLimit" },
+							"RateLimit-Remaining": {
+								"$ref": "#/components/headers/RateLimitRemaining"
+							},
+							"RateLimit-Reset": { "$ref": "#/components/headers/RateLimitReset" }
+						},
+						"content": {
+							"application/json": {
+								"schema": {
+									"type": "object",
+									"properties": {
+										"allocation": {
+											"type": "string",
+											"enum": ["light", "detailed"]
+										},
+										"capturesStatements": { "type": "boolean" },
+										"recoverySeconds": {
+											"type": "integer",
+											"exclusiveMinimum": 0,
+											"maximum": 9007199254740991
+										},
+										"applied": { "type": "boolean" },
+										"confirmedFreeAt": {
+											"anyOf": [
+												{
+													"type": "integer",
+													"minimum": -9007199254740991,
+													"maximum": 9007199254740991
+												},
+												{ "type": "null" }
+											]
+										},
+										"store": {
+											"type": "string",
+											"enum": ["none", "ready", "failed"]
+										},
+										"storeReason": { "type": ["string", "null"] },
+										"storage": {
+											"anyOf": [
+												{
+													"type": "string",
+													"enum": [
+														"ok",
+														"needs_object_storage",
+														"needs_wider_token",
+														"unchecked"
+													]
+												},
+												{ "type": "null" }
+											]
+										}
+									},
+									"required": [
+										"allocation",
+										"capturesStatements",
+										"recoverySeconds",
+										"applied",
+										"confirmedFreeAt",
+										"store",
+										"storeReason",
+										"storage"
 									]
 								}
 							}

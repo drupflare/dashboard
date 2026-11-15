@@ -60,6 +60,7 @@ export const WORKFLOW_NAMES = [
 	'config-apply',
 	'module-install',
 	'module-enable',
+	'modify-apply',
 	'module-remove',
 	'theme-default',
 	'migration-cutover',
