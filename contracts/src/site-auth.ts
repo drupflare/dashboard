@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+	canonicalJson,
 	digestSchema,
 	omitSig,
 	signatureSchema,
@@ -36,6 +37,9 @@ export type LeaseMode = z.infer<typeof leaseMode>;
 
 export const limitsSchema = z.record(z.string(), z.number().nonnegative());
 
+// environment name to the digest a visitor's assertion must carry; an environment not listed is public
+export const gatesSchema = z.record(z.string().min(1).max(64), digestSchema);
+
 export const authorityStateSchema = z.object({
 	siteId,
 	epoch: z.int().nonnegative(),
@@ -43,7 +47,8 @@ export const authorityStateSchema = z.object({
 	state: leaseState,
 	risk: riskClass,
 	limits: limitsSchema,
-	accessRuleHash: digestSchema
+	accessRuleHash: digestSchema,
+	gates: gatesSchema.optional()
 });
 
 export const leaseSchema = z
@@ -56,6 +61,7 @@ export const leaseSchema = z
 		mode: leaseMode,
 		limits: limitsSchema,
 		accessRuleHash: digestSchema,
+		gates: gatesSchema.optional(),
 		iat: z.int().nonnegative(),
 		exp: z.int().nonnegative(),
 		sig: signatureSchema
@@ -109,11 +115,31 @@ export async function issueLease(
 		mode,
 		limits: authority.limits,
 		accessRuleHash: authority.accessRuleHash,
+		...(authority.gates === undefined ? {} : { gates: authority.gates }),
 		iat: now,
 		exp: now + life
 	};
 	const sig = await signCanonical(LEASE_CONTEXT, unsigned, privateKey);
 	return { ...unsigned, sig } as Lease;
+}
+
+// the next authority for an access change; the same rules give back the same generation
+export function withAccess(
+	current: AuthorityState,
+	access: { accessRuleHash: string; gates: Record<string, string> }
+): AuthorityState {
+	const gates = Object.keys(access.gates).length === 0 ? undefined : access.gates;
+	const same =
+		current.accessRuleHash === access.accessRuleHash &&
+		canonicalJson(current.gates ?? {}) === canonicalJson(gates ?? {});
+	if (same) return current;
+	const { gates: _old, ...rest } = current;
+	return {
+		...rest,
+		accessRuleHash: access.accessRuleHash,
+		...(gates === undefined ? {} : { gates }),
+		generation: current.generation + 1
+	};
 }
 
 export function decideRenewal(

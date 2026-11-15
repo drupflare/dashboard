@@ -2,13 +2,14 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { omitSig, signingInput } from '../../../contracts/src/common';
 import { verifyChallengeResponse, verifyEnvelope } from '../../../contracts/src/fleet-link';
+import { verifyGateAssertion } from '../../../contracts/src/gate-assertion';
 import { verifyAssertion } from '../../../contracts/src/owner-assertion';
 import { checkLease } from '../../../contracts/src/site-auth';
 
 type Json = Record<string, any>;
 type Case = {
 	name: string;
-	kind: 'envelope' | 'challenge' | 'lease' | 'assertion';
+	kind: 'envelope' | 'challenge' | 'lease' | 'assertion' | 'gate';
 	description: string;
 	input: any;
 	context: Json;
@@ -43,6 +44,10 @@ async function run(c: Case): Promise<{ ok: boolean; code?: string; serving?: str
 	if (c.kind === 'lease') {
 		const result = await checkLease(c.input, c.context as any);
 		return result.ok ? { ok: true, serving: result.value.serving } : result;
+	}
+	if (c.kind === 'gate') {
+		const result = await verifyGateAssertion(c.input, { ...(c.context as any), seen });
+		return result.ok ? { ok: true } : result;
 	}
 	const result = await verifyAssertion(c.input, { ...(c.context as any), seen });
 	return result.ok ? { ok: true } : result;

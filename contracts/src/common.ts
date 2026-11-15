@@ -13,6 +13,7 @@ export const orgId = idSchema('org');
 export const siteId = idSchema('site');
 export const operationId = idSchema('op');
 export const nodeId = idSchema('nod');
+export const environmentId = idSchema('env');
 
 export type UserId = z.infer<typeof userId>;
 export type OrgId = z.infer<typeof orgId>;
@@ -20,7 +21,7 @@ export type SiteId = z.infer<typeof siteId>;
 export type OperationId = z.infer<typeof operationId>;
 export type NodeId = z.infer<typeof nodeId>;
 
-export type IdPrefix = 'usr' | 'org' | 'site' | 'op' | 'nod';
+export type IdPrefix = 'usr' | 'org' | 'site' | 'op' | 'nod' | 'tpl' | 'env';
 
 const ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 

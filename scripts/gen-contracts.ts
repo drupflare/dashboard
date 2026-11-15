@@ -25,6 +25,8 @@ import {
 	signEnvelope,
 	type UnsignedEnvelope
 } from '../contracts/src/fleet-link';
+import * as gateAssertion from '../contracts/src/gate-assertion';
+import { GATE_CONTEXT, MAX_GATE_TTL_MS, signGateAssertion } from '../contracts/src/gate-assertion';
 import * as migrationCutover from '../contracts/src/migration-cutover';
 import * as operations from '../contracts/src/operations';
 import * as ownerAssertion from '../contracts/src/owner-assertion';
@@ -73,6 +75,11 @@ const CONTRACTS = [
 		schemas: ownerAssertion.schemas
 	},
 	{ name: 'site-auth', version: siteAuth.SITE_AUTH_VERSION, schemas: siteAuth.schemas },
+	{
+		name: 'gate-assertion',
+		version: gateAssertion.GATE_ASSERTION_VERSION,
+		schemas: gateAssertion.schemas
+	},
 	{ name: 'discovery', version: discovery.DISCOVERY_VERSION, schemas: discovery.schemas },
 	{ name: 'releases', version: releases.RELEASES_VERSION, schemas: releases.schemas },
 	{ name: 'usage', version: usage.USAGE_VERSION, schemas: usage.schemas },
@@ -119,7 +126,7 @@ const HOUR = '2026-11-05T12:00:00Z';
 type Json = Record<string, unknown>;
 type VectorCase = {
 	name: string;
-	kind: 'envelope' | 'challenge' | 'lease' | 'assertion';
+	kind: 'envelope' | 'challenge' | 'lease' | 'assertion' | 'gate';
 	description: string;
 	input: unknown;
 	context: Json;
@@ -1029,6 +1036,137 @@ async function ownerAssertionVectors(keys: Record<KeyLabel, SigningKey & { seed:
 	);
 }
 
+async function gateAssertionVectors(keys: Record<KeyLabel, SigningKey & { seed: string }>) {
+	const cases: VectorCase[] = [];
+	const seed = new Uint8Array(
+		await crypto.subtle.digest('SHA-256', utf8('drupflare-contracts-test-key/gate'))
+	);
+	const gate = { ...(await signingKeyFromSeed(seed)), seed: toBase64Url(seed) };
+	const hash = `sha256:${'a'.repeat(64)}`;
+	const claim = { siteId: SITE, environment: 'staging', ruleHash: hash, sub: 'visitor-0001' };
+	const ctx = {
+		publicKey: gate.publicKey,
+		now: VECTOR_NOW + 1000,
+		siteId: SITE,
+		environment: 'staging',
+		ruleHash: hash,
+		seen: []
+	};
+	const id = 'gate-assertion-0001';
+	const assertion = await signGateAssertion(claim, VECTOR_NOW, gate, { id });
+
+	positive(cases, {
+		name: 'valid',
+		kind: 'gate',
+		description: 'A one hour assertion for one visitor on one environment.',
+		input: assertion,
+		context: ctx,
+		signing: signingInput(GATE_CONTEXT, omitSig(assertion))
+	});
+	positive(cases, {
+		name: 'reordered-fields-verify',
+		kind: 'gate',
+		description: 'Key order on the wire does not matter.',
+		input: reverseKeys(assertion),
+		context: ctx
+	});
+	negative(cases, {
+		name: 'forged',
+		kind: 'gate',
+		description: 'Signed by a key the dispatch Worker does not pin.',
+		input: await signGateAssertion(claim, VECTOR_NOW, keys.other, { id }),
+		context: ctx,
+		expect: 'bad_signature'
+	});
+	negative(cases, {
+		name: 'tampered-subject',
+		kind: 'gate',
+		description: 'The subject changed after signing.',
+		input: { ...clone(assertion), sub: 'someone-else' },
+		context: ctx,
+		expect: 'bad_signature'
+	});
+	negative(cases, {
+		name: 'expired',
+		kind: 'gate',
+		description: 'Past expiry plus skew.',
+		input: assertion,
+		context: { ...ctx, now: assertion.exp + 60_000 },
+		expect: 'expired'
+	});
+	negative(cases, {
+		name: 'not-yet-valid',
+		kind: 'gate',
+		description: 'Issued in the future beyond the skew.',
+		input: assertion,
+		context: { ...ctx, now: VECTOR_NOW - 60_000 },
+		expect: 'not_yet_valid'
+	});
+	negative(cases, {
+		name: 'replayed-id',
+		kind: 'gate',
+		description: 'A valid assertion whose id the Worker has already seen.',
+		input: assertion,
+		context: { ...ctx, seen: [id] },
+		expect: 'replayed'
+	});
+	negative(cases, {
+		name: 'other-site',
+		kind: 'gate',
+		description: 'A valid assertion presented to another site.',
+		input: assertion,
+		context: { ...ctx, siteId: OTHER_SITE },
+		expect: 'wrong_site'
+	});
+	negative(cases, {
+		name: 'other-environment',
+		kind: 'gate',
+		description: 'A valid assertion for staging presented on dev.',
+		input: assertion,
+		context: { ...ctx, environment: 'dev' },
+		expect: 'wrong_environment'
+	});
+	negative(cases, {
+		name: 'stale-rule-hash',
+		kind: 'gate',
+		description: 'The lease carries a newer rule hash than the assertion.',
+		input: assertion,
+		context: { ...ctx, ruleHash: `sha256:${'b'.repeat(64)}` },
+		expect: 'stale_rule_hash'
+	});
+	negative(cases, {
+		name: 'ttl-too-long',
+		kind: 'gate',
+		description: 'A correctly signed assertion that lives past the 12 hour cap.',
+		input: await signGateAssertion(claim, VECTOR_NOW, gate, {
+			id,
+			ttlMs: MAX_GATE_TTL_MS + 1
+		}),
+		context: ctx,
+		expect: 'ttl_too_long'
+	});
+	negative(cases, {
+		name: 'wrong-version',
+		kind: 'gate',
+		description: 'The assertion major version is not 1.',
+		input: { ...assertion, v: 2 },
+		context: ctx,
+		expect: 'unsupported_version'
+	});
+
+	const note = 'TEST KEY ONLY. The seed is public on purpose. Never use it outside tests.';
+	return vectorFile(
+		'gate-assertion',
+		gateAssertion.GATE_ASSERTION_VERSION,
+		{ gate: GATE_CONTEXT },
+		{
+			gate: { note, seed: gate.seed, publicKey: gate.publicKey },
+			other: keyFile(keys).other
+		},
+		cases
+	);
+}
+
 // #endregion
 
 export async function renderContractFiles(): Promise<Map<string, string>> {
@@ -1040,6 +1178,7 @@ export async function renderContractFiles(): Promise<Map<string, string>> {
 	files.set('contracts/vectors/fleet-link.json', await fleetLinkVectors(keys));
 	files.set('contracts/vectors/site-auth.json', await siteAuthVectors(keys));
 	files.set('contracts/vectors/owner-assertion.json', await ownerAssertionVectors(keys));
+	files.set('contracts/vectors/gate-assertion.json', await gateAssertionVectors(keys));
 	const out = new Map<string, string>();
 	for (const [path, value] of files) {
 		const plain = JSON.parse(JSON.stringify(value)) as unknown;

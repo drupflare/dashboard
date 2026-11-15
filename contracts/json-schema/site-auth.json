@@ -22,7 +22,12 @@
 					"propertyNames": { "type": "string" },
 					"additionalProperties": { "type": "number", "minimum": 0 }
 				},
-				"accessRuleHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+				"accessRuleHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+				"gates": {
+					"type": "object",
+					"propertyNames": { "type": "string", "minLength": 1, "maxLength": 64 },
+					"additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+				}
 			},
 			"required": [
 				"siteId",
@@ -53,6 +58,11 @@
 					"additionalProperties": { "type": "number", "minimum": 0 }
 				},
 				"accessRuleHash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+				"gates": {
+					"type": "object",
+					"propertyNames": { "type": "string", "minLength": 1, "maxLength": 64 },
+					"additionalProperties": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+				},
 				"iat": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
 				"exp": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
 				"sig": { "type": "string", "pattern": "^[A-Za-z0-9_-]{86}$" }
@@ -117,6 +127,18 @@
 								"accessRuleHash": {
 									"type": "string",
 									"pattern": "^sha256:[0-9a-f]{64}$"
+								},
+								"gates": {
+									"type": "object",
+									"propertyNames": {
+										"type": "string",
+										"minLength": 1,
+										"maxLength": 64
+									},
+									"additionalProperties": {
+										"type": "string",
+										"pattern": "^sha256:[0-9a-f]{64}$"
+									}
 								},
 								"iat": {
 									"type": "integer",

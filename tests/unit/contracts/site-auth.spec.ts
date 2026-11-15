@@ -20,6 +20,7 @@ import {
 	needsRenewal,
 	renewalRequestSchema,
 	renewalResponseSchema,
+	withAccess,
 	type AuthorityState
 } from '../../../contracts/src/site-auth';
 import { loadVectors, vectorTests } from './vectors';
@@ -286,5 +287,54 @@ describe('site-auth vector coverage', () => {
 				'reordered-fields-verify'
 			])
 		);
+	});
+});
+
+describe('access gates on the lease', () => {
+	const gates = { env_1: `sha256:${'1'.repeat(64)}` };
+
+	it('carries the gates into a signed lease that still verifies', async () => {
+		const key = await generateSigningKey();
+		const state = await authority({ gates });
+		const lease = await issueLease(state, 1000, key.privateKey);
+		expect(lease.gates).toEqual(gates);
+		const checked = await checkLease(lease, {
+			publicKey: key.publicKey,
+			now: 1500,
+			siteId: state.siteId,
+			epoch: state.epoch
+		});
+		expect(checked.ok).toBe(true);
+	});
+
+	it('refuses a lease whose gates changed after signing', async () => {
+		const key = await generateSigningKey();
+		const lease = await issueLease(await authority({ gates }), 1000, key.privateKey);
+		const forged = { ...lease, gates: { env_1: `sha256:${'2'.repeat(64)}` } };
+		const checked = await checkLease(forged, {
+			publicKey: key.publicKey,
+			now: 1500,
+			siteId: lease.siteId,
+			epoch: lease.epoch
+		});
+		expect(checked).toEqual({ ok: false, code: 'bad_signature' });
+	});
+
+	it('leaves a lease without gates byte for byte as it was', async () => {
+		const key = await generateSigningKey();
+		const lease = await issueLease(await authority(), 1000, key.privateKey);
+		expect('gates' in lease).toBe(false);
+	});
+
+	it('moves to the next generation only when the access changed', async () => {
+		const state = await authority();
+		const next = { accessRuleHash: await sha256Digest('new'), gates };
+		const moved = withAccess(state, next);
+		expect(moved.generation).toBe(state.generation + 1);
+		expect(moved.gates).toEqual(gates);
+		expect(withAccess(moved, next)).toBe(moved);
+		const cleared = withAccess(moved, { accessRuleHash: state.accessRuleHash, gates: {} });
+		expect(cleared.generation).toBe(moved.generation + 1);
+		expect('gates' in cleared).toBe(false);
 	});
 });

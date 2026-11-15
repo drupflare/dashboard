@@ -48,6 +48,7 @@ describe('generated contract files', () => {
 				'common',
 				'discovery',
 				'fleet-link',
+				'gate-assertion',
 				'migration-cutover',
 				'operations',
 				'owner-assertion',

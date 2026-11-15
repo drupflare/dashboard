@@ -46,15 +46,29 @@ export const WORKFLOW_NAMES = [
 	'site-purge',
 	'site-cleanup',
 	'site-adopt',
+	'site-repair',
 	'site-import',
 	'import-survey',
 	'estate-assess',
 	'backup-create',
 	'backup-restore',
+	'backup-verify',
+	'access-sync',
+	'env-create',
+	'env-delete',
+	'site-pitr',
+	'config-apply',
+	'module-install',
+	'module-enable',
+	'module-remove',
+	'theme-default',
 	'migration-cutover',
 	'git-pull',
 	'domain-attach',
-	'node-site-create'
+	'node-site-create',
+	'site-rollback',
+	'release-ring',
+	'template-build'
 ] as const;
 export type WorkflowName = (typeof WORKFLOW_NAMES)[number];
 
