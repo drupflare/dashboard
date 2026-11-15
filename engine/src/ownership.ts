@@ -1,7 +1,13 @@
 import type { D1Database } from '@cloudflare/workers-types';
 import { scriptName, type SitePlane } from '@contracts/sites';
 import type { AccountRoute, Cloudflare, EngineDeps, ScriptUpload } from './ports';
-import { RESOURCE_SPECS, type ResourceKind } from './provision-plan';
+import {
+	RESOURCE_SPECS,
+	STRATA_STORE_BINDING,
+	STRATA_STORE_SUFFIX,
+	strataTokenName,
+	type ResourceKind
+} from './provision-plan';
 import { PermanentError } from './step';
 
 // #region the ledger
@@ -244,6 +250,13 @@ export class IntentUnresolvedError extends PermanentError {
 			'intent_unresolved',
 			`${row.kind} ${row.name} has an intent and no recorded id, so there is nothing safe to delete`
 		);
+	}
+}
+
+// R2 answers a delete of a bucket that holds objects with a conflict
+export class BucketNotEmptyError extends PermanentError {
+	constructor(readonly bucket: string) {
+		super('bucket_not_empty', `bucket ${bucket} still holds objects, so it was left in place`);
 	}
 }
 
@@ -605,34 +618,80 @@ export async function purgeRows(
 	deps: Guarded,
 	claim: Omit<Claim, 'operationId'>,
 	kinds: readonly OwnedKind[]
-): Promise<void> {
+): Promise<string[]> {
 	const { ledger, now } = deps;
-	const rows = (await ledger.live(claim.siteId)).filter((row) => kinds.includes(row.kind));
+	const left: string[] = [];
+	// the Strata store goes through purgeStrataStore, which can leave a bucket that holds objects
+	const rows = (await ledger.live(claim.siteId)).filter(
+		(row) => kinds.includes(row.kind) && row.binding !== STRATA_STORE_BINDING
+	);
 	for (const row of [...rows].reverse()) {
 		if (row.providerId === null) throw new IntentUnresolvedError(row);
 		if (row.missingAt === null) {
+			try {
+				await ownedDelete(deps, claim.plane, {
+					siteId: claim.siteId,
+					accountId: claim.accountId,
+					kind: row.kind,
+					id: row.providerId
+				});
+			} catch (error) {
+				// a customer's script that someone else changed is reported and left alone
+				if (claim.plane === 'managed' || !(error instanceof ScriptChangedError))
+					throw error;
+				left.push(`${row.kind} ${row.name} was changed by someone else`);
+			}
+		}
+		await ledger.markDeleted(row.id, now());
+	}
+	return left;
+}
+
+// revokes the site's storage token, then deletes the bucket. R2 refuses to delete a bucket that
+// still holds objects, and emptying one is not done here, so that bucket stays and its name comes
+// back to be reported; a repeat of the purge tries again
+export async function purgeStrataStore(
+	deps: Guarded,
+	claim: Omit<Claim, 'operationId'>
+): Promise<string | null> {
+	const row = (await deps.ledger.live(claim.siteId)).find(
+		(live) => live.binding === STRATA_STORE_BINDING
+	);
+	if (row === undefined) return null;
+	await deps.cloudflare.deleteBucketTokens(strataTokenName(claim.siteId));
+	if (row.providerId === null) throw new IntentUnresolvedError(row);
+	if (row.missingAt === null) {
+		try {
 			await ownedDelete(deps, claim.plane, {
 				siteId: claim.siteId,
 				accountId: claim.accountId,
 				kind: row.kind,
 				id: row.providerId
 			});
+		} catch (error) {
+			if (error instanceof BucketNotEmptyError) return row.providerId;
+			throw error;
 		}
-		await ledger.markDeleted(row.id, now());
 	}
+	await deps.ledger.markDeleted(row.id, deps.now());
+	return null;
 }
 
-export async function purgeScript(deps: Guarded, claim: Omit<Claim, 'operationId'>): Promise<void> {
+export async function purgeScript(
+	deps: Guarded,
+	claim: Omit<Claim, 'operationId'>
+): Promise<string[]> {
 	const recorded = (await deps.ledger.live(claim.siteId)).some((row) => row.kind === 'script');
 	if (recorded) return purgeRows(deps, claim, ['script']);
 	// no row: only a managed site's own name in the dispatch namespace is safe to delete
-	if (claim.plane !== 'managed') return;
+	if (claim.plane !== 'managed') return [];
 	await ownedDelete(deps, claim.plane, {
 		siteId: claim.siteId,
 		accountId: claim.accountId,
 		kind: 'script',
 		id: scriptName(claim.siteId)
 	});
+	return [];
 }
 
 // #endregion
@@ -709,9 +768,10 @@ export interface LeakReport {
 }
 
 function ourNames(kind: ResourceKind): RegExp {
-	const suffixes = RESOURCE_SPECS.filter((spec) => spec.kind === kind)
-		.map((spec) => spec.suffix)
-		.sort((a, b) => b.length - a.length);
+	const suffixes = [
+		...RESOURCE_SPECS.filter((spec) => spec.kind === kind).map((spec) => spec.suffix),
+		...(kind === 'r2' ? [STRATA_STORE_SUFFIX] : [])
+	].sort((a, b) => b.length - a.length);
 	return new RegExp(`^s-[0-9a-z]{8,40}-(${suffixes.join('|')})$`);
 }
 

@@ -1,6 +1,6 @@
 import { backupKeys, DEFAULT_RESTORE_CEILING_BYTES } from '../backup-parts';
 import { observe, setVerification, transition } from '../operations/state';
-import type { ModuleDeps, ModuleReading } from '../ports';
+import type { BackupDeps, ModuleDeps, ModuleReading } from '../ports';
 import type { StepFailed } from '../step';
 import {
 	assertOperationOrg,
@@ -63,7 +63,7 @@ export function dumpInput(input: ModuleInput, label: string): BackupCreateInput 
 
 export async function takeRestorePoint(
 	ctx: Ctx,
-	deps: ModuleDeps,
+	deps: BackupDeps,
 	input: ModuleInput,
 	label: string
 ): Promise<void> {
@@ -77,7 +77,7 @@ export async function takeRestorePoint(
 // where the site answers and which sealed token opens it, after the lease is held
 export async function openForChange(
 	ctx: Ctx,
-	deps: ModuleDeps,
+	deps: BackupDeps,
 	input: ModuleInput,
 	then?: (site: OpenSite) => Promise<void>
 ): Promise<OpenSite> {
@@ -95,7 +95,7 @@ export async function openForChange(
 }
 
 export function withOwnerToken<T>(
-	deps: ModuleDeps,
+	deps: BackupDeps,
 	input: Pick<ModuleInput, 'siteId'>,
 	site: OpenSite,
 	use: (auth: { bearer: string }) => Promise<T>
@@ -175,7 +175,7 @@ export async function stopFailed(
 	return { status: 'failed', reason: outcome, leaked: [] };
 }
 
-export const verifiedStep = (ctx: Ctx, deps: ModuleDeps, work: () => Promise<void>) =>
+export const verifiedStep = (ctx: Ctx, deps: BackupDeps, work: () => Promise<void>) =>
 	runStep(ctx, 'verify', 'verify', async () => {
 		await fenced(ctx);
 		await deps.store.mutate(ctx.operationId, (operation) =>

@@ -17,9 +17,6 @@ import { inputOf, parsed, repairWorld, runRepair, type Rw } from './repair-fakes
 const VERIFIED = CATALOGUE_ROWS.filter(
 	(row) => isAutomatic(row) && REPAIR_HANDLES[row.repairId]!.verified
 );
-const UNVERIFIED = CATALOGUE_ROWS.filter(
-	(row) => isAutomatic(row) && !REPAIR_HANDLES[row.repairId]!.verified
-);
 const NEEDS_A_PERSON = CATALOGUE_ROWS.filter((row) => !isAutomatic(row));
 
 // puts the failure a row names on the fake site
@@ -50,7 +47,12 @@ describe('the plan', () => {
 describe('a catalogued failure on a site', () => {
 	it('has a verified handler for every automatic row whose route the worker serves', () => {
 		expect(VERIFIED.map((row) => row.repairId).sort()).toEqual([
+			'bridge.asyncify_called',
+			'bridge.mask_leaked',
 			'cache.anonymous_purity',
+			'health.ledger_oversized',
+			'memory.highwater_rising',
+			'memory.trend_rising',
 			'overhead.cache-invalidation-after-deploy',
 			'overhead.fill-rearm-after-gap',
 			'overhead.reconcile-after-release',
@@ -59,6 +61,23 @@ describe('a catalogued failure on a site', () => {
 			'render.empty',
 			'render.size_anomaly'
 		]);
+	});
+
+	it('records what /ledger-gc deleted and what /recycle found', async () => {
+		const gc = await repairWorld();
+		gc.site.state.findings.add('health.ledger_oversized');
+		await runRepair(gc, inputOf(gc, 'health.ledger_oversized'));
+		expect(parsed(gc.records()[0]!.observation_after).run.detail).toBe(
+			'/ledger-gc deleted 7 rows'
+		);
+		const idle = await repairWorld();
+		idle.site.state.fixes = false;
+		idle.site.state.findings.add('memory.trend_rising');
+		const { outcome } = await runRepair(idle, inputOf(idle, 'memory.trend_rising'));
+		expect(outcome.status).toBe('failed');
+		expect(parsed(idle.records()[0]!.observation_after).run.detail).toBe(
+			'/recycle found no interpreter resident'
+		);
 	});
 
 	it.each(VERIFIED.map((row) => [row.repairId, row] as const))(
@@ -208,13 +227,22 @@ describe('a repair that must not run', () => {
 		}
 	);
 
-	it.each(UNVERIFIED.map((row) => [row.repairId, row] as const))(
-		'refuses %s, which has no owner route on the site',
-		async (id) => {
-			const rw = await repairWorld();
-			await refuses(rw, 'no_route', id);
-		}
-	);
+	it('refuses an automatic row whose handle has no owner route on the site', async () => {
+		const rw = await repairWorld();
+		const row: CatalogueRow = { ...CATALOGUE.get('render.empty')!, repairId: 'test.unrouted' };
+		const registries = {
+			catalogue: new Map([...CATALOGUE, [row.repairId, row]]),
+			handles: {
+				...REPAIR_HANDLES,
+				[row.repairId]: { verified: false, run: async () => ({ ok: false, detail: '' }) }
+			},
+			undo: {}
+		};
+		const { outcome } = await runRepair(rw, inputOf(rw, row.repairId), { registries });
+		expect(outcome.status).toBe('cancelled');
+		expect(refusedCode(rw)).toBe('no_route');
+		expect(rw.site.state.calls).toEqual([]);
+	});
 });
 
 describe('the switches and the budget', () => {

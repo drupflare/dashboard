@@ -1,7 +1,6 @@
 import type { EstateReport, RowVerdict } from '@contracts/estate';
 import type { AuthorityState } from '@contracts/site-auth';
 import type { SitePlane } from '@contracts/sites';
-import type { UploadMetadata } from '@drupflare/workforce';
 import type { Ring } from '../../src/server/domain/cohorts';
 import type { DnsResolver } from '../../src/server/domain/dns-check';
 import type { ClaimRow, Observation } from '../../src/server/domain/domain-attach';
@@ -18,6 +17,7 @@ import type { BackupRecord, ExportPage } from './backup-parts';
 import type { BundleLimits, BundleManifest, BundleModule } from './bundle';
 import type { RunRecord, RunRefusal } from './containers/jobs';
 import type { Custody, FirstRunAdmin, FirstRunReads, FirstRunSecrets } from './custody';
+import type { DescriptorMetadata } from './descriptor';
 import type {
 	GitPullResult,
 	GitRemoteSpec,
@@ -47,7 +47,7 @@ export interface AssetSession {
 
 export interface ScriptUpload {
 	main: string;
-	metadata: Omit<UploadMetadata, 'main_module'>;
+	metadata: Omit<DescriptorMetadata, 'main_module'>;
 	modules: { module: BundleModule; bytes: Uint8Array }[];
 	// the migration tag the live script is at; unset on a first upload
 	oldTag?: string;
@@ -81,6 +81,17 @@ export interface CloudflareUsage {
 	kvNamespaces: number;
 	buckets: number;
 	rate: RateHeadroom;
+	// read on a customer's account only
+	scripts?: number;
+	// false when the account has no object storage turned on
+	r2Enabled?: boolean;
+}
+
+// a customer's account only: the workers.dev address of its sites
+export interface AccountHosts {
+	// the account's workers.dev subdomain; null when it has none
+	subdomain(): Promise<string | null>;
+	enableWorkersDev(script: string): Promise<void>;
 }
 
 // one account; every delete says whether it removed anything so a repeat is harmless.
@@ -103,6 +114,18 @@ export interface Cloudflare {
 		manifest: Record<string, { hash: string; size: number }>
 	): Promise<AssetSession>;
 	uploadAssetBucket(jwt: string, files: { hash: string; bytes: Uint8Array }[]): Promise<string>;
+	// a token that reads and writes one bucket and nothing else; the secret cannot be read again,
+	// so the caller holds it for one call and never stores it
+	mintBucketToken(bucket: string, name: string): Promise<BucketToken>;
+	// deletes every token with this name and says how many went; none is not an error
+	deleteBucketTokens(name: string): Promise<number>;
+}
+
+// the S3 credentials of a bucket token: the key id is the token id, the secret is the SHA-256 of its value
+export interface BucketToken {
+	tokenId: string;
+	accessKeyId: string;
+	secretAccessKey: string;
 }
 
 // #endregion
@@ -220,6 +243,16 @@ export interface BackupWorker {
 	adopting(hostname: string, auth: OwnerAuth): Promise<number>;
 	// files held only in R2, which an export does not carry
 	offloadedFiles(hostname: string, auth: OwnerAuth): Promise<number>;
+	// one window of a composer lock installed on the site, from the cursor the last window reached;
+	// 'absent' when the site has no such route
+	installLock(
+		hostname: string,
+		lock: Uint8Array,
+		cursor: number,
+		auth: OwnerAuth
+	): Promise<InstallLockWindow | 'absent'>;
+	// removes what a failed lock session wrote; a session the site no longer holds is already gone
+	rollbackLock(hostname: string, session: string, auth: OwnerAuth): Promise<void>;
 
 	// #region the paged restore: whether the site has the routes, then one call per step of the upload
 	pagedRestoreSupported(hostname: string, auth: OwnerAuth): Promise<boolean>;
@@ -255,6 +288,23 @@ export interface BackupWorker {
 	): Promise<OffloadedPage | null>;
 	offloadedStream(hostname: string, uri: string, auth: OwnerAuth): Promise<OffloadedStream>;
 	// #endregion
+}
+
+export interface InstallLockWindow {
+	done: boolean;
+	// the package index the next window starts from
+	cursor: number;
+	total: number;
+	installed: number;
+	skipped: number;
+	// the first package the site could not install, with its reason; null when none failed
+	failure: { name: string; error: string } | null;
+	// the site's id for this lock session, the handle a rollback names
+	session: string;
+	// every package the session skipped so far, with the site's reason for each
+	skippedPackages: { name: string; reason: string }[];
+	// the site's word for Composer patches, 'not applied' because a lock carries none
+	patches: string;
 }
 
 export interface RestoreDeclaration {
@@ -482,6 +532,19 @@ export interface ModuleWorker {
 	// true when the site reports the package in place
 	install(hostname: string, name: string, auth: OwnerAuth): Promise<{ ok: boolean }>;
 	enable(hostname: string, project: string, auth: OwnerAuth): Promise<{ ok: boolean }>;
+	// true when the site answers with the value that was asked for; a repeat writes nothing
+	setStrata(
+		hostname: string,
+		captureStatements: boolean,
+		auth: OwnerAuth
+	): Promise<{ ok: boolean }>;
+	// the refusal is the route's own answer: a site on an older worker has no route, and Strata or its
+	// S3 part may be off. The request carries a secret, so no answer or error quotes it
+	setStrataStore(
+		hostname: string,
+		store: StrataStoreRequest,
+		auth: OwnerAuth
+	): Promise<{ ok: boolean; refusal?: StrataStoreRefusal }>;
 	// dryRun reports the plan and removes nothing
 	uninstall(
 		hostname: string,
@@ -498,8 +561,91 @@ export interface ModuleWorker {
 	): Promise<ThemeDefaultAnswer>;
 }
 
+export interface StrataStoreRequest {
+	endpoint: string;
+	bucket: string;
+	region: string;
+	accessKeyId: string;
+	secretAccessKey: string;
+	pathStyle: boolean;
+	enable: boolean;
+}
+
+export type StrataStoreRefusal = 'route_missing' | 'strata_not_enabled' | 'strata_s3_not_enabled';
+
+// a choice is marked applied only while it is still the stored one
+export interface StrataStore {
+	markApplied(
+		organizationId: string,
+		siteId: string,
+		allocation: 'light' | 'detailed',
+		now: number
+	): Promise<void>;
+	// the reason is a short code and never text from the site
+	markStore(
+		organizationId: string,
+		siteId: string,
+		store: { state: 'ready' } | { state: 'failed'; reason: string }
+	): Promise<void>;
+}
+
 export interface ModuleDeps extends BackupDeps {
 	modules: ModuleWorker;
+	strata: StrataStore;
+}
+
+// #endregion
+
+// #region modify
+
+export interface ModifyFile {
+	path: string;
+	source: string;
+	hash: string;
+	bytes: number;
+}
+
+export type ModifyAnswer = { kind: 'applied'; rev: string } | { kind: 'refused'; reason: string };
+
+// the site's owner route for uploaded module revisions; a revision is named by the hash of its
+// file set, so sending the same set twice changes nothing
+export interface ModifyWorker {
+	// the revision the site runs for a package, null when it has none
+	active(hostname: string, name: string, auth: OwnerAuth): Promise<string | null>;
+	// sends only the files the site lacks, then commits the set; a refused commit leaves the old
+	// revision running
+	deliver(
+		hostname: string,
+		delivery: { name: string; label: string; files: readonly ModifyFile[] },
+		auth: OwnerAuth
+	): Promise<ModifyAnswer>;
+	// puts a stored revision back as the running one
+	activate(
+		hostname: string,
+		name: string,
+		rev: string,
+		auth: OwnerAuth
+	): Promise<{ ok: boolean }>;
+}
+
+export interface EditRow {
+	// derived from the operation, so a repeat writes nothing
+	id: string;
+	organizationId: string;
+	siteId: string;
+	bundleKey: string;
+	note: string;
+	now: number;
+}
+
+// the history row of an edit; the release it names is the one the site runs when the row is written
+export interface EditLedger {
+	record(row: EditRow): Promise<void>;
+}
+
+export interface ModifyDeps extends BackupDeps {
+	modify: ModifyWorker;
+	edits: EditLedger;
 }
 
 // #endregion
@@ -1102,7 +1248,7 @@ export interface EngineConfig {
 	chunkBytes: number;
 	assetSessionMs: number;
 	limits: BundleLimits;
-	account?: { kvNamespaces: number; buckets?: number };
+	account?: { kvNamespaces: number; buckets?: number; scripts?: number };
 }
 
 export interface EngineDeps {
@@ -1116,6 +1262,8 @@ export interface EngineDeps {
 	releases: Releases;
 	leases: Leases;
 	kv: NamespaceKv;
+	// set only when the deps run against a customer's account
+	account?: AccountHosts;
 	now(): number;
 	config: EngineConfig;
 }

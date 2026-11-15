@@ -79,10 +79,10 @@ async function preflight(ctx: Ctx, input: SiteRollbackInput): Promise<string | n
 	const { deps } = ctx;
 	return runStep(ctx, 'preflight', 'preflight', async () => {
 		await fenced(ctx);
-		if (input.site.plane !== 'managed') {
+		if (input.site.plane !== 'managed' && input.site.plane !== 'self-managed') {
 			throw new PermanentError(
 				'unsupported_plane',
-				'only a managed site is rolled back here'
+				'only a managed or self-managed site is rolled back here'
 			);
 		}
 		if ((await deps.store.siteState(input.site.id)) !== 'active') {

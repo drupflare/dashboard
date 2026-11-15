@@ -1,6 +1,7 @@
 import type {
 	InstallVerdict,
 	ModuleWorker,
+	StrataStoreRequest,
 	ThemeDefaultAnswer,
 	UninstallAnswer
 } from '../../../engine/src/ports';
@@ -18,6 +19,8 @@ export function fakeModules(held: Record<string, Held> = {}) {
 		reads: [] as string[],
 		installs: [] as string[],
 		enables: [] as string[],
+		strata: [] as boolean[],
+		stores: [] as StrataStoreRequest[],
 		uninstalls: [] as { project: string; dryRun: boolean }[],
 		themes: [] as { project: string; target: string; dryRun: boolean }[],
 		bearers: new Set<string>()
@@ -27,6 +30,10 @@ export function fakeModules(held: Record<string, Held> = {}) {
 		// what an install leaves on the site; false models a refusal that writes nothing
 		installOk: true,
 		enableOk: true,
+		// 'ok' answers with the value asked for, 'refused' answers not ok, 'throws' fails the call
+		strata: 'ok' as 'ok' | 'refused' | 'throws',
+		// the same for the store push; 'missing' is a site on a worker without the route
+		store: 'ok' as 'ok' | 'refused' | 'throws' | 'missing',
 		uninstall: {
 			kind: 'plan',
 			enabledModules: [] as string[],
@@ -65,6 +72,21 @@ export function fakeModules(held: Record<string, Held> = {}) {
 			if (!script.enableOk) return { ok: false };
 			modules.set(project, { present: true, enabled: true });
 			return { ok: true };
+		},
+		async setStrata(_host, captureStatements, auth) {
+			calls.bearers.add(auth.bearer);
+			calls.strata.push(captureStatements);
+			if (script.strata === 'throws') throw new Error('the site did not answer');
+			return { ok: script.strata === 'ok' };
+		},
+		async setStrataStore(_host, store, auth) {
+			calls.bearers.add(auth.bearer);
+			calls.stores.push(store);
+			if (script.store === 'throws') {
+				throw new Error(`the site did not answer for ${store.secretAccessKey}`);
+			}
+			if (script.store === 'missing') return { ok: false, refusal: 'route_missing' };
+			return { ok: script.store === 'ok' };
 		},
 		async uninstall(_host, project, options, auth) {
 			calls.bearers.add(auth.bearer);

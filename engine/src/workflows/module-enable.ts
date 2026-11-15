@@ -1,8 +1,10 @@
 import type { Plan } from '@contracts/operations';
 import { machineName, type ModuleRow } from '../../../src/shared/modules';
+import { STRATA_CAPTURES_STATEMENTS, type StrataAllocation } from '../../../src/shared/strata';
 import { buildPlan } from '../operations/state';
 import type { ModuleDeps } from '../ports';
 import { PermanentError, StepFailed, type StepRunner } from '../step';
+import { openSite } from './backup-create';
 import {
 	acquireLease,
 	fenced,
@@ -23,14 +25,23 @@ import {
 	withOwnerToken,
 	type ModuleInput
 } from './module-common';
+import { runStrataStore } from './strata-store';
 
 export interface ModuleEnableInput extends ModuleInput {
 	// the census row as the dashboard read it; null when the name is not on the list
 	census: Pick<ModuleRow, 'state' | 'shipping' | 'reason'> | null;
+	// Strata starts with statement capture on, which is the costly setting, so the stored choice is
+	// sent as soon as the module is on
+	// store is true when the site is managed, so it gets a private bucket and the key to it; the
+	// caller sets it only after the plan's Strata entitlement has passed
+	strata?: { allocation: StrataAllocation; store?: boolean };
 }
 
+const STRATA_ATTEMPTS = 3;
+const STRATA_RETRY_MS = 2_000;
+
 export function planModuleEnable(
-	input: Pick<ModuleEnableInput, 'siteId' | 'name' | 'backupId'>
+	input: Pick<ModuleEnableInput, 'siteId' | 'name' | 'backupId' | 'strata'>
 ): Plan {
 	return buildPlan({
 		type: 'module.enable',
@@ -44,7 +55,13 @@ export function planModuleEnable(
 			{ id: 'preflight', name: 'Check the site and the module' },
 			...RESTORE_POINT_STEPS,
 			{ id: 'enable', name: `Enable ${input.name}` },
-			{ id: 'verify', name: 'Check that the module is on' }
+			{ id: 'verify', name: 'Check that the module is on' },
+			...(input.strata?.store === true
+				? [{ id: 'strata-store', name: 'Set up private storage for Strata' }]
+				: []),
+			...(input.strata === undefined
+				? []
+				: [{ id: 'strata', name: 'Set how much of the allowance Strata may use' }])
 		],
 		rollbackPoint: input.backupId
 	});
@@ -122,6 +139,39 @@ export async function runModuleEnable(
 			unchanged: (reading) => !reading.enabled,
 			asWas: 'the module was not turned on and the site was left as it was.',
 			unknown: 'the module may be partly turned on.'
+		});
+	}
+	if (input.strata?.store === true) await runStrataStore(ctx, deps, input);
+	if (input.strata !== undefined) {
+		const { allocation } = input.strata;
+		const wanted = STRATA_CAPTURES_STATEMENTS[allocation];
+		// the module is on whatever this answers, so a site that will not take the setting leaves it
+		// unapplied for the owner to retry instead of undoing the enable
+		await runStep(ctx, 'strata', 'strata', async () => {
+			const site = await openSite(
+				deps,
+				{ id: input.siteId, orgId: input.orgId, accountId: input.accountId },
+				{ notReady: 'site_not_ready', foreign: 'site_not_ready' }
+			);
+			for (let attempt = 1; attempt <= STRATA_ATTEMPTS; attempt++) {
+				try {
+					const done = await withOwnerToken(deps, input, site, (auth) =>
+						deps.modules.setStrata(site.hostname, wanted, auth)
+					);
+					if (done.ok) {
+						await deps.strata.markApplied(
+							input.orgId,
+							input.siteId,
+							allocation,
+							deps.now()
+						);
+						return;
+					}
+				} catch (error) {
+					if (error instanceof PermanentError) return;
+				}
+				if (attempt < STRATA_ATTEMPTS) await deps.sleep(STRATA_RETRY_MS);
+			}
 		});
 	}
 	await finishSuccess(ctx, `${input.name} is enabled on ${input.siteId}`);

@@ -1,6 +1,7 @@
 import { siteId } from '@contracts/common';
 import type { SiteConfig, SiteKind, SitePlane, SiteRing } from '@contracts/sites';
 import type { Binding, Migration, UploadMetadata } from '@drupflare/workforce';
+import type { CustomSpec } from './custom-bundle';
 import { type ResourceKind, resourceSpecs } from './provision-plan';
 
 export interface ModuleRule {
@@ -40,14 +41,18 @@ export interface DescriptorInput {
 	secrets: Readonly<Record<string, string>>;
 	release: { id: string; assetsToken?: string | null };
 	recipe?: RecipeBindings;
+	// a custom site's own bindings, read from its release; nothing of the Drupal descriptor applies
+	custom?: CustomSpec;
 	// adds the tag a sweep finds scratch and preview copies by
 	temporary?: boolean;
 }
 
 export const TEMPORARY_TAG = 'wf:ttl';
 
+export type DescriptorMetadata = Omit<UploadMetadata, 'migrations'> & { migrations?: Migration[] };
+
 export interface Descriptor {
-	metadata: UploadMetadata;
+	metadata: DescriptorMetadata;
 	rules: ModuleRule[];
 	crons: string[];
 }
@@ -192,11 +197,82 @@ function checkSecrets(secrets: Readonly<Record<string, string>>, taken: Set<stri
 	return out;
 }
 
+// a ledger row the spec does not name is left out, as the Strata store is for a Drupal site
+function checkCustomResources(input: DescriptorInput, custom: CustomSpec): SiteResourceRef[] {
+	const byBinding = new Map<string, SiteResourceRef>();
+	for (const ref of input.resources) {
+		if (ref.siteId !== input.site.id) {
+			throw new DescriptorError(
+				'foreign_resource',
+				`${ref.binding} belongs to ${ref.siteId}, not ${input.site.id}`
+			);
+		}
+		if (
+			!custom.resources.some((item) => item.binding === ref.binding && item.kind === ref.kind)
+		) {
+			continue;
+		}
+		if (byBinding.has(ref.binding)) {
+			throw new DescriptorError('duplicate_resource', `${ref.binding} is given twice`);
+		}
+		byBinding.set(ref.binding, ref);
+	}
+	for (const item of custom.resources) {
+		if (!byBinding.has(item.binding)) {
+			throw new DescriptorError('missing_resource', `${item.binding} has no resource`);
+		}
+	}
+	return custom.resources.flatMap((item) => byBinding.get(item.binding) ?? []);
+}
+
+function buildCustomDescriptor(input: DescriptorInput, custom: CustomSpec): Descriptor {
+	const { site, release } = input;
+	const refs = checkCustomResources(input, custom);
+	const bindings: Binding[] = [
+		...Object.entries(custom.vars).map(([name, text]) => ({
+			type: 'plain_text' as const,
+			name,
+			text
+		})),
+		...custom.durableObjects.map((object) => ({
+			type: 'durable_object_namespace' as const,
+			...object
+		})),
+		...refs.map(resourceBinding),
+		...custom.sendEmail.map((name) => ({ type: 'send_email' as const, name }))
+	];
+	if (custom.assetsBinding !== null)
+		bindings.push({ type: 'assets', name: custom.assetsBinding });
+	bindings.push(...checkSecrets(input.secrets, new Set(bindings.map((binding) => binding.name))));
+
+	const lastTag = custom.migrations[custom.migrations.length - 1]?.tag;
+	const metadata: DescriptorMetadata = {
+		bindings,
+		compatibility_date: custom.compatibilityDate,
+		compatibility_flags: [...custom.compatibilityFlags],
+		migrations: structuredClone(custom.migrations),
+		observability: { enabled: true },
+		tags: [
+			`o:${site.orgId}`,
+			`s:${site.id}`,
+			`k:${site.kind}`,
+			`p:${site.plane}`,
+			`r:${site.ring}`,
+			`v:${release.id}`,
+			...(lastTag === undefined ? [] : [`m:${lastTag}`]),
+			...(input.temporary === true ? [TEMPORARY_TAG] : [])
+		]
+	};
+	if (release.assetsToken) metadata.assets = { jwt: release.assetsToken };
+	return { metadata, rules: [], crons: [...custom.crons] };
+}
+
 export function buildDescriptor(input: DescriptorInput): Descriptor {
 	const { site, release } = input;
 	if (!siteId.safeParse(site.id).success) {
 		throw new DescriptorError('invalid_site', `${JSON.stringify(site.id)} is not a site id`);
 	}
+	if (input.custom !== undefined) return buildCustomDescriptor(input, input.custom);
 	const refs = checkResources(input);
 	const recipe = bindingsFor(input);
 
@@ -225,7 +301,7 @@ export function buildDescriptor(input: DescriptorInput): Descriptor {
 	bindings.push(...checkSecrets(input.secrets, new Set(bindings.map((binding) => binding.name))));
 
 	const lastTag = recipe.migrations[recipe.migrations.length - 1]?.tag;
-	const metadata: UploadMetadata = {
+	const metadata: DescriptorMetadata = {
 		bindings,
 		compatibility_date: COMPATIBILITY_DATE,
 		compatibility_flags: [...COMPATIBILITY_FLAGS],
@@ -249,7 +325,7 @@ export function buildDescriptor(input: DescriptorInput): Descriptor {
 
 export function redact(descriptor: Descriptor): Descriptor {
 	const { metadata } = descriptor;
-	const redacted: UploadMetadata = {
+	const redacted: DescriptorMetadata = {
 		...metadata,
 		bindings: metadata.bindings?.map((binding) =>
 			binding.type === 'secret_text' ? { ...binding, text: REDACTED } : binding

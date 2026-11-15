@@ -73,15 +73,25 @@ async function moduleWorld(held: Held = {}) {
 	await world.deps.custody.sealOwnerToken(world.siteId, FAKE_OWNER_TOKEN);
 	worker.add(world.input.hostname, world.siteId, { sql: dumpOf(30), aligned: true });
 	const fake = fakeModules(held);
+	const applied: { allocation: string; now: number }[] = [];
+	const stores: Parameters<ModuleDeps['strata']['markStore']>[2][] = [];
 	const deps: ModuleDeps = {
 		...world.deps,
 		worker: backupWorkerOf(worker.fetcher, 1_000),
 		blobs: blobs.blobs,
 		backups: new D1BackupLedger(db),
 		sleep: async () => undefined,
-		modules: fake.worker
+		modules: fake.worker,
+		strata: {
+			async markApplied(_org, _site, allocation, now) {
+				applied.push({ allocation, now });
+			},
+			async markStore(_org, _site, store) {
+				stores.push(store);
+			}
+		}
 	};
-	return { world, deps, worker, blobs, fake };
+	return { world, deps, worker, blobs, fake, applied, stores };
 }
 
 type Mw = Awaited<ReturnType<typeof moduleWorld>>;
@@ -477,6 +487,232 @@ describe('an enable', () => {
 		expect(outcome.status).toBe('failed');
 		expect(reasonOf(outcome)).toContain('does not show the module as on');
 	});
+
+	describe('Strata', () => {
+		const STRATA = 'earth-app/strata';
+		const strataInput = (mw: Mw, allocation: 'light' | 'detailed') =>
+			enableInput(mw, { ...base(mw, STRATA), strata: { allocation } });
+
+		it('has no Strata step for another module', async () => {
+			const mw = await moduleWorld({ token: { present: true, enabled: false } });
+			expect(planModuleEnable(enableInput(mw)).steps.map((step) => step.id)).not.toContain(
+				'strata'
+			);
+			await runEnable(mw);
+			expect(mw.fake.calls.strata).toEqual([]);
+		});
+
+		it('sends statements off for light after the module is on and marks it applied', async () => {
+			const mw = await moduleWorld({ strata: { present: true, enabled: false } });
+			const { outcome } = await runEnable(mw, strataInput(mw, 'light'));
+			expect(outcome).toEqual({ status: 'succeeded' });
+			expect(mw.fake.calls.enables).toEqual(['strata']);
+			expect(mw.fake.calls.strata).toEqual([false]);
+			expect(mw.applied).toEqual([{ allocation: 'light', now: expect.any(Number) }]);
+			expect((await operationOf(mw)).steps.map((step) => step.id).at(-1)).toBe('strata');
+		});
+
+		it('sends statements on for detailed', async () => {
+			const mw = await moduleWorld({ strata: { present: true, enabled: false } });
+			await runEnable(mw, strataInput(mw, 'detailed'));
+			expect(mw.fake.calls.strata).toEqual([true]);
+			expect(mw.applied.map((entry) => entry.allocation)).toEqual(['detailed']);
+		});
+
+		it('tries three times, then leaves the choice unapplied and the module on', async () => {
+			const mw = await moduleWorld({ strata: { present: true, enabled: false } });
+			mw.fake.script.strata = 'refused';
+			const { outcome } = await runEnable(mw, strataInput(mw, 'light'));
+			expect(outcome).toEqual({ status: 'succeeded' });
+			expect(mw.fake.calls.strata).toEqual([false, false, false]);
+			expect(mw.applied).toEqual([]);
+			expect(mw.fake.modules.get('strata')!.enabled).toBe(true);
+		});
+
+		it('treats a call that throws like a refusal', async () => {
+			const mw = await moduleWorld({ strata: { present: true, enabled: false } });
+			mw.fake.script.strata = 'throws';
+			const { outcome } = await runEnable(mw, strataInput(mw, 'light'));
+			expect(outcome).toEqual({ status: 'succeeded' });
+			expect(mw.fake.calls.strata).toHaveLength(3);
+			expect(mw.applied).toEqual([]);
+		});
+
+		describe('the private store', () => {
+			const held = {
+				strata: { present: true, enabled: false },
+				strata_s3: { present: true, enabled: false }
+			};
+			const withStore = (mw: Mw) => ({
+				...enableInput(mw, { ...base(mw, STRATA) }),
+				strata: { allocation: 'light' as const, store: true }
+			});
+			const bucketOf = (mw: Mw) => `s-${mw.world.siteId.slice('site_'.length)}-strata`;
+			const stepIds = async (mw: Mw) => (await operationOf(mw)).steps.map((step) => step.id);
+
+			it('plans the step before the allocation step only when the site gets a store', async () => {
+				const mw = await moduleWorld(held);
+				const ids = (input: ModuleEnableInput) =>
+					planModuleEnable(input).steps.map((step) => step.id);
+				expect(ids(withStore(mw)).slice(-2)).toEqual(['strata-store', 'strata']);
+				expect(ids(strataInput(mw, 'light'))).not.toContain('strata-store');
+			});
+
+			it('enables the S3 part, claims the bucket and sends a bucket token', async () => {
+				const mw = await moduleWorld(held);
+				const { outcome } = await runEnable(mw, withStore(mw));
+				expect(outcome).toEqual({ status: 'succeeded' });
+				expect(mw.fake.calls.enables).toEqual(['strata', 'strata_s3']);
+				const bucket = bucketOf(mw);
+				expect(mw.world.cf.snapshot().r2).toContain(bucket);
+				const row = (await mw.world.ledger.live(mw.world.siteId)).find(
+					(live) => live.binding === 'STRATA_STORE'
+				);
+				expect(row).toMatchObject({ kind: 'r2', name: bucket, providerId: bucket });
+				expect(mw.fake.calls.stores).toEqual([
+					{
+						endpoint: `https://${mw.world.accountId}.r2.cloudflarestorage.com`,
+						bucket,
+						region: 'auto',
+						accessKeyId: expect.stringMatching(/^tok-/),
+						secretAccessKey: expect.stringContaining('secret-'),
+						pathStyle: true,
+						enable: true
+					}
+				]);
+				expect(mw.stores).toEqual([{ state: 'ready' }]);
+				expect(await stepIds(mw)).toContain('strata-store');
+				expect(mw.fake.calls.strata).toEqual([false]);
+			});
+
+			it('keeps one bucket and one ledger row when it runs again, and swaps the token', async () => {
+				const mw = await moduleWorld(held);
+				await runEnable(mw, withStore(mw));
+				const first = mw.world.cf.tokens.live.size;
+				const again = {
+					...withStore(mw),
+					operationId: `op_${'q'.repeat(26)}`,
+					backupId: `bkp_${'n'.repeat(26)}`
+				};
+				await mw.world.store.begin({
+					operation: newOperation({
+						id: again.operationId,
+						orgId: mw.world.orgId,
+						idempotencyKey: 'module-2',
+						frozen: await freezePlan(planModuleEnable(again)),
+						now: mw.world.clock.now()
+					}),
+					accountId: mw.world.accountId,
+					siteId: mw.world.siteId
+				});
+				const { runner } = makeRunner(new Map());
+				expect(await runModuleEnable(runner, mw.deps, again)).toEqual({
+					status: 'succeeded'
+				});
+				expect(first).toBe(1);
+				expect(mw.world.cf.tokens.live.size).toBe(1);
+				expect(
+					mw.world.cf.snapshot().r2.filter((name) => name === bucketOf(mw))
+				).toHaveLength(1);
+				const rows = (await mw.world.ledger.live(mw.world.siteId)).filter(
+					(live) => live.binding === 'STRATA_STORE'
+				);
+				expect(rows).toHaveLength(1);
+				expect(mw.fake.calls.stores).toHaveLength(2);
+			});
+
+			it('deletes an earlier token of that name before it mints', async () => {
+				const mw = await moduleWorld(held);
+				const name = `drupflare-strata-${mw.world.siteId}`;
+				mw.world.cf.tokens.live.set('old-token', name);
+				mw.world.cf.tokens.live.set('other-token', 'someone-else');
+				await runEnable(mw, withStore(mw));
+				expect(mw.world.cf.tokens.log.slice(0, 2)).toEqual([
+					`delete:${name}`,
+					`mint:${name}`
+				]);
+				expect([...mw.world.cf.tokens.live.keys()]).not.toContain('old-token');
+				expect(mw.world.cf.tokens.live.get('other-token')).toBe('someone-else');
+			});
+
+			it('leaves the enable succeeded and the state failed when the token quota is full', async () => {
+				const mw = await moduleWorld(held);
+				mw.world.cf.tokens.quotaFull = true;
+				const { outcome } = await runEnable(mw, withStore(mw));
+				expect(outcome).toEqual({ status: 'succeeded' });
+				expect(mw.stores).toEqual([{ state: 'failed', reason: 'token_quota' }]);
+				expect(mw.fake.calls.stores).toEqual([]);
+				expect(mw.fake.modules.get('strata')!.enabled).toBe(true);
+				expect(mw.fake.calls.strata).toEqual([false]);
+			});
+
+			it('tries the push three times, then records a failure and revokes the token', async () => {
+				const mw = await moduleWorld(held);
+				mw.fake.script.store = 'refused';
+				const { outcome } = await runEnable(mw, withStore(mw));
+				expect(outcome).toEqual({ status: 'succeeded' });
+				expect(mw.fake.calls.stores).toHaveLength(3);
+				expect(new Set(mw.fake.calls.stores.map((call) => call.secretAccessKey)).size).toBe(
+					1
+				);
+				expect(mw.stores).toEqual([{ state: 'failed', reason: 'site_refused' }]);
+				expect(mw.world.cf.tokens.live.size).toBe(0);
+			});
+
+			it('stops at once for a site without the route', async () => {
+				const mw = await moduleWorld(held);
+				mw.fake.script.store = 'missing';
+				const { outcome } = await runEnable(mw, withStore(mw));
+				expect(outcome).toEqual({ status: 'succeeded' });
+				expect(mw.fake.calls.stores).toHaveLength(1);
+				expect(mw.stores).toEqual([{ state: 'failed', reason: 'site_needs_update' }]);
+				expect(mw.world.cf.tokens.live.size).toBe(0);
+			});
+
+			it('does nothing for a self-managed site', async () => {
+				const mw = await moduleWorld(held);
+				mw.world.sqlite
+					.prepare(`UPDATE sites SET plane = 'self-managed' WHERE id = ?`)
+					.run(mw.world.siteId);
+				const { outcome } = await runEnable(mw, withStore(mw));
+				expect(outcome).toEqual({ status: 'succeeded' });
+				expect(mw.fake.calls.stores).toEqual([]);
+				expect(mw.world.cf.tokens.log).toEqual([]);
+				expect(mw.stores).toEqual([]);
+			});
+
+			it.each(['ok', 'refused', 'throws', 'missing'] as const)(
+				'never lets either key reach the operation, a step output, a record or an error (%s)',
+				async (store) => {
+					const mw = await moduleWorld(held);
+					mw.world.cf.tokens.secretPrefix = 'SENTINEL-SECRET-';
+					mw.fake.script.store = store;
+					const input = withStore(mw);
+					await start(mw, planModuleEnable(input));
+					const memo: Memo = new Map();
+					const { runner } = makeRunner(memo);
+					const seen: string[] = [];
+					try {
+						seen.push(JSON.stringify(await runModuleEnable(runner, mw.deps, input)));
+					} catch (error) {
+						seen.push(String(error));
+					}
+					const everything = JSON.stringify([
+						await operationOf(mw),
+						[...memo.values()],
+						mw.stores,
+						await mw.world.ledger.all(mw.world.siteId),
+						seen
+					]);
+					expect(everything).not.toContain('SENTINEL');
+					expect(mw.fake.calls.stores.length).toBeGreaterThan(0);
+					const sent = mw.fake.calls.stores[0]!;
+					expect(sent.secretAccessKey).toContain('SENTINEL-SECRET-');
+					expect(everything).not.toContain(sent.accessKeyId);
+				}
+			);
+		});
+	});
 });
 
 describe('a removal', () => {
@@ -726,6 +962,82 @@ describe('the site adapter', () => {
 			ok: true
 		});
 		expect(fetcher.seen).toEqual(['/enable?module=token', '/armfill']);
+	});
+
+	it('posts the Strata setting and reads the answer', async () => {
+		const ok = siteFetcherOf({ '/strata-config': { captureStatements: false, applied: true } });
+		expect(await moduleWorkerOf(ok, 1_000).setStrata(host, false, auth)).toEqual({ ok: true });
+		expect(ok.seen).toEqual(['/strata-config']);
+		const other = siteFetcherOf({ '/strata-config': { captureStatements: true } });
+		expect(await moduleWorkerOf(other, 1_000).setStrata(host, false, auth)).toEqual({
+			ok: false
+		});
+		const absent = siteFetcherOf({ '/strata-config': { error: 'strata_not_enabled' } }, 409);
+		expect(await moduleWorkerOf(absent, 1_000).setStrata(host, false, auth)).toEqual({
+			ok: false
+		});
+		const refused = siteFetcherOf({ '/strata-config': {} }, 401);
+		await expect(
+			moduleWorkerOf(refused, 1_000).setStrata(host, false, auth)
+		).rejects.toBeInstanceOf(PermanentError);
+	});
+
+	it('posts the Strata store and reads the refusal code', async () => {
+		const store = {
+			endpoint: 'https://acct.r2.cloudflarestorage.com',
+			bucket: 's-abc-strata',
+			region: 'auto',
+			accessKeyId: 'id',
+			secretAccessKey: 'secret',
+			pathStyle: true,
+			enable: true
+		};
+		const answer = {
+			provider: 's3',
+			bucket: 's-abc-strata',
+			applied: true,
+			enabled: true,
+			keyCreated: true
+		};
+		const ok = siteFetcherOf({ '/strata-store': answer });
+		expect(await moduleWorkerOf(ok, 1_000).setStrataStore(host, store, auth)).toEqual({
+			ok: true
+		});
+		expect(ok.seen).toEqual(['/strata-store']);
+		const stillOff = siteFetcherOf({ '/strata-store': { ...answer, enabled: false } });
+		expect(await moduleWorkerOf(stillOff, 1_000).setStrataStore(host, store, auth)).toEqual({
+			ok: false
+		});
+		const noEnable = siteFetcherOf({ '/strata-store': { ...answer, enabled: false } });
+		expect(
+			await moduleWorkerOf(noEnable, 1_000).setStrataStore(
+				host,
+				{ ...store, enable: false },
+				auth
+			)
+		).toEqual({ ok: true });
+		const elsewhere = siteFetcherOf({ '/strata-store': { ...answer, bucket: 'other' } });
+		expect(await moduleWorkerOf(elsewhere, 1_000).setStrataStore(host, store, auth)).toEqual({
+			ok: false
+		});
+		const off = siteFetcherOf({ '/strata-store': { error: 'strata_s3_not_enabled' } }, 409);
+		expect(await moduleWorkerOf(off, 1_000).setStrataStore(host, store, auth)).toEqual({
+			ok: false,
+			refusal: 'strata_s3_not_enabled'
+		});
+		const busy = siteFetcherOf({ '/strata-store': { error: 'a transaction is open' } }, 409);
+		expect(await moduleWorkerOf(busy, 1_000).setStrataStore(host, store, auth)).toEqual({
+			ok: false
+		});
+		const old = siteFetcherOf({ '/strata-store': {} }, 404);
+		expect(await moduleWorkerOf(old, 1_000).setStrataStore(host, store, auth)).toEqual({
+			ok: false,
+			refusal: 'route_missing'
+		});
+		const rejected = siteFetcherOf({ '/strata-store': {} }, 403);
+		await expect(
+			moduleWorkerOf(rejected, 1_000).setStrataStore(host, store, auth)
+		).rejects.toBeInstanceOf(PermanentError);
 	});
 
 	it('reports an enable that left the module off as not ok', async () => {

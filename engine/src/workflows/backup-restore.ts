@@ -16,6 +16,7 @@ import {
 import { buildPlan, setVerification, transition } from '../operations/state';
 import { assertOwned } from '../ownership';
 import type { BackupDeps } from '../ports';
+import { isSiteBinding } from '../provision-plan';
 import { StepFailed, type StepRunner } from '../step';
 import { assertOperationOrg, openSite } from './backup-create';
 import {
@@ -152,7 +153,11 @@ export async function grantSources(
 		}
 		const live = await deps.ledger.live(id);
 		const holdsFiles = live.some(
-			(row) => row.kind === 'r2' && row.providerId !== null && row.missingAt === null
+			(row) =>
+				row.kind === 'r2' &&
+				isSiteBinding(row) &&
+				row.providerId !== null &&
+				row.missingAt === null
 		);
 		if (holdsFiles) sources.push(id);
 	}

@@ -15,6 +15,7 @@ import {
 	validateBundle,
 	type BundleManifest
 } from '../bundle';
+import { customMigrationRefusal, loadCustomSpec } from '../custom-bundle';
 import {
 	buildDescriptor,
 	DescriptorError,
@@ -26,6 +27,7 @@ import {
 import { buildPlan, observe, setCursor, setVerification, transition } from '../operations/state';
 import { claimScript, ownedPutScript, siteTag, type Claim } from '../ownership';
 import type { EngineDeps } from '../ports';
+import { isSiteBinding } from '../provision-plan';
 import { PermanentError, StepFailed, type StepRunner } from '../step';
 import {
 	acquireLease,
@@ -134,8 +136,14 @@ export async function descriptorFor(
 	releaseId: string,
 	assetsToken?: string
 ) {
+	const custom =
+		input.site.kind === 'custom'
+			? await loadCustomSpec(deps.releases, deps.config.limits, releaseId)
+			: undefined;
 	const resources = (await deps.ledger.live(input.site.id)).flatMap((row) =>
-		row.providerId === null || (row.kind !== 'kv' && row.kind !== 'r2' && row.kind !== 'd1')
+		row.providerId === null ||
+		(row.kind !== 'kv' && row.kind !== 'r2' && row.kind !== 'd1') ||
+		(custom === undefined && !isSiteBinding(row))
 			? []
 			: [
 					{
@@ -153,7 +161,8 @@ export async function descriptorFor(
 			resources,
 			secrets: {},
 			release: { id: releaseId, assetsToken },
-			recipe: input.recipe
+			recipe: input.recipe,
+			custom
 		});
 	} catch (error) {
 		if (error instanceof DescriptorError) {
@@ -196,8 +205,11 @@ async function preflight(ctx: Ctx, input: SiteUpgradeInput): Promise<Preflight> 
 	const { deps } = ctx;
 	return runStep(ctx, 'preflight', 'preflight', async () => {
 		await fenced(ctx);
-		if (input.site.plane !== 'managed') {
-			throw new PermanentError('unsupported_plane', 'only a managed site is updated here');
+		if (input.site.plane !== 'managed' && input.site.plane !== 'self-managed') {
+			throw new PermanentError(
+				'unsupported_plane',
+				'only a managed or self-managed site is updated here'
+			);
 		}
 		if ((await deps.store.siteState(input.site.id)) !== 'active') {
 			throw new PermanentError('site_not_active', `${input.site.id} is not active`);
@@ -233,6 +245,12 @@ async function preflight(ctx: Ctx, input: SiteUpgradeInput): Promise<Preflight> 
 			(targetTags.length === 0 ? null : UNTAGGED_MIGRATION_TAG);
 		const refusal = migrationRefusal(recorded, targetTags);
 		if (refusal !== null) throw new PermanentError('migration_downgrade', refusal);
+		if (input.site.kind === 'custom') {
+			const live = await loadCustomSpec(deps.releases, deps.config.limits, previous);
+			const next = await loadCustomSpec(deps.releases, deps.config.limits, input.releaseId);
+			const classes = customMigrationRefusal(live, next);
+			if (classes !== null) throw new PermanentError('class_removed', classes);
+		}
 		return { previous, previousTag: recorded };
 	});
 }

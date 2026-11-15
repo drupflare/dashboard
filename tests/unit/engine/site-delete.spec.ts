@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import type { SitePlane } from '../../../contracts/src/sites';
 import { buildPlan, freezePlan, newOperation } from '../../../engine/src/operations/state';
+import { claimResource } from '../../../engine/src/ownership';
+import { resourceName, strataTokenName } from '../../../engine/src/provision-plan';
 import { runSiteCreate } from '../../../engine/src/workflows/site-create';
 import {
 	checkPurge,
@@ -60,6 +63,7 @@ const purgeInput = (world: World, patch: Partial<Parameters<typeof runSitePurge>
 	subdomain: world.input.subdomain,
 	confirm: world.siteId,
 	holdUntil: world.clock.now(),
+	plane: 'managed' as SitePlane,
 	...patch
 });
 
@@ -229,7 +233,7 @@ describe('checkPurge', () => {
 describe('site.purge', () => {
 	async function tombstoned() {
 		const { world } = await deleted();
-		await begin(world, PURGE_OP, planSitePurge({ siteId: world.siteId }));
+		await begin(world, PURGE_OP, planSitePurge({ siteId: world.siteId, plane: 'managed' }));
 		world.clock.advance(HOLD_MS + 1);
 		return world;
 	}
@@ -258,7 +262,7 @@ describe('site.purge', () => {
 		expect(world.cf.snapshot().scripts).toHaveLength(1);
 
 		const active = await created();
-		await begin(active, PURGE_OP, planSitePurge({ siteId: active.siteId }));
+		await begin(active, PURGE_OP, planSitePurge({ siteId: active.siteId, plane: 'managed' }));
 		const refused = await purgeRun(active, new Map()).done;
 		expect(refused).toEqual({ status: 'cancelled', reason: 'not_tombstoned' });
 		expect(active.cf.snapshot().scripts).toHaveLength(1);
@@ -328,7 +332,7 @@ describe('site.purge', () => {
 		expect(await world.store.siteState(world.siteId)).toBe('tombstoned');
 
 		const retry = `op_${'v'.repeat(26)}`;
-		await begin(world, retry, planSitePurge({ siteId: world.siteId }));
+		await begin(world, retry, planSitePurge({ siteId: world.siteId, plane: 'managed' }));
 		const { runner } = makeRunner(new Map());
 		const second = await runSitePurge(
 			runner,
@@ -337,6 +341,62 @@ describe('site.purge', () => {
 		);
 		expect(second).toEqual({ status: 'succeeded' });
 		expect(await world.store.siteState(world.siteId)).toBe('deleted');
+	});
+});
+
+describe('site.purge and the Strata store', () => {
+	async function withStore() {
+		const { world } = await deleted();
+		await begin(world, PURGE_OP, planSitePurge({ siteId: world.siteId, plane: 'managed' }));
+		world.clock.advance(HOLD_MS + 1);
+		const bucket = resourceName(world.siteId, 'strata');
+		await claimResource(
+			world.deps,
+			{
+				siteId: world.siteId,
+				accountId: world.accountId,
+				operationId: `op_${'s'.repeat(26)}`,
+				plane: 'managed'
+			},
+			{ kind: 'r2', binding: 'STRATA_STORE', name: bucket }
+		);
+		await world.cf.cloudflare.mintBucketToken(bucket, strataTokenName(world.siteId));
+		await world.cf.cloudflare.mintBucketToken(bucket, 'someone-else');
+		return { world, bucket };
+	}
+
+	it('revokes the token by name and deletes the empty bucket', async () => {
+		const { world, bucket } = await withStore();
+		const outcome = await purgeRun(world, new Map(), {}, { plane: 'managed' }).done;
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(world.cf.snapshot().r2).not.toContain(bucket);
+		expect([...world.cf.tokens.live.values()]).toEqual(['someone-else']);
+		expect(await world.ledger.live(world.siteId)).toEqual([]);
+	});
+
+	it('leaves a bucket that holds objects, reports it and still finishes the purge', async () => {
+		const { world, bucket } = await withStore();
+		world.cf.fullBuckets.add(bucket);
+		const outcome = await purgeRun(world, new Map(), {}, { plane: 'managed' }).done;
+		expect(outcome).toEqual({ status: 'succeeded' });
+		expect(world.cf.snapshot().r2).toEqual([bucket]);
+		expect([...world.cf.tokens.live.values()]).toEqual(['someone-else']);
+		expect(await world.store.siteState(world.siteId)).toBe('deleted');
+		const operation = (await world.store.get(PURGE_OP))!;
+		expect(operation.finalObservation?.summary).toContain(
+			`storage buckets left in place because they still hold objects: ${bucket}`
+		);
+		expect((await world.ledger.live(world.siteId)).map((row) => row.binding)).toEqual([
+			'STRATA_STORE'
+		]);
+	});
+
+	it('does not look for tokens when the site never had a store', async () => {
+		const { world } = await deleted();
+		await begin(world, PURGE_OP, planSitePurge({ siteId: world.siteId, plane: 'managed' }));
+		world.clock.advance(HOLD_MS + 1);
+		await purgeRun(world, new Map(), {}, { plane: 'managed' }).done;
+		expect(world.cf.tokens.log).toEqual([]);
 	});
 });
 

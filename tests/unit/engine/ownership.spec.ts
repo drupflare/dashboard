@@ -15,6 +15,7 @@ import {
 	ownedDelete,
 	OWNERSHIP_ERROR_CODES,
 	purgeRows,
+	purgeStrataStore,
 	reconcileSite,
 	ResourceMissingError,
 	RouteShadowError,
@@ -25,7 +26,12 @@ import {
 	type LedgerRow,
 	type OwnedRef
 } from '../../../engine/src/ownership';
-import { resourceName } from '../../../engine/src/provision-plan';
+import {
+	resourceName,
+	STRATA_STORE_BINDING,
+	STRATA_STORE_SUFFIX,
+	strataTokenName
+} from '../../../engine/src/provision-plan';
 import { PermanentError } from '../../../engine/src/step';
 import { runSiteCreate } from '../../../engine/src/workflows/site-create';
 import {
@@ -103,18 +109,20 @@ async function begin(world: World, id: string, plan: ReturnType<typeof planSiteD
 
 async function remove(world: World) {
 	const id = `op_${'d'.repeat(26)}`;
-	await begin(world, id, planSiteDelete({ siteId: world.siteId }));
+	const plane = world.input.site.plane;
+	await begin(world, id, planSiteDelete({ siteId: world.siteId, plane }));
 	return runSiteDelete(makeRunner(new Map()).runner, world.deps, {
 		operationId: id,
 		siteId: world.siteId,
 		accountId: world.accountId,
+		plane,
 		hostnames: [world.input.hostname]
 	});
 }
 
 async function purge(world: World, plane: SitePlane = world.input.site.plane) {
 	const id = `op_${'u'.repeat(26)}`;
-	await begin(world, id, planSitePurge({ siteId: world.siteId }));
+	await begin(world, id, planSitePurge({ siteId: world.siteId, plane }));
 	return runSitePurge(makeRunner(new Map()).runner, world.deps, {
 		operationId: id,
 		siteId: world.siteId,
@@ -174,6 +182,9 @@ const FORWARD = [
 	'verify',
 	'activate'
 ];
+
+// a site in the customer's own account has no name to reserve and no authority to write
+const MANAGED_ONLY = ['reserve-name', 'authority'];
 
 const row = (over: Partial<LedgerRow> = {}): LedgerRow => ({
 	id: 'res_1',
@@ -361,7 +372,7 @@ describe('create, rollback, delete, purge and the sweep on a customer account', 
 
 	for (const when of ['before', 'after'] as const) {
 		it(`a create that fails ${when} any step puts the account back as it found it`, async () => {
-			for (const step of FORWARD) {
+			for (const step of FORWARD.filter((s) => !MANAGED_ONLY.includes(s))) {
 				const world = await selfWorld();
 				const before = world.cf.deep();
 				await start(world);
@@ -370,6 +381,22 @@ describe('create, rollback, delete, purge and the sweep on a customer account', 
 			}
 		});
 	}
+
+	it('a purge leaves a script someone else changed in place and says so, then finishes', async () => {
+		const world = await selfWorld();
+		await start(world);
+		await run(world);
+		await remove(world);
+		const live = world.cf.scripts.get(scriptName(SITE))!;
+		live.tags = live.tags.filter((tag) => !tag.startsWith('s:'));
+		expect(await purge(world)).toEqual({ status: 'succeeded' });
+		expect(world.cf.scripts.has(scriptName(SITE))).toBe(true);
+		const operation = await world.store.get(`op_${'u'.repeat(26)}`);
+		expect(operation?.finalObservation?.summary).toContain('left in place');
+		expect(operation?.finalObservation?.summary).toContain('was changed by someone else');
+		expect(await world.store.siteState(world.siteId)).toBe('deleted');
+		expect(await world.ledger.live(world.siteId)).toEqual([]);
+	});
 
 	it('a sweep changes nothing and deletes nothing', async () => {
 		const world = await selfWorld();
@@ -553,7 +580,7 @@ describe('a crash between a create and saving its id', () => {
 		);
 		await start(world);
 		const outcome = await run(world, new Map(), {
-			failAt: { step: 'reserve-name', when: 'after' }
+			failAt: { step: 'lease', when: 'after' }
 		});
 		expect(outcome.status).toBe('rolled-back');
 		expect(await world.ledger.live(world.siteId)).toEqual([]);
@@ -688,6 +715,83 @@ describe('a purge', () => {
 		if (outcome.status !== 'failed') return;
 		expect(outcome.reason).toContain('script_changed');
 		expect(world.cf.deep()).toBe(before);
+	});
+});
+
+describe('the Strata store teardown', () => {
+	const claim = (world: World) => ({
+		siteId: world.siteId,
+		accountId: world.accountId,
+		operationId: OP,
+		plane: 'managed' as const
+	});
+	const purgeClaim = (world: World) => ({
+		siteId: world.siteId,
+		accountId: world.accountId,
+		plane: 'managed' as const
+	});
+
+	async function withStore(world: World) {
+		const bucket = resourceName(world.siteId, STRATA_STORE_SUFFIX);
+		await claimResource(world.deps, claim(world), {
+			kind: 'r2',
+			binding: STRATA_STORE_BINDING,
+			name: bucket
+		});
+		await world.cf.cloudflare.mintBucketToken(bucket, strataTokenName(world.siteId));
+		return bucket;
+	}
+
+	it('revokes the token and deletes the bucket by its recorded id', async () => {
+		const world = await makeWorld({ plane: 'managed' });
+		const bucket = await withStore(world);
+		expect(await purgeStrataStore(world.deps, purgeClaim(world))).toBeNull();
+		expect(world.cf.snapshot().r2).not.toContain(bucket);
+		expect(world.cf.tokens.live.size).toBe(0);
+		expect(await world.ledger.live(world.siteId)).toEqual([]);
+	});
+
+	it('leaves another site bucket and token alone', async () => {
+		const world = await makeWorld({ plane: 'managed' });
+		await withStore(world);
+		const foreign = resourceName(OTHER_SITE, STRATA_STORE_SUFFIX);
+		await world.cf.cloudflare.createResource('r2', foreign);
+		await world.cf.cloudflare.mintBucketToken(foreign, strataTokenName(OTHER_SITE));
+		await purgeStrataStore(world.deps, purgeClaim(world));
+		expect(world.cf.snapshot().r2).toEqual([foreign]);
+		expect([...world.cf.tokens.live.values()]).toEqual([strataTokenName(OTHER_SITE)]);
+	});
+
+	it('refuses an unrecorded bucket id', async () => {
+		const world = await makeWorld({ plane: 'managed' });
+		const foreign = resourceName(OTHER_SITE, STRATA_STORE_SUFFIX);
+		await world.cf.cloudflare.createResource('r2', foreign);
+		const error = await trip(() =>
+			ownedDelete(world.deps, 'managed', {
+				siteId: world.siteId,
+				accountId: world.accountId,
+				kind: 'r2',
+				id: foreign
+			})
+		);
+		expect(error).toBeInstanceOf(NotOwnedError);
+		expect(world.cf.snapshot().r2).toEqual([foreign]);
+	});
+
+	it('keeps a bucket that still holds objects and reports its name, token revoked', async () => {
+		const world = await makeWorld({ plane: 'managed' });
+		const bucket = await withStore(world);
+		world.cf.fullBuckets.add(bucket);
+		expect(await purgeStrataStore(world.deps, purgeClaim(world))).toBe(bucket);
+		expect(world.cf.snapshot().r2).toContain(bucket);
+		expect(world.cf.tokens.live.size).toBe(0);
+		expect(await world.ledger.live(world.siteId)).toHaveLength(1);
+	});
+
+	it('does nothing for a site that never had a store', async () => {
+		const world = await makeWorld({ plane: 'managed' });
+		expect(await purgeStrataStore(world.deps, purgeClaim(world))).toBeNull();
+		expect(world.cf.tokens.log).toEqual([]);
 	});
 });
 

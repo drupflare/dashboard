@@ -89,10 +89,36 @@ const reconcile: RepairExecutor = async (worker, hostname, auth) => {
 	return { ok: true, detail: `/reconcile ran ${RECONCILE_STEP_LIMIT} steps and may owe more` };
 };
 
+// recycled is false when no interpreter was resident, which already means a clean heap
+const recycle: RepairExecutor = async (worker, hostname, auth) => {
+	const answer = await worker.call(hostname, { method: 'POST', path: '/recycle' }, auth);
+	return {
+		ok: isSuccess(answer.status),
+		detail:
+			body(answer.json).recycled === false
+				? '/recycle found no interpreter resident'
+				: `/recycle answered ${answer.status}`
+	};
+};
+
+const ledgerGc: RepairExecutor = async (worker, hostname, auth) => {
+	const answer = await worker.call(hostname, { method: 'POST', path: '/ledger-gc' }, auth);
+	const { rowsDeleted } = body(answer.json);
+	return {
+		ok: isSuccess(answer.status),
+		detail:
+			typeof rowsDeleted === 'number'
+				? `/ledger-gc deleted ${rowsDeleted} rows`
+				: `/ledger-gc answered ${answer.status}`
+	};
+};
+
 // the handles whose route the worker serves; the owner routes are in worker/src/site/routes.ts
 export const EXECUTORS: Readonly<Record<string, RepairExecutor>> = {
 	'/invalidate': invalidate,
 	'/armfill': armfill,
+	'/recycle': recycle,
+	'/ledger-gc': ledgerGc,
 	reconcile
 };
 

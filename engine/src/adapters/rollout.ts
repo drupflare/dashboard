@@ -82,6 +82,18 @@ export class D1RolloutStore implements RolloutStore {
 			.first<{ stop_requested: number }>();
 		return row?.stop_requested === 1;
 	}
+
+	// a site is in a promotion from the moment its ring starts until the rollout ends
+	async inRollingRollout(siteId: string): Promise<boolean> {
+		const row = await this.db
+			.prepare(
+				`SELECT 1 AS hit FROM release_rollouts r, json_each(r.previous) p
+				 WHERE r.status = 'rolling' AND p.key = ? LIMIT 1`
+			)
+			.bind(siteId)
+			.first<{ hit: number }>();
+		return row !== null;
+	}
 }
 
 // #endregion

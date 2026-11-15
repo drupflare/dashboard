@@ -1,8 +1,9 @@
 import type { Plan } from '@contracts/operations';
 import type { SitePlane } from '@contracts/sites';
+import type { CustomBundlePurge } from '../adapters/custom-bundles';
 import { buildPlan, observe, transition } from '../operations/state';
 import type { SiteRowState } from '../operations/store';
-import { purgeRows, purgeScript } from '../ownership';
+import { purgeRows, purgeScript, purgeStrataStore } from '../ownership';
 import type { DomainDeps, EngineDeps } from '../ports';
 import { StepFailed, type StepRunner } from '../step';
 import {
@@ -21,13 +22,16 @@ import {
 import { releaseSiteDomains } from './domain-attach';
 
 // a deploy that builds the domain ports lets a delete release the site's custom hostnames too
-export type DomainReleaseDeps = EngineDeps & Partial<Pick<DomainDeps, 'hostnames' | 'domains'>>;
+export type DomainReleaseDeps = EngineDeps &
+	Partial<Pick<DomainDeps, 'hostnames' | 'domains'>> & { customBundles?: CustomBundlePurge };
 
 export interface SiteDeleteInput {
 	operationId: string;
 	siteId: string;
 	accountId: string;
 	hostnames: string[];
+	// absent means managed; a self-managed site changes nothing in the customer's account here
+	plane?: SitePlane;
 }
 
 export interface SitePurgeInput {
@@ -57,21 +61,29 @@ export function checkPurge(input: {
 	return null;
 }
 
-export function planSiteDelete(input: Pick<SiteDeleteInput, 'siteId'>): Plan {
+// on a customer's account the platform forgets the site and leaves what the customer serves alone
+export function planSiteDelete(input: Pick<SiteDeleteInput, 'siteId' | 'plane'>): Plan {
+	const ownAccount = input.plane === 'self-managed';
 	return buildPlan({
 		type: 'site.delete',
 		targetIds: [input.siteId],
 		preconditions: [`${input.siteId} is active or suspended`],
 		steps: [
 			{ id: 'lease', name: 'Take the site writer lease' },
-			{ id: 'revoke', name: 'Revoke site authority' },
-			{ id: 'route', name: 'Drop the hostname routes' },
+			...(ownAccount
+				? []
+				: [
+						{ id: 'revoke', name: 'Revoke site authority' },
+						{ id: 'route', name: 'Drop the hostname routes' }
+					]),
 			{ id: 'tombstone', name: 'Tombstone the site' }
 		]
 	});
 }
 
-export function planSitePurge(input: Pick<SitePurgeInput, 'siteId'>): Plan {
+// no plane means a customer's account, the strict reading
+export function planSitePurge(input: Pick<SitePurgeInput, 'siteId' | 'plane'>): Plan {
+	const ownAccount = (input.plane ?? 'self-managed') === 'self-managed';
 	return buildPlan({
 		type: 'site.purge',
 		targetIds: [input.siteId],
@@ -80,7 +92,7 @@ export function planSitePurge(input: Pick<SitePurgeInput, 'siteId'>): Plan {
 			{ id: 'lease', name: 'Take the site writer lease' },
 			{ id: 'script', name: 'Delete the script' },
 			{ id: 'resources', name: 'Delete the site resources' },
-			{ id: 'name', name: 'Release the name' },
+			...(ownAccount ? [] : [{ id: 'name', name: 'Release the name' }]),
 			{ id: 'forget', name: 'Mark the site deleted' }
 		]
 	});
@@ -134,27 +146,35 @@ export async function runSiteDelete(
 	try {
 		await startOperation(ctx);
 		await acquireLease(ctx, 'lease');
-		await runStep(ctx, 'revoke', 'revoke', async () => {
-			await fenced(ctx);
-			const current = await deps.authority.read(input.siteId);
-			if (current === null || current.state === 'revoked') return;
-			await deps.authority.apply({
-				...current,
-				state: 'revoked',
-				generation: current.generation + 1
+		const ownAccount = input.plane === 'self-managed';
+		if (!ownAccount) {
+			await runStep(ctx, 'revoke', 'revoke', async () => {
+				await fenced(ctx);
+				const current = await deps.authority.read(input.siteId);
+				if (current === null || current.state === 'revoked') return;
+				await deps.authority.apply({
+					...current,
+					state: 'revoked',
+					generation: current.generation + 1
+				});
 			});
-		});
+		}
 		// a hostname that now names another site is left in place and reported
-		const foreign = await runStep(ctx, 'route', 'route', async () => {
-			await fenced(ctx);
-			const left: string[] = [];
-			for (const hostname of input.hostnames) {
-				const answer = await deps.authority.deleteHostIfOwned(hostname, input.siteId);
-				if (answer === 'foreign') left.push(hostname);
-			}
-			const domains = await releaseDomains(deps, input.siteId);
-			return { left, kept: domains.failed };
-		});
+		const foreign: { left: string[]; kept: string[] } = ownAccount
+			? { left: [], kept: [] }
+			: await runStep(ctx, 'route', 'route', async () => {
+					await fenced(ctx);
+					const left: string[] = [];
+					for (const hostname of input.hostnames) {
+						const answer = await deps.authority.deleteHostIfOwned(
+							hostname,
+							input.siteId
+						);
+						if (answer === 'foreign') left.push(hostname);
+					}
+					const domains = await releaseDomains(deps, input.siteId);
+					return { left, kept: domains.failed };
+				});
 		await runStep(ctx, 'tombstone', 'tombstone', async () => {
 			await fenced(ctx);
 			await deps.custody.discardPending(input.siteId);
@@ -210,6 +230,8 @@ export async function runSitePurge(
 		return { status: 'cancelled', reason: refusal };
 	}
 	let kept: string[] = [];
+	let keptBuckets: string[] = [];
+	const left: string[] = [];
 	try {
 		await startOperation(ctx);
 		await acquireLease(ctx, 'lease');
@@ -218,23 +240,33 @@ export async function runSitePurge(
 			accountId: input.accountId,
 			plane: input.plane ?? 'self-managed'
 		};
-		kept = await runStep(ctx, 'script', 'script', async () => {
+		const scriptStep = await runStep(ctx, 'script', 'script', async () => {
 			await fenced(ctx);
-			await purgeRows(deps, claim, ['route']);
+			const changed = await purgeRows(deps, claim, ['route']);
 			const domains = await releaseDomains(deps, input.siteId);
-			await purgeScript(deps, claim);
-			return domains.failed;
+			changed.push(...(await purgeScript(deps, claim)));
+			return { failed: domains.failed, changed };
 		});
-		await runStep(ctx, 'resources', 'resources', async () => {
+		kept = scriptStep.failed;
+		left.push(...scriptStep.changed);
+		// a Strata bucket that still holds objects is left in place and reported
+		const resourceStep = await runStep(ctx, 'resources', 'resources', async () => {
 			await fenced(ctx);
-			await purgeRows(deps, claim, ['kv', 'r2', 'd1']);
+			const bucket = await purgeStrataStore(deps, claim);
+			const changed = await purgeRows(deps, claim, ['kv', 'r2', 'd1']);
+			return { bucket, changed };
 		});
-		await runStep(ctx, 'name', 'name', async () => {
-			await fenced(ctx);
-			await deps.names.release(input.subdomain, input.siteId);
-		});
+		left.push(...resourceStep.changed);
+		if (resourceStep.bucket !== null) keptBuckets = [resourceStep.bucket];
+		if (claim.plane !== 'self-managed') {
+			await runStep(ctx, 'name', 'name', async () => {
+				await fenced(ctx);
+				await deps.names.release(input.subdomain, input.siteId);
+			});
+		}
 		await runStep(ctx, 'forget', 'forget', async () => {
 			await fenced(ctx);
+			await deps.customBundles?.purgeFor(input.siteId);
 			await deps.custody.discard(input.siteId);
 			await deps.store.setSiteState(input.siteId, 'deleted', deps.now());
 		});
@@ -244,7 +276,7 @@ export async function runSitePurge(
 	}
 	await finishSuccess(
 		ctx,
-		`${input.siteId} was purged${kept.length === 0 ? '' : `; custom domains the provider would not release: ${kept.join(', ')}`}`
+		`${input.siteId} was purged${kept.length === 0 ? '' : `; custom domains the provider would not release: ${kept.join(', ')}`}${keptBuckets.length === 0 ? '' : `; storage buckets left in place because they still hold objects: ${keptBuckets.join(', ')}`}${left.length === 0 ? '' : `; left in place: ${left.join(', ')}`}`
 	);
 	await releaseLease(ctx);
 	return { status: 'succeeded' };

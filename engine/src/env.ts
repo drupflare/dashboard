@@ -16,6 +16,7 @@ import { D1BackupLedger, r2BackupBlobs } from './adapters/backups';
 import { D1ConfigLedger } from './adapters/config-changes';
 import { D1CopyStore } from './adapters/copies';
 import { custodyOf } from './adapters/custody';
+import { customBundlesOf, type CustomBundlePurge } from './adapters/custom-bundles';
 import { cutoverPortsOf } from './adapters/cutover';
 import { dohReader } from './adapters/cutover-dns';
 import { customHostnamesOf, D1DomainLedger } from './adapters/domains';
@@ -27,18 +28,26 @@ import { createImportLander } from './adapters/import-lander';
 import { importStoreOf } from './adapters/import-store';
 import { namespaceKvOf } from './adapters/kv';
 import { leasesOf, type LeaseStub } from './adapters/leases';
+import { D1EditLedger, modifyWorkerOf } from './adapters/modify';
 import { moduleWorkerOf } from './adapters/modules';
 import { namesOf, type NamesStub } from './adapters/names';
 import { D1NodeSites, nodeCommandsOf, type NodeSessionStub } from './adapters/nodes';
 import { pitrWorkerOf } from './adapters/pitr';
-import { releasesInBucket, releasesOf } from './adapters/releases';
+import { releasesInBucket, releasesOf, releasesWithCustom } from './adapters/releases';
 import { D1RepairLedger, repairWorkerOf } from './adapters/repair';
 import { rollbackFactsOf } from './adapters/rollback';
 import { D1RolloutStore, ringObserverOf, siteMoverOf } from './adapters/rollout';
+import {
+	connectionTokenOf,
+	guardSelfManaged,
+	selfManagedDepsOf,
+	selfManagedPorts
+} from './adapters/self-managed';
 import { settingsWorkerOf } from './adapters/settings';
 import { backupWorkerOf, siteOf } from './adapters/site';
 import { createSqlConverter } from './adapters/sql-converter';
 import { createSshSurvey } from './adapters/ssh-survey';
+import { D1StrataStore } from './adapters/strata';
 import { D1TemplateStore, jobRunnerOf } from './adapters/templates';
 import { workforceCloudflare } from './adapters/workforce';
 import { writeMarkWorkerOf } from './adapters/write-mark';
@@ -57,6 +66,7 @@ import type {
 	EstateDeps,
 	GitDeps,
 	ImportDeps,
+	ModifyDeps,
 	ModuleDeps,
 	NodeSiteDeps,
 	PitrDeps,
@@ -77,6 +87,7 @@ import type { EstateAssessInput } from './workflows/estate-assess';
 import type { GitPullInput } from './workflows/git-pull';
 import type { ImportSurveyInput } from './workflows/import-survey';
 import type { MigrationCutoverInput } from './workflows/migration-cutover';
+import type { ModifyApplyInput } from './workflows/modify-apply';
 import type { ModuleEnableInput } from './workflows/module-enable';
 import type { ModuleInstallInput } from './workflows/module-install';
 import type { ModuleRemoveInput } from './workflows/module-remove';
@@ -123,6 +134,7 @@ export interface EngineEnv {
 	CONFIG_APPLY: Workflow<ConfigApplyInput>;
 	MODULE_INSTALL: Workflow<ModuleInstallInput>;
 	MODULE_ENABLE: Workflow<ModuleEnableInput>;
+	MODIFY_APPLY: Workflow<ModifyApplyInput>;
 	MODULE_REMOVE: Workflow<ModuleRemoveInput>;
 	THEME_DEFAULT: Workflow<ThemeDefaultInput>;
 	MIGRATION_CUTOVER: Workflow<MigrationCutoverInput>;
@@ -181,7 +193,16 @@ export async function buildBackupDeps(env: EngineEnv): Promise<BackupDeps> {
 export async function buildModuleDeps(env: EngineEnv): Promise<ModuleDeps> {
 	return {
 		...(await buildBackupDeps(env)),
-		modules: moduleWorkerOf(fetch, Number(env.SITE_TIMEOUT_MS))
+		modules: moduleWorkerOf(fetch, Number(env.SITE_TIMEOUT_MS)),
+		strata: new D1StrataStore(env.DB)
+	};
+}
+
+export async function buildModifyDeps(env: EngineEnv): Promise<ModifyDeps> {
+	return {
+		...(await buildBackupDeps(env)),
+		modify: modifyWorkerOf(fetch, Number(env.SITE_TIMEOUT_MS)),
+		edits: new D1EditLedger(env.DB)
 	};
 }
 
@@ -236,8 +257,7 @@ export async function buildRepairDeps(env: EngineEnv): Promise<RepairDeps> {
 		...(await buildBackupDeps(env)),
 		repair: repairWorkerOf(fetch, Number(env.SITE_TIMEOUT_MS)),
 		repairs: new D1RepairLedger(env.DB),
-		// no ring state exists in the control plane yet, so no promotion is ever seen
-		ringPromotion: async () => false,
+		ringPromotion: (siteId) => new D1RolloutStore(env.DB).inRollingRollout(siteId),
 		budget: DEFAULT_REPAIR_BUDGET
 	};
 }
@@ -311,11 +331,14 @@ export async function buildGitDeps(env: EngineEnv): Promise<GitDeps> {
 	};
 }
 
-export async function buildDomainDeps(env: EngineEnv): Promise<DomainDeps> {
+export async function buildDomainDeps(
+	env: EngineEnv
+): Promise<DomainDeps & { customBundles: CustomBundlePurge }> {
 	let keys: Promise<ChallengeKeys> | undefined;
 	const target = env.CUSTOM_HOSTNAME_TARGET;
 	return {
 		...(await buildDeps(env)),
+		customBundles: customBundlesOf(env.DB, r2BackupBlobs(env.BLOB)),
 		dns: dohResolver(fetch),
 		target: target === undefined || target === '' ? null : target,
 		// the key ring loads on first use, so a delete never pays for it
@@ -387,7 +410,11 @@ export async function buildDeps(env: EngineEnv): Promise<EngineDeps> {
 	return {
 		store: new D1OperationStore(env.DB),
 		ledger: new D1ResourceLedger(env.DB),
-		cloudflare: workforceCloudflare(plane, new Resources(plane.http, env.CF_ACCOUNT_ID)),
+		cloudflare: workforceCloudflare(
+			plane,
+			new Resources(plane.http, env.CF_ACCOUNT_ID),
+			env.CF_API_TOKEN
+		),
 		authority: authorityOf({
 			siteAuth: (siteId) => stub<SiteAuthStub>(env.SITE_AUTH, siteId),
 			hosts: hostsOf(env.HOSTS_KV),
@@ -402,10 +429,12 @@ export async function buildDeps(env: EngineEnv): Promise<EngineDeps> {
 			pendingTtlMs: Number(env.PENDING_SECRET_TTL_MS),
 			now: Date.now
 		}),
-		releases:
+		releases: releasesWithCustom(
 			env.RELEASES_STORE === 'blob'
 				? releasesInBucket(env.BLOB)
 				: releasesOf(env.RELEASES_URL, fetch),
+			releasesInBucket(env.BLOB)
+		),
 		leases: leasesOf((siteId) => stub<LeaseStub>(env.SITE_LEASE, siteId)),
 		kv: namespaceKvOf(plane),
 		now: Date.now,
@@ -414,4 +443,22 @@ export async function buildDeps(env: EngineEnv): Promise<EngineDeps> {
 			SESSION_TTL_MS - SESSION_MARGIN_MS
 		)
 	};
+}
+
+// the same deps with the customer's account in place of ours; nothing here holds the token, since
+// each call opens it again
+export function selfManagedDeps<D extends EngineDeps>(
+	env: EngineEnv,
+	deps: D,
+	scope: { siteId: string; accountId: string }
+): D {
+	const ports = selfManagedPorts({
+		accountId: scope.accountId,
+		open: connectionTokenOf({
+			db: env.DB,
+			secrets: env as unknown as Record<string, string | undefined>,
+			...scope
+		})
+	});
+	return selfManagedDepsOf(deps, guardSelfManaged(ports, { ...scope, ledger: deps.ledger }));
 }

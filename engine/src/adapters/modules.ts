@@ -31,6 +31,18 @@ const enableAnswer = z.looseObject({
 
 const installAnswer = z.looseObject({ ok: z.boolean().default(false) });
 
+const strataAnswer = z.looseObject({ captureStatements: z.boolean() });
+
+const STORE_REFUSALS = ['strata_not_enabled', 'strata_s3_not_enabled'] as const;
+
+// the route answers { provider, bucket, endpoint, region, applied, previous, keyCreated } and never a key
+const storeAnswer = z.looseObject({
+	error: z.string().optional(),
+	applied: z.boolean().optional(),
+	enabled: z.boolean().optional(),
+	bucket: z.string().optional()
+});
+
 function json(text: string | null): unknown {
 	try {
 		return JSON.parse(text ?? '');
@@ -112,6 +124,56 @@ export function moduleWorkerOf(fetcher: typeof fetch, timeoutMs: number): Module
 				await call(hostname, '/armfill', 'POST', auth).catch(() => undefined);
 			}
 			return { ok: parsed.data.ok && parsed.data.nowEnabled !== false };
+		},
+
+		async setStrata(hostname, captureStatements, auth) {
+			const { status, text } = await fetchSite(
+				hostname,
+				'/strata-config',
+				{
+					method: 'POST',
+					headers: { ...bearer(auth), 'content-type': 'application/json' },
+					body: JSON.stringify({ captureStatements })
+				},
+				() => true
+			);
+			refusedToken(status);
+			const parsed = strataAnswer.safeParse(json(text));
+			return {
+				ok:
+					status === 200 &&
+					parsed.success &&
+					parsed.data.captureStatements === captureStatements
+			};
+		},
+
+		// the route answers a refusal by its code and echoes no key, so the answer is read for the code only
+		async setStrataStore(hostname, store, auth) {
+			const { status, text } = await fetchSite(
+				hostname,
+				'/strata-store',
+				{
+					method: 'POST',
+					headers: { ...bearer(auth), 'content-type': 'application/json' },
+					body: JSON.stringify(store)
+				},
+				() => true
+			);
+			refusedToken(status);
+			if (status === 404) return { ok: false, refusal: 'route_missing' };
+			const parsed = storeAnswer.safeParse(json(text));
+			if (status === 409 && parsed.success && parsed.data.error !== undefined) {
+				const refusal = STORE_REFUSALS.find((code) => code === parsed.data.error);
+				return refusal === undefined ? { ok: false } : { ok: false, refusal };
+			}
+			return {
+				ok:
+					status === 200 &&
+					parsed.success &&
+					parsed.data.applied === true &&
+					parsed.data.bucket === store.bucket &&
+					(!store.enable || parsed.data.enabled === true)
+			};
 		},
 
 		// the site has no uninstall route and no theme route yet, so both answer not_available

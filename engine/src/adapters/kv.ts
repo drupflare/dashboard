@@ -2,7 +2,7 @@ import type { DispatchPlane } from '@drupflare/workforce';
 import type { NamespaceKv } from '../ports';
 
 // the value goes as the raw body; unverified against the live API
-export function namespaceKvOf(plane: DispatchPlane): NamespaceKv {
+export function namespaceKvOf(plane: Pick<DispatchPlane, 'http' | 'accountId'>): NamespaceKv {
 	const path = (namespaceId: string, key: string) =>
 		`/accounts/${plane.accountId}/storage/kv/namespaces/${namespaceId}/values/${encodeURIComponent(key)}`;
 	return {

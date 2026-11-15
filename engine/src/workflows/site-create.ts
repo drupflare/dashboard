@@ -9,6 +9,7 @@ import {
 	type SitePlane,
 	type SiteRing
 } from '@contracts/sites';
+import { workersDevHost } from '../../../src/shared/plane-connections';
 import { TEMPLATE_CODE_DELIVERY, TEMPLATE_HELD_REASON } from '../../../src/shared/template-entries';
 import { checkHeadroom, readAccountUsage } from '../account-usage';
 import {
@@ -21,6 +22,7 @@ import {
 	type BundleManifest
 } from '../bundle';
 import { CustodySealError, refuseSuppliedPassword } from '../custody';
+import { parseCustomSpec } from '../custom-bundle';
 import { buildDescriptor, DescriptorError } from '../descriptor';
 import {
 	buildPlan,
@@ -40,7 +42,7 @@ import {
 } from '../ownership';
 import type { EngineDeps, SiteCall } from '../ports';
 import type { ResourcePlan } from '../provision-plan';
-import { planResources } from '../provision-plan';
+import { isSiteBinding, planResources, type CustomResource } from '../provision-plan';
 import { PermanentError, StepFailed, type StepRunner } from '../step';
 import {
 	acquireLease,
@@ -57,9 +59,12 @@ import {
 } from './common';
 import { cleanPrior, CLEANUP_STEP, type CleanupTarget } from './site-cleanup';
 import {
+	installTemplateCode,
+	lockSummaryNote,
 	restoreTemplate,
 	TEMPLATE_RESTORE_STEPS,
 	TemplateRestoreError,
+	type TemplateCodeSummary,
 	type TemplateCreate,
 	type TemplateRestoreDeps
 } from './template-restore';
@@ -82,8 +87,12 @@ export interface SiteCreateInput {
 	hostname: string;
 	// set when the hostname sits on a customer's zone and needs a route there
 	zoneId?: string;
+	// why a customer account got the canonical config; shown with the plan
+	configNote?: string;
 	releaseId: string;
 	database?: boolean;
+	// a custom site's kv, r2 and d1 bindings, from the bundle's recipe
+	customResources?: CustomResource[];
 	authority: {
 		risk: RiskClass;
 		limits: Record<string, number>;
@@ -125,24 +134,37 @@ export class SiteCheckError extends Error {
 	}
 }
 
+// a site in a customer's account has no names registry entry and no site authority of ours
+const isOwnAccount = (input: Pick<SiteCreateInput, 'site'>) => input.site.plane === 'self-managed';
+
 export function planSiteCreate(input: SiteCreateInput): Plan {
 	const { site } = input;
-	const resources = planResources(site, site.config, { database: input.database });
+	const ownAccount = isOwnAccount(input);
+	const resources = planResources(site, site.config, {
+		database: input.database,
+		custom: input.customResources
+	});
 	return buildPlan({
 		type: 'site.create',
 		targetIds: [site.id],
-		preconditions: [`${input.subdomain} is free`, `release ${input.releaseId} is published`],
+		preconditions: [
+			ownAccount
+				? `${input.hostname} is free in the connected account`
+				: `${input.subdomain} is free`,
+			`release ${input.releaseId} is published`,
+			...(input.configNote === undefined ? [] : [input.configNote])
+		],
 		steps: [
 			{ id: 'lease', name: 'Take the site writer lease' },
 			...(input.prior ? [{ ...CLEANUP_STEP }] : []),
-			{ id: 'reserve-name', name: `Reserve ${input.subdomain}` },
+			...(ownAccount ? [] : [{ id: 'reserve-name', name: `Reserve ${input.subdomain}` }]),
 			...resources.create.map((resource) => ({
 				id: `resource.${resource.binding}`,
 				name: `Create ${resource.kind} ${resource.name}`
 			})),
 			{ id: 'assets', name: 'Upload static assets' },
 			{ id: 'upload-script', name: 'Upload the script' },
-			{ id: 'authority', name: 'Write site authority' },
+			...(ownAccount ? [] : [{ id: 'authority', name: 'Write site authority' }]),
 			{ id: 'route', name: `Route ${input.hostname}` },
 			...(input.firstRun ? [{ id: 'first-run', name: 'Run the first-run call' }] : []),
 			...(input.template ? TEMPLATE_RESTORE_STEPS : []),
@@ -313,10 +335,9 @@ export async function uploadScript(
 	await runStep(ctx, 'upload-script', 'upload-script', async () => {
 		await fenced(ctx);
 		const manifest = await loadManifest(deps, input.releaseId);
-		await checkMetadataBytes(
-			manifest,
-			await deps.releases.part(bundleKeys.metadata(input.releaseId))
-		);
+		const metadataBytes = await deps.releases.part(bundleKeys.metadata(input.releaseId));
+		await checkMetadataBytes(manifest, metadataBytes);
+		const custom = input.site.kind === 'custom' ? parseCustomSpec(metadataBytes) : undefined;
 		const modules: { module: (typeof manifest.modules)[number]; bytes: Uint8Array }[] = [];
 		for (const module of manifest.modules) {
 			const bytes = await deps.releases.part(bundleKeys.module(input.releaseId, module.name));
@@ -324,7 +345,9 @@ export async function uploadScript(
 			modules.push({ module, bytes });
 		}
 		const resources = (await deps.ledger.live(input.site.id)).flatMap((row) =>
-			row.providerId === null || (row.kind !== 'kv' && row.kind !== 'r2' && row.kind !== 'd1')
+			row.providerId === null ||
+			(row.kind !== 'kv' && row.kind !== 'r2' && row.kind !== 'd1') ||
+			(custom === undefined && !isSiteBinding(row))
 				? []
 				: [
 						{
@@ -343,6 +366,7 @@ export async function uploadScript(
 				resources,
 				secrets: {},
 				release: { id: manifest.releaseId, assetsToken },
+				custom,
 				temporary: input.temporary
 			});
 		} catch (error) {
@@ -372,6 +396,28 @@ export async function applyAuthority(ctx: Ctx, input: SiteCreateInput): Promise<
 	});
 }
 
+export class SubdomainChangedError extends PermanentError {
+	constructor(hostname: string) {
+		super(
+			'subdomain_changed',
+			`the account's workers.dev subdomain no longer matches ${hostname}; check it in Cloudflare and connect again`
+		);
+	}
+}
+
+async function enableWorkersDev(ctx: Ctx, input: SiteCreateInput): Promise<void> {
+	const { account } = ctx.deps;
+	if (account === undefined) {
+		throw new PermanentError('no_account_executor', 'this deployment has no customer account');
+	}
+	const script = scriptName(input.site.id);
+	const subdomain = await account.subdomain();
+	if (subdomain === null || workersDevHost(script, subdomain) !== input.hostname) {
+		throw new SubdomainChangedError(input.hostname);
+	}
+	await account.enableWorkersDev(script);
+}
+
 // a host with no environment is production
 export async function putRoute(
 	ctx: Ctx,
@@ -386,6 +432,11 @@ export async function putRoute(
 				zoneId: input.zoneId,
 				hostname: input.hostname
 			});
+		}
+		if (input.site.plane === 'self-managed') {
+			// no hosts entry on a customer's account; its own workers.dev address needs switching on
+			if (input.zoneId === undefined) await enableWorkersDev(ctx, input);
+			return;
 		}
 		await ctx.deps.authority.putHost(input.hostname, {
 			siteId: input.site.id,
@@ -572,7 +623,7 @@ export async function activate(
 	const { deps } = ctx;
 	await runStep(ctx, 'activate', 'activate', async () => {
 		await fenced(ctx);
-		if (!(await deps.names.confirm(input.subdomain, input.site.id))) {
+		if (!isOwnAccount(input) && !(await deps.names.confirm(input.subdomain, input.site.id))) {
 			throw new NameUnavailableError(input.subdomain, 'lost');
 		}
 		await deps.store.activateSite(
@@ -670,7 +721,10 @@ function rollbackActions(
 			}
 		}
 	]);
-	return actions;
+	if (!isOwnAccount(input)) return actions;
+	// nothing of ours was written to the hosts table, authority or names registry
+	const dispatchOnly = new Set(['route', 'authority', 'name']);
+	return actions.filter(([name]) => !dispatchOnly.has(name));
 }
 
 async function rollback(
@@ -804,8 +858,12 @@ export async function runSiteCreate(
 		purpose: 'site.create',
 		epoch: null
 	};
-	const resources = planResources(input.site, input.site.config, { database: input.database });
+	const resources = planResources(input.site, input.site.config, {
+		database: input.database,
+		custom: input.customResources
+	});
 	let sealed: FirstRunSealed | null = null;
+	let lockSummary: TemplateCodeSummary | null = null;
 	try {
 		await startOperation(ctx);
 		if (
@@ -819,26 +877,23 @@ export async function runSiteCreate(
 		}
 		await acquireLease(ctx, 'lease');
 		if (input.prior !== undefined) await cleanPrior(ctx, input.prior);
-		await reserveName(ctx, input);
+		if (!isOwnAccount(input)) await reserveName(ctx, input);
 		for (const [index, resource] of resources.create.entries()) {
 			await createResource(ctx, input, resource, index === 0 ? resources : null);
 		}
 		const token = await uploadAssets(ctx, input);
 		await uploadScript(ctx, input, token);
-		await applyAuthority(ctx, input);
+		if (!isOwnAccount(input)) await applyAuthority(ctx, input);
 		await putRoute(ctx, input);
 		sealed = input.firstRun === undefined ? null : await firstRun(ctx, input, input.firstRun);
 		if (input.template !== undefined) {
-			await restoreTemplate(
-				ctx,
-				deps,
-				{
-					siteId: input.site.id,
-					hostname: input.hostname,
-					ownerTokenId: sealed?.ownerTokenId ?? null
-				},
-				input.template
-			);
+			const target = {
+				siteId: input.site.id,
+				hostname: input.hostname,
+				ownerTokenId: sealed?.ownerTokenId ?? null
+			};
+			await restoreTemplate(ctx, deps, target, input.template);
+			lockSummary = await installTemplateCode(ctx, deps, target, input.template);
 		}
 		await verify(ctx, input, sealed);
 		await activate(ctx, input, sealed);
@@ -853,7 +908,8 @@ export async function runSiteCreate(
 			: input.template === undefined
 				? ''
 				: `; the ${input.template.entryId} template replaced the first admin account, so reset the admin password from the sign-in page`;
-	await finishSuccess(ctx, `${input.site.id} is active at ${input.hostname}${note}`);
+	const codeNote = lockSummary === null ? '' : lockSummaryNote(lockSummary);
+	await finishSuccess(ctx, `${input.site.id} is active at ${input.hostname}${note}${codeNote}`);
 	await releaseLease(ctx);
 	return { status: 'succeeded' };
 }

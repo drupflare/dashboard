@@ -1,5 +1,6 @@
 import type { R2Bucket } from '@cloudflare/workers-types';
 import { bundleKeys } from '../bundle';
+import { customReleasePrefix, isCustomRelease } from '../custom-bundle';
 import type { Releases } from '../ports';
 import { PermanentError } from '../step';
 
@@ -30,6 +31,17 @@ export function releasesInBucket(bucket: Pick<R2Bucket, 'get'>): Releases {
 			}
 			return new Uint8Array(await object.arrayBuffer());
 		}
+	};
+}
+
+// an organization's bundle is read from the bucket whatever the platform releases are read from; its
+// id names it, and every part key of a release carries that id
+export function releasesWithCustom(platform: Releases, custom: Releases): Releases {
+	const customKey = `releases/${customReleasePrefix}`;
+	return {
+		manifest: (releaseId) =>
+			(isCustomRelease(releaseId) ? custom : platform).manifest(releaseId),
+		part: (key) => (key.startsWith(customKey) ? custom : platform).part(key)
 	};
 }
 

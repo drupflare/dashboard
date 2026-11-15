@@ -472,14 +472,15 @@ async function remove(world: World) {
 }
 
 async function purge(world: World, holdUntil: number) {
-	await begin(world, PURGE_OP, planSitePurge({ siteId: world.siteId }));
+	await begin(world, PURGE_OP, planSitePurge({ siteId: world.siteId, plane: 'managed' }));
 	return runSitePurge(makeRunner(new Map()).runner, world.deps, {
 		operationId: PURGE_OP,
 		siteId: world.siteId,
 		accountId: world.accountId,
 		subdomain: world.input.subdomain,
 		confirm: world.siteId,
-		holdUntil
+		holdUntil,
+		plane: 'managed'
 	});
 }
 

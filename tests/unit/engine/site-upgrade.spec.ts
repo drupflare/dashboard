@@ -5,6 +5,8 @@ import { steppedMigrations, workforceCloudflare } from '../../../engine/src/adap
 import { bundleKeys } from '../../../engine/src/bundle';
 import type { RecipeBindings } from '../../../engine/src/descriptor';
 import { freezePlan, newOperation } from '../../../engine/src/operations/state';
+import { claimResource } from '../../../engine/src/ownership';
+import { resourceName } from '../../../engine/src/provision-plan';
 import { PermanentError } from '../../../engine/src/step';
 import { runSiteCreate } from '../../../engine/src/workflows/site-create';
 import type { SiteUpgradeInput } from '../../../engine/src/workflows/site-upgrade';
@@ -50,8 +52,10 @@ function combined(...bundles: FakeBundle[]) {
 }
 
 // a live site on v1.0.4 and a second release v1.0.5 with two more assets
-async function liveSite(options: { recipe?: RecipeBindings } = {}) {
-	const world = await makeWorld();
+async function liveSite(
+	options: { recipe?: RecipeBindings; plane?: 'managed' | 'self-managed' } = {}
+) {
+	const world = await makeWorld(options.plane === undefined ? {} : { plane: options.plane });
 	await beginCreate(world);
 	const created = makeRunner(new Map());
 	const outcome = await runSiteCreate(created.runner, world.deps, world.input);
@@ -64,7 +68,7 @@ async function liveSite(options: { recipe?: RecipeBindings } = {}) {
 			id: world.siteId,
 			orgId: world.orgId,
 			kind: 'drupal',
-			plane: 'managed',
+			plane: options.plane ?? 'managed',
 			config: 'managed',
 			ring: 'R1',
 			plan: 'free',
@@ -182,6 +186,25 @@ describe('an uninterrupted update', () => {
 		expect(world.leases.stateOf(world.siteId).holder).toBeNull();
 	});
 
+	it('does not bind the Strata store bucket into the script', async () => {
+		const { world, input } = await liveSite();
+		await claimResource(
+			world.deps,
+			{
+				siteId: world.siteId,
+				accountId: world.accountId,
+				operationId: `op_${'s'.repeat(26)}`,
+				plane: 'managed'
+			},
+			{ kind: 'r2', binding: 'STRATA_STORE', name: resourceName(world.siteId, 'strata') }
+		);
+		expect(await attempt(world, input).done).toEqual({ status: 'succeeded' });
+		const metadata = JSON.parse(world.cf.scripts.get(scriptName(world.siteId))!.metadata);
+		const bound = (metadata.bindings as { name: string }[]).map((binding) => binding.name);
+		expect(bound).toContain('FILES');
+		expect(bound).not.toContain('STRATA_STORE');
+	});
+
 	it('records the release on a create too', async () => {
 		const { world } = await liveSite();
 		expect(releaseRow(world)).toBe('v1.0.4');
@@ -190,6 +213,46 @@ describe('an uninterrupted update', () => {
 	it('records the tag the create uploaded, so the next update knows where the script is', async () => {
 		const { world } = await liveSite();
 		expect(lastTwo(live(world).tags)).toEqual(['m:v2', 'v:v1.0.4']);
+	});
+});
+
+describe('an update in a customer account', () => {
+	it('re-uploads the script and the changed assets, and touches no name, authority or resource', async () => {
+		const { world, input } = await liveSite({ plane: 'self-managed' });
+		world.cf.seedCustomer({
+			kv: ['customer-sessions'],
+			r2: ['customer-files'],
+			script: 'customer-app'
+		});
+		const before = world.cf.snapshot();
+		const names = [...world.names.calls];
+		const hosts = world.authority.snapshot();
+		const creates = world.cf.counts.create;
+		const run = attempt(world, input);
+		expect(await run.done).toEqual({ status: 'succeeded' });
+		expect(run.executed).toContain('upload-script');
+		expect(live(world).tags).toContain('v:v1.0.5');
+		expect(releaseRow(world)).toBe('v1.0.5');
+		expect(world.names.calls).toEqual(names);
+		expect(world.authority.snapshot()).toEqual(hosts);
+		expect(world.cf.counts.create).toBe(creates);
+		const after = world.cf.snapshot();
+		expect(after.kv).toEqual(before.kv);
+		expect(after.r2).toEqual(before.r2);
+		expect(after.scripts.filter((s) => s.startsWith('customer-app'))).toEqual(
+			before.scripts.filter((s) => s.startsWith('customer-app'))
+		);
+	});
+
+	it('puts the earlier release back on the live script when the check fails', async () => {
+		const { world, input } = await liveSite({ plane: 'self-managed' });
+		breakRelease(world, 'v1.0.5');
+		const outcome = await attempt(world, input).done;
+		expect(outcome).toMatchObject({ status: 'failed', leaked: [] });
+		if (outcome.status !== 'failed') return;
+		expect(outcome.reason).toContain('rolled back to v1.0.4');
+		expect(live(world).tags).toContain('v:v1.0.4');
+		expect(releaseRow(world)).toBe('v1.0.4');
 	});
 });
 

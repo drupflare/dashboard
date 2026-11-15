@@ -7,7 +7,7 @@ import {
 	type SigningKey
 } from '../../../contracts/src/common';
 import type { AuthorityState } from '../../../contracts/src/site-auth';
-import type { SitePlane } from '../../../contracts/src/sites';
+import { scriptName, type SitePlane } from '../../../contracts/src/sites';
 import { applyTo, readAuthority, signApply } from '../../../dispatch/src/authority';
 import { releaseIn, reserveIn, type NameRecord } from '../../../dispatch/src/registry';
 import { custodyOf } from '../../../engine/src/adapters/custody';
@@ -22,8 +22,9 @@ import {
 } from '../../../engine/src/lease';
 import { freezePlan, newOperation } from '../../../engine/src/operations/state';
 import { D1OperationStore } from '../../../engine/src/operations/store';
-import { D1ResourceLedger } from '../../../engine/src/ownership';
+import { BucketNotEmptyError, D1ResourceLedger } from '../../../engine/src/ownership';
 import type {
+	AccountHosts,
 	AssetSession,
 	Authority,
 	Cloudflare,
@@ -42,6 +43,7 @@ import { PermanentError, StepFailed, type StepRunner } from '../../../engine/src
 import { planSiteCreate, type SiteCreateInput } from '../../../engine/src/workflows/site-create';
 import { SCHEMA_STATEMENTS, SCHEMA_TRIGGERS } from '../../../src/server/db/schema';
 import { shardKey } from '../../../src/shared/names';
+import { workersDevHost } from '../../../src/shared/plane-connections';
 import { memoryKv } from '../dispatch/fakes';
 
 // #region d1 over node:sqlite
@@ -147,6 +149,14 @@ export function fakeCloudflare() {
 	// each read takes the next queued reading, then falls back to the standing one
 	const usage = { rate: { ...NO_RATE }, queue: [] as RateHeadroom[] };
 	let sequence = 0;
+	// bucket tokens by id and name; a bucket named in fullBuckets refuses its delete like R2 does
+	const tokens = {
+		live: new Map<string, string>(),
+		log: [] as string[],
+		quotaFull: false,
+		secretPrefix: 'secret-'
+	};
+	const fullBuckets = new Set<string>();
 
 	const table = (kind: ResourceKind) => (kind === 'kv' ? kv : kind === 'd1' ? d1 : null);
 
@@ -201,8 +211,33 @@ export function fakeCloudflare() {
 			map.set(id, name);
 			return { providerId: id };
 		},
+		async mintBucketToken(bucket, name) {
+			tokens.log.push(`mint:${name}`);
+			if (tokens.quotaFull)
+				throw new PermanentError('token_quota', 'the account has no room');
+			const id = `tok-${++sequence}`;
+			tokens.live.set(id, name);
+			return {
+				tokenId: id,
+				accessKeyId: id,
+				secretAccessKey: `${tokens.secretPrefix}${id}-${bucket}`
+			};
+		},
+		async deleteBucketTokens(name) {
+			tokens.log.push(`delete:${name}`);
+			let removed = 0;
+			for (const [id, held] of [...tokens.live]) {
+				if (held === name) {
+					tokens.live.delete(id);
+					removed++;
+				}
+			}
+			return removed;
+		},
 		async deleteResource(kind, providerId) {
 			counts.delete++;
+			if (kind === 'r2' && fullBuckets.has(providerId))
+				throw new BucketNotEmptyError(providerId);
 			if (kind === 'r2') return r2.delete(providerId) ? 'deleted' : 'absent';
 			return table(kind)!.delete(providerId) ? 'deleted' : 'absent';
 		},
@@ -271,6 +306,8 @@ export function fakeCloudflare() {
 		hooks,
 		uploads,
 		usage,
+		tokens,
+		fullBuckets,
 		snapshot(): AccountSnapshot {
 			return {
 				kv: [...kv].sort(),
@@ -674,6 +711,23 @@ export function makeRunner(memo: Memo, script: RunnerScript = {}) {
 
 export const PENDING_TTL_MS = 600_000;
 
+export const SELF_SUBDOMAIN = 'acme';
+
+// a customer account's workers.dev side; it records every script it was asked to switch on
+export function fakeAccountHosts(subdomain: string | null = SELF_SUBDOMAIN) {
+	const enabled: string[] = [];
+	const state = { subdomain };
+	const hosts: AccountHosts = {
+		async subdomain() {
+			return state.subdomain;
+		},
+		async enableWorkersDev(script) {
+			enabled.push(script);
+		}
+	};
+	return { hosts, enabled, state };
+}
+
 export const LIMITS = {
 	maxModuleBytes: 1_000_000,
 	maxTotalBytes: 10_000_000,
@@ -707,7 +761,10 @@ export async function makeWorld(
 	const kvStore = fakeKv();
 	const site = fakeSite(kvStore);
 	const bundle = await makeBundle('v1.0.4', options.assetCount ?? 5);
+	const own = options.plane === 'self-managed';
+	const account = fakeAccountHosts();
 	const deps: EngineDeps = {
+		...(own ? { account: account.hosts } : {}),
 		store,
 		ledger,
 		cloudflare: cf.cloudflare,
@@ -751,7 +808,10 @@ export async function makeWorld(
 			accountId
 		},
 		subdomain: 'quiet-otter',
-		hostname: 'quiet-otter.drupflare.app',
+		hostname:
+			own && options.zoneId === undefined
+				? workersDevHost(scriptName(siteId), SELF_SUBDOMAIN)
+				: 'quiet-otter.drupflare.app',
 		zoneId: options.zoneId,
 		releaseId: 'v1.0.4',
 		database: options.database,
@@ -775,10 +835,12 @@ export async function makeWorld(
 	};
 	return {
 		deps,
+		db,
 		store,
 		ledger,
 		sqlite,
 		cf,
+		account,
 		authority,
 		names,
 		leases,

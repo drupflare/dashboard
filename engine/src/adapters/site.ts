@@ -291,6 +291,18 @@ const offloadedPageAnswer = z.looseObject({
 		.nullish()
 });
 
+const installLockAnswer = z.looseObject({
+	done: z.boolean(),
+	cursor: z.number().int().nonnegative(),
+	total: z.number().int().nonnegative(),
+	installed: z.array(z.unknown()),
+	skipped: z.array(z.looseObject({ name: z.string(), reason: z.string().nullish() })),
+	failed: z.array(z.looseObject({ name: z.string(), error: z.string().nullish() })),
+	session: z.string().min(1),
+	patches: z.string()
+});
+const installLockRefusal = z.looseObject({ error: z.string().optional() });
+
 const CODE = /^[a-z_]{1,40}$/;
 
 function codeOf(text: string | null): string {
@@ -447,6 +459,75 @@ export function backupWorkerOf(fetcher: typeof fetch, timeoutMs: number): Backup
 				'the stats answer'
 			);
 			return answer.storage.offloaded?.files ?? 0;
+		},
+
+		async installLock(hostname, lock, cursor, auth) {
+			let body: Record<string, unknown>;
+			try {
+				body = { ...JSON.parse(new TextDecoder().decode(lock)), cursor };
+			} catch {
+				throw new PermanentError(
+					'install_lock_unreadable',
+					'the composer lock is not JSON'
+				);
+			}
+			const { status, text } = await fetchSite(
+				hostname,
+				'/install-lock',
+				{
+					method: 'POST',
+					headers: { ...bearer(auth.bearer), 'content-type': 'application/json' },
+					body: JSON.stringify(body)
+				},
+				(code) => code === 200 || code === 502 || (code >= 400 && code < 500)
+			);
+			refusedToken(status);
+			if (status === 404) return 'absent';
+			if (status === 200 || status === 502) {
+				const answer = parseBody(text, installLockAnswer, 'the lock install answer');
+				const failed = answer.failed[0];
+				return {
+					done: answer.done,
+					cursor: answer.cursor,
+					total: answer.total,
+					installed: answer.installed.length,
+					skipped: answer.skipped.length,
+					failure:
+						failed === undefined
+							? null
+							: { name: failed.name, error: failed.error ?? 'no reason given' },
+					session: answer.session,
+					skippedPackages: answer.skipped.map((entry) => ({
+						name: entry.name,
+						reason: entry.reason ?? 'no reason given'
+					})),
+					patches: answer.patches
+				};
+			}
+			if (status >= 400 && status < 500 && !COMING_UP.has(status)) {
+				const reason = installLockRefusal.safeParse(safeJson(text ?? ''));
+				throw new PermanentError(
+					'install_lock_refused',
+					reason.success && reason.data.error
+						? reason.data.error.slice(0, 200)
+						: 'the site gave no reason'
+				);
+			}
+			throw new SiteAnswered(hostname, '/install-lock', status);
+		},
+
+		// 404 is the site saying the session is not there, which is what a rollback wants
+		async rollbackLock(hostname, session, auth) {
+			const { status } = await fetchSite(
+				hostname,
+				`/install-lock?session=${encodeURIComponent(session)}`,
+				{ method: 'DELETE', headers: bearer(auth.bearer) },
+				(code) => code === 200 || code === 404
+			);
+			refusedToken(status);
+			if (status !== 200 && status !== 404) {
+				throw new SiteAnswered(hostname, '/install-lock', status);
+			}
 		},
 
 		async pagedRestoreSupported(hostname, auth) {

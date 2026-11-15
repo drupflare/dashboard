@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import { scriptName } from '../../../contracts/src/sites';
 import { encodeBundle } from '../../../engine/src/containers/image/template-build.mjs';
 import { planSiteCreate, runSiteCreate } from '../../../engine/src/workflows/site-create';
+import { workersDevHost } from '../../../src/shared/plane-connections';
 import {
 	beginCreate,
 	custodyRows,
@@ -614,6 +616,16 @@ describe('a create from a template', () => {
 			blob?: Uint8Array | null;
 			states?: ('absent' | 'pending' | 'applied' | 'failed')[];
 			firstRun?: boolean;
+			// what each window of the lock answers, in order; the last one repeats
+			windows?: (
+				| 'absent'
+				| {
+						done: boolean;
+						cursor: number;
+						failure?: [string, string];
+						skipped?: { name: string; reason: string }[];
+				  }
+			)[];
 		} = {}
 	) {
 		const world = await makeWorld();
@@ -629,12 +641,36 @@ describe('a create from a template', () => {
 		const restores: { hostname: string; body: Uint8Array; label: string }[] = [];
 		const states = [...(options.states ?? ['pending', 'applied'])];
 		let sent = false;
+		const windows = [...(options.windows ?? [{ done: true, cursor: 1 }])];
+		const locks: { cursor: number; body: string }[] = [];
+		const rollbacks: string[] = [];
 		const worker = {
 			importState: async () => (sent ? (states.shift() ?? 'applied') : 'absent'),
 			importReason: async () => 'users',
 			restore: async (hostname: string, body: Uint8Array, label: string) => {
 				sent = true;
 				restores.push({ hostname, body, label });
+			},
+			installLock: async (_host: string, lock: Uint8Array, cursor: number) => {
+				locks.push({ cursor, body: new TextDecoder().decode(lock) });
+				const next = windows.length > 1 ? windows.shift() : windows[0];
+				if (next === 'absent') return 'absent';
+				return {
+					done: next!.done,
+					cursor: next!.cursor,
+					total: 100,
+					installed: 40,
+					skipped: 0,
+					failure: next!.failure
+						? { name: next!.failure[0], error: next!.failure[1] }
+						: null,
+					session: 'a1b2c3d4e5f6a7b8',
+					skippedPackages: next!.skipped ?? [],
+					patches: 'not applied'
+				};
+			},
+			rollbackLock: async (_host: string, session: string) => {
+				rollbacks.push(session);
 			}
 		};
 		const deps = {
@@ -651,8 +687,51 @@ describe('a create from a template', () => {
 			const { runner, executed } = makeRunner(memo, {});
 			return { executed, done: runSiteCreate(runner, custom, world.input) };
 		};
-		return { world, run, restores, deps };
+		return { world, run, restores, deps, locks, rollbacks };
 	}
+
+	it('installs the template code after the database and before the probe', async () => {
+		const { run, locks } = await withTemplate({
+			windows: [
+				{ done: false, cursor: 40 },
+				{ done: false, cursor: 80 },
+				{ done: true, cursor: 100 }
+			]
+		});
+		const { executed, done } = run();
+		expect(await done).toEqual({ status: 'succeeded' });
+		expect(locks.map((call) => call.cursor)).toEqual([0, 40, 80]);
+		expect(locks[0]?.body).toBe('{}');
+		expect(executed.indexOf('template-apply')).toBeLessThan(executed.indexOf('template-code'));
+		expect(executed.indexOf('template-code')).toBeLessThan(executed.indexOf('verify'));
+	});
+
+	it('rolls back and names the package when the site cannot install one', async () => {
+		const { run } = await withTemplate({
+			windows: [{ done: false, cursor: 12, failure: ['drupal/token', 'archive 502'] }]
+		});
+		expect(await run().done).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringMatching(/template_code_failed.*drupal\/token.*archive 502/)
+		});
+	});
+
+	it('rolls back when the site has no lock route', async () => {
+		const { run } = await withTemplate({ windows: ['absent'] });
+		expect(await run().done).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringContaining('template_code_unsupported')
+		});
+	});
+
+	it('rolls back when the cursor stops advancing', async () => {
+		const { run, locks } = await withTemplate({ windows: [{ done: false, cursor: 0 }] });
+		expect(await run().done).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringContaining('template_code_stalled')
+		});
+		expect(locks).toHaveLength(1);
+	});
 
 	it('restores the template database after the first run and before the probe', async () => {
 		const { world, run, restores } = await withTemplate();
@@ -675,6 +754,38 @@ describe('a create from a template', () => {
 		await run().done;
 		const operation = await world.store.get(world.operationId);
 		expect(operation?.finalObservation?.summary).toContain('thunder template replaced');
+	});
+
+	it('says which packages the lock skipped, and that patches were not applied', async () => {
+		const { world, run } = await withTemplate({
+			windows: [
+				{
+					done: true,
+					cursor: 100,
+					skipped: [
+						{
+							name: 'drupal/a',
+							reason: 'a Composer plugin, which cannot run on the site'
+						}
+					]
+				}
+			]
+		});
+		expect(await run().done).toEqual({ status: 'succeeded' });
+		const operation = await world.store.get(world.operationId);
+		const summary = operation?.finalObservation?.summary ?? '';
+		expect(summary).toContain(
+			'1 package was skipped: drupal/a (a Composer plugin, which cannot run on the site)'
+		);
+		expect(summary).toContain('Patches Not Applied');
+	});
+
+	it('rolls back the lock session the site failed to install', async () => {
+		const { run, rollbacks } = await withTemplate({
+			windows: [{ done: false, cursor: 12, failure: ['drupal/token', 'archive 502'] }]
+		});
+		expect(await run().done).toMatchObject({ status: 'rolled-back' });
+		expect(rollbacks).toEqual(['a1b2c3d4e5f6a7b8']);
 	});
 
 	it('does not send the database twice when the engine dies inside the restore step', async () => {
@@ -800,5 +911,85 @@ describe('a create from a template', () => {
 		expect(planSiteCreate(world.input).steps.map((step) => step.id)).not.toContain(
 			'template-restore'
 		);
+	});
+});
+
+describe('a create in a customer account', () => {
+	const DISPATCH_ONLY = ['reserve-name', 'authority'];
+
+	it('skips the steps that belong to the managed plane and reports the plan without them', async () => {
+		const world = await start({ plane: 'self-managed' });
+		const ids = planSiteCreate(world.input).steps.map((step) => step.id);
+		for (const step of DISPATCH_ONLY) expect(ids).not.toContain(step);
+		const { executed, done } = attempt(world, new Map());
+		expect(await done).toEqual({ status: 'succeeded' });
+		for (const step of DISPATCH_ONLY) expect(executed).not.toContain(step);
+		expect(executed).toContain('route');
+		expect(executed).toContain('upload-script');
+	});
+
+	it('never touches the names registry or the site authority', async () => {
+		const world = await start({ plane: 'self-managed' });
+		await attempt(world, new Map()).done;
+		expect(world.names.calls).toEqual([]);
+		expect(world.authority.snapshot()).toEqual({ hosts: [], states: [] });
+		expect(world.names.recordOf(world.input.subdomain)).toBeNull();
+	});
+
+	it('switches on workers.dev for the script when the address is the account subdomain', async () => {
+		const world = await start({ plane: 'self-managed' });
+		await attempt(world, new Map()).done;
+		expect(world.account.enabled).toEqual([scriptName(world.siteId)]);
+		expect(world.input.hostname).toBe(workersDevHost(scriptName(world.siteId), 'acme'));
+		expect(world.cf.snapshot().routes).toEqual([]);
+	});
+
+	it('refuses, and creates nothing, when the account subdomain changed since the connection was read', async () => {
+		const world = await start({ plane: 'self-managed' });
+		world.account.state.subdomain = 'renamed';
+		const outcome = await attempt(world, new Map()).done;
+		expect(outcome).toMatchObject({
+			status: 'rolled-back',
+			reason: expect.stringContaining('subdomain_changed')
+		});
+		expect(world.account.enabled).toEqual([]);
+		expect(world.cf.snapshot()).toMatchObject({ kv: [], r2: [], d1: [], scripts: [] });
+	});
+
+	it('refuses when the account has no subdomain at all', async () => {
+		const world = await start({ plane: 'self-managed' });
+		world.account.state.subdomain = null;
+		expect(await attempt(world, new Map()).done).toMatchObject({
+			reason: expect.stringContaining('subdomain_changed')
+		});
+	});
+
+	it('routes a hostname on the customer zone and leaves workers.dev off', async () => {
+		const world = await start({ plane: 'self-managed', zoneId: 'zone-1' });
+		expect(await attempt(world, new Map()).done).toEqual({ status: 'succeeded' });
+		expect(world.account.enabled).toEqual([]);
+		expect(world.cf.snapshot().routes).toHaveLength(1);
+		expect(world.cf.snapshot().routes[0]).toContain(world.input.hostname);
+	});
+
+	it('creates no bucket on the canonical config', async () => {
+		const world = await start({ plane: 'self-managed', config: 'canonical' });
+		expect(await attempt(world, new Map()).done).toEqual({ status: 'succeeded' });
+		expect(world.cf.snapshot().r2).toEqual([]);
+		expect(world.cf.snapshot().kv.length).toBeGreaterThan(0);
+	});
+
+	it('keeps the configNote in the preconditions the owner reads before the create', async () => {
+		const world = await start({ plane: 'self-managed' });
+		const note = 'Object storage is off in this account, so this site runs the simpler setup.';
+		const plan = planSiteCreate({ ...world.input, configNote: note });
+		expect(plan.preconditions).toContain(note);
+		expect(plan.preconditions[0]).toContain(world.input.hostname);
+	});
+
+	it('leaves the managed plane with its name and authority steps', async () => {
+		const world = await start();
+		const ids = planSiteCreate(world.input).steps.map((step) => step.id);
+		for (const step of DISPATCH_ONLY) expect(ids).toContain(step);
 	});
 });

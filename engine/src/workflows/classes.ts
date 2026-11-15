@@ -11,6 +11,7 @@ import {
 	buildEstateDeps,
 	buildGitDeps,
 	buildImportDeps,
+	buildModifyDeps,
 	buildModuleDeps,
 	buildNodeSiteDeps,
 	buildPitrDeps,
@@ -18,8 +19,10 @@ import {
 	buildRollbackDeps,
 	buildRolloutDeps,
 	buildTemplateBuildDeps,
+	selfManagedDeps,
 	type EngineEnv
 } from '../env';
+import type { EngineDeps } from '../ports';
 import { PermanentError, StepFailed, type StepRunner } from '../step';
 import { runAccessSync, type AccessSyncInput } from './access-sync';
 import { runBackupCreate, type BackupCreateInput } from './backup-create';
@@ -38,6 +41,7 @@ import {
 	type CutoverRunner,
 	type MigrationCutoverInput
 } from './migration-cutover';
+import { runModifyApply, type ModifyApplyInput } from './modify-apply';
 import { runModuleEnable, type ModuleEnableInput } from './module-enable';
 import { runModuleInstall, type ModuleInstallInput } from './module-install';
 import { runModuleRemove, type ModuleRemoveInput } from './module-remove';
@@ -105,12 +109,28 @@ function runnerOf(
 	};
 }
 
+// a site on a customer's account runs against that account, never against ours
+function onPlane<D extends EngineDeps>(
+	env: EngineEnv,
+	deps: D,
+	site: { id: string; accountId: string; plane?: string }
+): D {
+	return site.plane === 'self-managed'
+		? selfManagedDeps(env, deps, { siteId: site.id, accountId: site.accountId })
+		: deps;
+}
+
 export class SiteCreate extends WorkflowEntrypoint<EngineEnv, SiteCreateInput> {
 	async run(
 		event: Readonly<WorkflowEvent<SiteCreateInput>>,
 		step: WorkflowStep
 	): Promise<Outcome> {
-		return runSiteCreate(runnerOf(step), await buildBackupDeps(this.env), event.payload);
+		const { site } = event.payload;
+		return runSiteCreate(
+			runnerOf(step),
+			onPlane(this.env, await buildBackupDeps(this.env), site),
+			event.payload
+		);
 	}
 }
 
@@ -119,7 +139,12 @@ export class SiteUpgrade extends WorkflowEntrypoint<EngineEnv, SiteUpgradeInput>
 		event: Readonly<WorkflowEvent<SiteUpgradeInput>>,
 		step: WorkflowStep
 	): Promise<Outcome> {
-		return runSiteUpgrade(runnerOf(step), await buildDeps(this.env), event.payload);
+		const { site } = event.payload;
+		return runSiteUpgrade(
+			runnerOf(step),
+			onPlane(this.env, await buildDeps(this.env), site),
+			event.payload
+		);
 	}
 }
 
@@ -179,6 +204,19 @@ export class ModuleEnable extends WorkflowEntrypoint<EngineEnv, ModuleEnableInpu
 		return runModuleEnable(
 			runnerOf(step, BACKUP_STEP_CONFIG),
 			await buildModuleDeps(this.env),
+			event.payload
+		);
+	}
+}
+
+export class ModifyApply extends WorkflowEntrypoint<EngineEnv, ModifyApplyInput> {
+	async run(
+		event: Readonly<WorkflowEvent<ModifyApplyInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runModifyApply(
+			runnerOf(step, BACKUP_STEP_CONFIG),
+			await buildModifyDeps(this.env),
 			event.payload
 		);
 	}
@@ -393,7 +431,12 @@ export class SiteCleanup extends WorkflowEntrypoint<EngineEnv, SiteCleanupInput>
 		event: Readonly<WorkflowEvent<SiteCleanupInput>>,
 		step: WorkflowStep
 	): Promise<Outcome> {
-		return runSiteCleanup(runnerOf(step), await buildDeps(this.env), event.payload);
+		const { siteId, accountId, plane } = event.payload;
+		return runSiteCleanup(
+			runnerOf(step),
+			onPlane(this.env, await buildDeps(this.env), { id: siteId, accountId, plane }),
+			event.payload
+		);
 	}
 }
 
@@ -402,7 +445,14 @@ export class SitePurge extends WorkflowEntrypoint<EngineEnv, SitePurgeInput> {
 		event: Readonly<WorkflowEvent<SitePurgeInput>>,
 		step: WorkflowStep
 	): Promise<Outcome> {
-		return runSitePurge(runnerOf(step), await buildDomainDeps(this.env), event.payload);
+		const { siteId, accountId, plane } = event.payload;
+		// no plane is the strict reading: a customer's account
+		const deps = await buildDomainDeps(this.env);
+		return runSitePurge(
+			runnerOf(step),
+			onPlane(this.env, deps, { id: siteId, accountId, plane: plane ?? 'self-managed' }),
+			event.payload
+		);
 	}
 }
 
@@ -420,7 +470,12 @@ export class SiteRollback extends WorkflowEntrypoint<EngineEnv, SiteRollbackInpu
 		event: Readonly<WorkflowEvent<SiteRollbackInput>>,
 		step: WorkflowStep
 	): Promise<Outcome> {
-		return runSiteRollback(runnerOf(step), await buildRollbackDeps(this.env), event.payload);
+		const { site } = event.payload;
+		return runSiteRollback(
+			runnerOf(step),
+			onPlane(this.env, await buildRollbackDeps(this.env), site),
+			event.payload
+		);
 	}
 }
 

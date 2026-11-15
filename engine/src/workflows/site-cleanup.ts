@@ -58,7 +58,9 @@ async function dropRows(
 	}
 }
 
+// a customer's account has no authority, host entry or reserved name of ours to undo
 const stopServing: Action = async (deps, target) => {
+	if (target.plane === 'self-managed') return;
 	const answer = await deps.authority.deleteHostIfOwned(target.hostname, target.siteId);
 	const current = await deps.authority.read(target.siteId);
 	if (current !== null && current.state !== 'revoked') {
@@ -79,6 +81,7 @@ const dropScript: Action = (deps, target) =>
 const dropResources: Action = (deps, target) => dropRows(deps, target, () => true);
 
 const releaseName: Action = async (deps, target) => {
+	if (target.plane === 'self-managed') return;
 	await deps.names.release(target.subdomain, target.siteId, 0);
 };
 

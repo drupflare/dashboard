@@ -62,6 +62,18 @@ describe('the rollout row', () => {
 			.get();
 		expect(status).toMatchObject({ status: 'rolling', updated_at: 7 });
 	});
+
+	it('puts a site in a promotion once its ring has begun, and out of it when the rollout ends', async () => {
+		const { world, store } = await row();
+		expect(await store.inRollingRollout('site_1')).toBe(false);
+
+		await store.save(stored({ previous: { site_1: 'rel-old' } }));
+		expect(await store.inRollingRollout('site_1')).toBe(true);
+		expect(await store.inRollingRollout('site_2')).toBe(false);
+
+		world.sqlite.prepare(`UPDATE release_rollouts SET status = 'halted'`).run();
+		expect(await store.inRollingRollout('site_1')).toBe(false);
+	});
 });
 
 describe('starting a site update or rollback', () => {

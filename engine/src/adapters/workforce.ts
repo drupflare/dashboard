@@ -1,4 +1,5 @@
 import {
+	ApiError,
 	assetsApi,
 	LimitError,
 	NotFoundError,
@@ -10,11 +11,15 @@ import {
 	type Resources
 } from '@drupflare/workforce';
 import { RateLimitedError } from '../account-usage';
+import { BucketNotEmptyError } from '../ownership';
 import type { Cloudflare, CloudflareUsage } from '../ports';
 import { PermanentError } from '../step';
 import { multipartBody } from '../stream-body';
 
 const encoder = new TextEncoder();
+
+// what the adapter needs of a plane; a dispatch plane and an account plane both have it
+export type PlaneLike = Pick<DispatchPlane, 'http' | 'accountId' | 'base' | 'get'>;
 
 // the upload endpoints answer the usual envelope; a refusal names the reason the API gave
 async function readUpload(response: Response, what: string): Promise<unknown> {
@@ -72,7 +77,7 @@ export function steppedMigrations(
 // workforce's delete methods send the request and never read the status, so a refused delete would
 // look like a success; this reads it
 async function checkedDelete(
-	plane: DispatchPlane,
+	plane: PlaneLike,
 	path: string,
 	query?: Record<string, string | number | boolean>
 ): Promise<'deleted' | 'absent'> {
@@ -82,8 +87,20 @@ async function checkedDelete(
 	return 'deleted';
 }
 
+async function deleteBucket(
+	plane: PlaneLike,
+	path: string,
+	bucket: string
+): Promise<'deleted' | 'absent'> {
+	const response = await plane.http.send(path, { method: 'DELETE' });
+	if (response.status === 404) return 'absent';
+	if (response.status === 409) throw new BucketNotEmptyError(bucket);
+	if (!response.ok) throw new Error(`DELETE ${path} answered ${response.status}`);
+	return 'deleted';
+}
+
 // a rate limit is worth retrying after the wait the response named
-async function paced<T>(call: () => Promise<T>): Promise<T> {
+export async function paced<T>(call: () => Promise<T>): Promise<T> {
 	try {
 		return await call();
 	} catch (error) {
@@ -107,8 +124,28 @@ export async function readUsageOf(
 	return { kvNamespaces, buckets, rate: readRateHeaders(response.headers) };
 }
 
-export function workforceCloudflare(plane: DispatchPlane, resources: Resources): Cloudflare {
+const R2_PERMISSION_GROUPS = [
+	'Workers R2 Storage Bucket Item Read',
+	'Workers R2 Storage Bucket Item Write'
+];
+
+const TOKEN_PAGE = 50;
+const QUOTA_WORDS = /limit|quota|maximum|too many|exceed/i;
+
+// the S3 secret of an R2 token is the SHA-256 of its value, as hex
+export async function bucketSecret(value: string): Promise<string> {
+	const digest = await crypto.subtle.digest('SHA-256', encoder.encode(value));
+	return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+// a user token (not cfat_) mints through /user/tokens, an account token through the account path
+export function workforceCloudflare(
+	plane: PlaneLike,
+	resources: Resources,
+	apiToken = ''
+): Cloudflare {
 	const account = `/accounts/${plane.accountId}`;
+	const tokens = apiToken.startsWith('cfat_') ? `${account}/tokens` : '/user/tokens';
 	const routing = new Routing(plane.http, plane.accountId);
 
 	async function listResources(kind: 'kv' | 'r2' | 'd1') {
@@ -176,8 +213,79 @@ export function workforceCloudflare(plane: DispatchPlane, resources: Resources):
 			if (kind === 'kv') {
 				return checkedDelete(plane, `${account}/storage/kv/namespaces/${providerId}`);
 			}
-			if (kind === 'r2') return checkedDelete(plane, `${account}/r2/buckets/${providerId}`);
+			if (kind === 'r2')
+				return deleteBucket(plane, `${account}/r2/buckets/${providerId}`, providerId);
 			return checkedDelete(plane, `${account}/d1/database/${providerId}`);
+		},
+
+		async mintBucketToken(bucket, name) {
+			const groups = await paced(() =>
+				plane.http.request<{ id: string; name: string }[]>(`${tokens}/permission_groups`)
+			);
+			const wanted = R2_PERMISSION_GROUPS.map((group) =>
+				groups.find((candidate) => candidate.name === group)
+			);
+			if (wanted.some((group) => group === undefined)) {
+				throw new PermanentError(
+					'token_groups_missing',
+					'the account does not list the storage permission groups'
+				);
+			}
+			const resource = `com.cloudflare.edge.r2.bucket.${plane.accountId}_default_${bucket}`;
+			let made: { id?: unknown; value?: unknown };
+			try {
+				made = await paced(() =>
+					plane.http.request<{ id?: unknown; value?: unknown }>(tokens, {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({
+							name,
+							policies: [
+								{
+									effect: 'allow',
+									resources: { [resource]: '*' },
+									permission_groups: wanted.map((group) => ({ id: group!.id }))
+								}
+							]
+						})
+					})
+				);
+			} catch (error) {
+				if (error instanceof ApiError && QUOTA_WORDS.test(error.message)) {
+					throw new PermanentError(
+						'token_quota',
+						'the account has no room for another API token'
+					);
+				}
+				throw error;
+			}
+			if (typeof made.id !== 'string' || typeof made.value !== 'string') {
+				throw new Error('the token answer carried no id or value');
+			}
+			return {
+				tokenId: made.id,
+				accessKeyId: made.id,
+				secretAccessKey: await bucketSecret(made.value)
+			};
+		},
+
+		async deleteBucketTokens(name) {
+			const ids: string[] = [];
+			for (let page = 1; ; page++) {
+				const { result, info } = await paced(() =>
+					plane.http.requestPage<{ id: string; name: string }[]>(tokens, {
+						query: { page, per_page: TOKEN_PAGE }
+					})
+				);
+				for (const token of result) if (token.name === name) ids.push(token.id);
+				const last = info.total_pages !== undefined && page >= info.total_pages;
+				if (last || result.length < TOKEN_PAGE) break;
+			}
+			let removed = 0;
+			for (const id of ids) {
+				if ((await checkedDelete(plane, `${tokens}/${id}`)) === 'deleted') removed++;
+			}
+			return removed;
 		},
 
 		async addRoute(zoneId, pattern, script) {

@@ -32,6 +32,15 @@ export function resourceSpecs(config: SiteConfig): ResourceSpec[] {
 	return RESOURCE_SPECS.filter((spec) => spec.configs.includes(config));
 }
 
+// the Strata store is a bucket the site never binds; Strata reaches it over S3 with a token, so
+// the descriptor and the upload code skip its ledger row
+export const STRATA_STORE_BINDING = 'STRATA_STORE';
+export const STRATA_STORE_SUFFIX = 'strata';
+export const strataTokenName = (siteId: string) => `drupflare-strata-${siteId}`;
+
+export const isSiteBinding = (row: { binding: string; kind: string }) =>
+	RESOURCE_SPECS.some((spec) => spec.binding === row.binding && spec.kind === row.kind);
+
 export interface PlannedResource {
 	kind: ResourceKind;
 	binding: string;
@@ -45,9 +54,19 @@ export interface ResourcePlan {
 	rollback: PlannedResource[];
 }
 
+// a custom site's bindings come from its bundle, not from RESOURCE_SPECS
+export interface CustomResource {
+	kind: ResourceKind;
+	binding: string;
+}
+
 export interface PlanOptions {
 	database?: boolean;
+	custom?: readonly CustomResource[];
 }
+
+// bucket names take no underscore
+export const customSuffix = (binding: string) => binding.toLowerCase().replaceAll('_', '-');
 
 export class InvalidSiteIdError extends Error {
 	readonly code = 'invalid_site_id';
@@ -69,13 +88,23 @@ export function planResources(
 	config: SiteConfig,
 	options: PlanOptions = {}
 ): ResourcePlan {
-	const create = resourceSpecs(config)
-		.filter((spec) => !spec.optional || (spec.kind === 'd1' && options.database === true))
-		.map((spec) => ({
-			kind: spec.kind,
-			binding: spec.binding,
-			name: resourceName(site.id, spec.suffix)
-		}));
+	const create =
+		options.custom !== undefined
+			? options.custom.map((resource) => ({
+					kind: resource.kind,
+					binding: resource.binding,
+					name: resourceName(site.id, customSuffix(resource.binding))
+				}))
+			: resourceSpecs(config)
+					.filter(
+						(spec) =>
+							!spec.optional || (spec.kind === 'd1' && options.database === true)
+					)
+					.map((spec) => ({
+						kind: spec.kind,
+						binding: spec.binding,
+						name: resourceName(site.id, spec.suffix)
+					}));
 	return { siteId: site.id, config, create, rollback: [...create].reverse() };
 }
 

@@ -6,6 +6,7 @@ import {
 	SESSION_TTL_MS,
 	type DispatchPlane
 } from '@drupflare/workforce';
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { generateSigningKey } from '../../../contracts/src/common';
 import { scriptName } from '../../../contracts/src/sites';
@@ -52,7 +53,8 @@ const formOf = (seen: Seen | undefined): Promise<FormData> =>
 	}).formData();
 
 function cloudflareWith(
-	answer: (seen: Seen) => { status?: number; body?: unknown; headers?: Record<string, string> }
+	answer: (seen: Seen) => { status?: number; body?: unknown; headers?: Record<string, string> },
+	apiToken = ''
 ) {
 	const calls: Seen[] = [];
 	const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
@@ -86,7 +88,10 @@ function cloudflareWith(
 		now: () => clock,
 		budget: new Budget({ now: () => clock, sleep })
 	});
-	return { calls, cloudflare: workforceCloudflare(plane, new Resources(plane.http, ACCOUNT)) };
+	return {
+		calls,
+		cloudflare: workforceCloudflare(plane, new Resources(plane.http, ACCOUNT), apiToken)
+	};
 }
 
 const page = (result: unknown) => ({
@@ -384,6 +389,120 @@ describe('the workforce adapter reads and the ownership calls', () => {
 		expect(error.retryAfterMs).toBe(7000);
 		await expect(cloudflare.listResources('kv')).rejects.toBeInstanceOf(RateLimitedError);
 		await expect(cloudflare.readUsage()).rejects.toBeInstanceOf(RateLimitedError);
+	});
+});
+
+describe('the workforce adapter bucket tokens', () => {
+	const GROUPS = [
+		{ id: 'g-read', name: 'Workers R2 Storage Bucket Item Read' },
+		{ id: 'g-write', name: 'Workers R2 Storage Bucket Item Write' },
+		{ id: 'g-other', name: 'Workers R2 Storage Write' }
+	];
+	const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+
+	const minting = (apiToken: string) =>
+		cloudflareWith((seen) => {
+			if (seen.path.endsWith('/permission_groups')) return { body: page(GROUPS) };
+			return { body: { success: true, result: { id: 'abc', value: 'v' } } };
+		}, apiToken);
+
+	it('mints through the user path, looks the groups up by name and derives the secret', async () => {
+		const { calls, cloudflare } = minting('user-token');
+		const token = await cloudflare.mintBucketToken('s-bucket-strata', 'drupflare-strata-x');
+		expect(token).toEqual({ tokenId: 'abc', accessKeyId: 'abc', secretAccessKey: sha('v') });
+		expect(calls.map((call) => `${call.method} ${call.path}`)).toEqual([
+			'GET /client/v4/user/tokens/permission_groups',
+			'POST /client/v4/user/tokens'
+		]);
+		expect(JSON.parse(String(calls[1]?.body))).toEqual({
+			name: 'drupflare-strata-x',
+			policies: [
+				{
+					effect: 'allow',
+					resources: {
+						[`com.cloudflare.edge.r2.bucket.${ACCOUNT}_default_s-bucket-strata`]: '*'
+					},
+					permission_groups: [{ id: 'g-read' }, { id: 'g-write' }]
+				}
+			]
+		});
+	});
+
+	it('mints through the account path for a cfat_ token', async () => {
+		const { calls, cloudflare } = minting('cfat_abc');
+		await cloudflare.mintBucketToken('s-bucket-strata', 'n');
+		expect(calls.map((call) => call.path)).toEqual([
+			`/client/v4/accounts/${ACCOUNT}/tokens/permission_groups`,
+			`/client/v4/accounts/${ACCOUNT}/tokens`
+		]);
+	});
+
+	it('refuses with a typed error when a group is missing', async () => {
+		const { cloudflare } = cloudflareWith(() => ({ body: page([GROUPS[0]]) }));
+		await expect(cloudflare.mintBucketToken('b', 'n')).rejects.toMatchObject({
+			code: 'token_groups_missing'
+		});
+	});
+
+	it('turns the quota refusal into a permanent token_quota error', async () => {
+		const { cloudflare } = cloudflareWith((seen) =>
+			seen.path.endsWith('/permission_groups')
+				? { body: page(GROUPS) }
+				: {
+						status: 400,
+						body: {
+							success: false,
+							errors: [{ code: 1000, message: 'You have reached the token limit' }]
+						}
+					}
+		);
+		const failure = await cloudflare.mintBucketToken('b', 'n').catch((error: unknown) => error);
+		expect(failure).toBeInstanceOf(PermanentError);
+		expect(failure).toMatchObject({ code: 'token_quota' });
+	});
+
+	it('pages the list and deletes every token of the name, and none is fine', async () => {
+		const first = Array.from({ length: 50 }, (_, i) => ({
+			id: `t${i}`,
+			name: i === 3 ? 'mine' : 'other'
+		}));
+		const second = [{ id: 'late', name: 'mine' }];
+		const { calls, cloudflare } = cloudflareWith((seen) => {
+			if (seen.method === 'DELETE') return { body: { success: true, result: {} } };
+			const at = new URL(`https://x${seen.path}`).searchParams.get('page');
+			return {
+				body: {
+					success: true,
+					result: at === '1' ? first : second,
+					result_info: { page: Number(at), per_page: 50, total_pages: 2 }
+				}
+			};
+		});
+		expect(await cloudflare.deleteBucketTokens('mine')).toBe(2);
+		expect(calls.filter((call) => call.method === 'DELETE').map((call) => call.path)).toEqual([
+			'/client/v4/user/tokens/t3',
+			'/client/v4/user/tokens/late'
+		]);
+		expect(calls.filter((call) => call.method === 'GET')).toHaveLength(2);
+		expect(await cloudflare.deleteBucketTokens('nobody')).toBe(0);
+	});
+
+	it('counts a token that is already gone as not deleted', async () => {
+		const { cloudflare } = cloudflareWith((seen) =>
+			seen.method === 'DELETE'
+				? { status: 404, body: { success: false } }
+				: { body: page([{ id: 't1', name: 'mine' }]) }
+		);
+		expect(await cloudflare.deleteBucketTokens('mine')).toBe(0);
+	});
+
+	it('reports a bucket that still holds objects as a typed error and a missing one as absent', async () => {
+		const full = cloudflareWith(() => ({ status: 409, body: { success: false } }));
+		await expect(full.cloudflare.deleteResource('r2', 'b')).rejects.toMatchObject({
+			code: 'bucket_not_empty'
+		});
+		const gone = cloudflareWith(() => ({ status: 404, body: { success: false } }));
+		expect(await gone.cloudflare.deleteResource('r2', 'b')).toBe('absent');
 	});
 });
 

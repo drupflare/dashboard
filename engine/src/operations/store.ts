@@ -436,7 +436,7 @@ export class D1OperationStore implements OperationStore {
 	}
 
 	async activateSite(site: SiteRecord, now: number): Promise<void> {
-		await this.db
+		const activate = this.db
 			.prepare(
 				`INSERT INTO sites (id, organization_id, name, plane, state, account_id, category, config,
 				release_id, admin_name, admin_mail, ready_at, created_at, updated_at,
@@ -469,24 +469,45 @@ export class D1OperationStore implements OperationStore {
 				now,
 				now,
 				site.releaseId ?? null
-			)
-			.run();
+			);
+		await this.db.batch(
+			site.releaseId == null
+				? [activate]
+				: [activate, this.recordRelease(site.id, site.releaseId, now)]
+		);
 	}
 
 	// the data schema version takes the release's value when the release is registered and never
 	// goes down; an unregistered release leaves it as it was
 	async setSiteRelease(siteId: string, releaseId: string, now: number): Promise<void> {
-		await this.db
-			.prepare(
-				`UPDATE sites SET release_id = ?, updated_at = ?,
+		await this.db.batch([
+			this.db
+				.prepare(
+					`UPDATE sites SET release_id = ?, updated_at = ?,
 				data_schema_version = COALESCE(
 					(SELECT MAX(r.schema_version, COALESCE(sites.data_schema_version, 0))
 						FROM releases r WHERE r.id = ?),
 					data_schema_version)
 				WHERE id = ?`
+				)
+				.bind(releaseId, now, releaseId, siteId),
+			this.recordRelease(siteId, releaseId, now)
+		]);
+	}
+
+	// the history keeps one row per change of release, so a retried step adds nothing
+	private recordRelease(siteId: string, releaseId: string, now: number) {
+		return this.db
+			.prepare(
+				`INSERT INTO site_revisions (id, organization_id, site_id, kind, release_id, note, created_at)
+				SELECT ?, s.organization_id, s.id, 'release', ?,
+					(SELECT 'Uploaded ' || c.file_name || ' (' || substr(c.sha256, 1, 12) || ')'
+						FROM custom_releases c WHERE c.id = ? AND c.organization_id = s.organization_id),
+					? FROM sites s
+				WHERE s.id = ? AND COALESCE((SELECT r.release_id FROM site_revisions r
+					WHERE r.site_id = s.id ORDER BY r.created_at DESC, r.id DESC LIMIT 1), '') != ?`
 			)
-			.bind(releaseId, now, releaseId, siteId)
-			.run();
+			.bind(`rev_${crypto.randomUUID()}`, releaseId, releaseId, now, siteId, releaseId);
 	}
 
 	async setSiteState(siteId: string, state: SiteRowState, now: number): Promise<void> {

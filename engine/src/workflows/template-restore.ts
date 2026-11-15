@@ -12,8 +12,13 @@ export interface TemplateCreate {
 
 export const TEMPLATE_RESTORE_STEPS = [
 	{ id: 'template-restore', name: 'Send the template database' },
-	{ id: 'template-apply', name: 'Wait for the site to apply the template' }
+	{ id: 'template-apply', name: 'Wait for the site to apply the template' },
+	{ id: 'template-code', name: 'Install the template code' }
 ];
+
+// a window of the lock is 40 packages, so the largest measured lock (274) takes 7 windows; the cap
+// only stops a site that never advances its cursor
+const MAX_LOCK_WINDOWS = 30;
 
 export type TemplateRestoreDeps = EngineDeps &
 	Partial<Pick<TemplateCreateDeps, 'worker' | 'blobs' | 'sleep'>> & {
@@ -126,4 +131,174 @@ export async function restoreTemplate(
 			await sleep(pollMs);
 		}
 	});
+}
+
+// the site's sentence for a package it could not install, turned into the reason an owner reads
+const LOCK_FAILURES: readonly (readonly [RegExp, string])[] = [
+	[/does not match its published/, 'its download did not match its checksum'],
+	[/is commit .+ so it is not installed/, 'its archive is a different commit from the lock'],
+	[/has no downloadable archive/, 'it has no downloadable archive'],
+	[/ships a .+ which is not read here/, 'its archive type is not supported'],
+	[/publishes a digest this cannot read/, 'its checksum is in a format the site cannot read'],
+	[/holds a path that leaves its mount/, 'its archive holds a path outside its folder'],
+	[/^archive \d{3} from /, 'its archive could not be downloaded']
+];
+
+// the site's reason for a skipped package, in words an owner reads without the site's internals
+const LOCK_SKIPS: readonly (readonly [RegExp, string])[] = [
+	[/^composer-plugin:/, 'a Composer plugin, which cannot run on the site'],
+	[/^metapackage:/, 'a metapackage with no files of its own'],
+	[/^path package:/, 'the template carries its own copy of it'],
+	[/^drupal core ships/, 'Drupal core is already part of the site'],
+	[/^shipped: the pack carries .+ and keeps it/, 'the site keeps the version it already has'],
+	[/^shipped: /, 'the site already has this version'],
+	[/^provided:/, 'the site already has a package that provides it'],
+	[/^no dist url/, 'the lock gives no download address for it']
+];
+
+// an unmatched sentence is passed through as the site wrote it
+function lockFailureReason(error: string): string {
+	return LOCK_FAILURES.find(([pattern]) => pattern.test(error))?.[1] ?? error;
+}
+
+function lockSkipReason(reason: string): string {
+	return LOCK_SKIPS.find(([pattern]) => pattern.test(reason))?.[1] ?? reason;
+}
+
+// the note after the site name on a finished create; empty when the lock left nothing to say
+export function lockSummaryNote(summary: TemplateCodeSummary): string {
+	const { skippedPackages } = summary;
+	const count = skippedPackages.length;
+	const listed = skippedPackages.map((entry) => `${entry.name} (${entry.reason})`).join(', ');
+	const verb = count === 1 ? 'package was' : 'packages were';
+	const skipped = count === 0 ? '' : `; ${count} ${verb} skipped: ${listed}`;
+	const patches =
+		summary.patches === 'not applied'
+			? '; Patches Not Applied, because a lock does not carry Composer patches'
+			: '';
+	return `${skipped}${patches}`;
+}
+
+function isRefusal(error: unknown): error is PermanentError {
+	return error instanceof PermanentError && error.code === 'install_lock_refused';
+}
+
+// what the success note says about the lock; the site counts skips across the whole session
+export interface TemplateCodeSummary {
+	skippedPackages: { name: string; reason: string }[];
+	patches: string;
+}
+
+// the database carries the installed extension list and configuration; the lock brings the code
+// that list names, one window of packages per durable step, so a retry resumes at the last cursor
+export async function installTemplateCode(
+	ctx: Ctx,
+	deps: TemplateRestoreDeps,
+	target: { siteId: string; hostname: string; ownerTokenId: string | null },
+	template: TemplateCreate
+): Promise<TemplateCodeSummary | null> {
+	let cursor = 0;
+	let summary: TemplateCodeSummary | null = null;
+	for (let window = 0; window < MAX_LOCK_WINDOWS; window++) {
+		const next = await runStep(
+			ctx,
+			`template-code${window}`,
+			'template-code',
+			async () => {
+				await fenced(ctx);
+				const { worker, blobs } = needed(deps);
+				if (target.ownerTokenId === null) {
+					throw new TemplateRestoreError(
+						'template_needs_owner_token',
+						'the site has no owner token to install the template code with'
+					);
+				}
+				const bytes = await blobs.get(template.bundleKey);
+				if (bytes === null) {
+					throw new TemplateRestoreError(
+						'template_missing',
+						'the template bundle is missing'
+					);
+				}
+				let lock: Uint8Array | null;
+				try {
+					const bundle = await parseBundle(bytes);
+					const listed = bundle.manifest.sections.some(
+						(section) => section.name === 'composer.lock'
+					);
+					lock = listed ? bundle.section('composer.lock') : null;
+				} catch (error) {
+					return bundleRefusal(error);
+				}
+				if (lock === null) return { done: true, cursor: 0, summary: null };
+				const body: Uint8Array = lock;
+				const ownerTokenId = target.ownerTokenId;
+				const answer = await deps.custody
+					.withOwnerToken(target.siteId, ownerTokenId, (bearer) =>
+						worker.installLock(target.hostname, body, cursor, { bearer })
+					)
+					.catch((error: unknown) => {
+						if (isRefusal(error)) {
+							throw new TemplateRestoreError(
+								'template_code_refused',
+								`the site will not install the template code: ${error.message}`
+							);
+						}
+						throw error;
+					});
+				if (answer === 'absent') {
+					throw new TemplateRestoreError(
+						'template_code_unsupported',
+						'the site does not have the route that installs a template lock yet'
+					);
+				}
+				if (answer.failure !== null) {
+					const reason = lockFailureReason(answer.failure.error);
+					const removed = await deps.custody
+						.withOwnerToken(target.siteId, ownerTokenId, (bearer) =>
+							worker.rollbackLock(target.hostname, answer.session, { bearer })
+						)
+						.then(
+							() => true,
+							() => false
+						);
+					throw new TemplateRestoreError(
+						'template_code_failed',
+						`the site could not install ${answer.failure.name}: ${reason}${
+							removed ? '' : '; the partly installed code could not be removed'
+						}`
+					);
+				}
+				if (!answer.done && answer.cursor <= cursor) {
+					throw new TemplateRestoreError(
+						'template_code_stalled',
+						'the site did not advance through the template lock'
+					);
+				}
+				if (!answer.done && window === MAX_LOCK_WINDOWS - 1) {
+					throw new TemplateRestoreError(
+						'template_code_stalled',
+						'the template lock took more calls than a lock of this size should'
+					);
+				}
+				return {
+					done: answer.done,
+					cursor: answer.cursor,
+					summary: {
+						skippedPackages: answer.skippedPackages.map((entry) => ({
+							name: entry.name,
+							reason: lockSkipReason(entry.reason)
+						})),
+						patches: answer.patches
+					}
+				};
+			},
+			{ finish: false }
+		);
+		summary = next.summary;
+		if (next.done) break;
+		cursor = next.cursor;
+	}
+	await runStep(ctx, 'template-code', 'template-code', async () => undefined);
+	return summary;
 }

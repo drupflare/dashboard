@@ -79,8 +79,7 @@ export const ASSUMED_IMPORT_HOUR_CAPS: {
 	jobHours: 0.5,
 	plans: {
 		'managed-free': { perMonthHours: 1, perDayHours: 0.5 },
-		'managed-site': { perMonthHours: 3, perDayHours: 1 },
-		'managed-studio': { perMonthHours: 6, perDayHours: 2 },
+		'managed-pro': { perMonthHours: 6, perDayHours: 2 },
 		'managed-agency': { perMonthHours: 15, perDayHours: 4 },
 		'institution-starter': 'approval',
 		'institution-standard': 'approval'

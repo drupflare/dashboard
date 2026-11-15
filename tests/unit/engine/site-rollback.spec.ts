@@ -9,7 +9,11 @@ import {
 	runSiteRollback,
 	type SiteRollbackInput
 } from '../../../engine/src/workflows/site-rollback';
-import { runSiteUpgrade, type SiteUpgradeInput } from '../../../engine/src/workflows/site-upgrade';
+import {
+	planSiteUpgrade,
+	runSiteUpgrade,
+	type SiteUpgradeInput
+} from '../../../engine/src/workflows/site-upgrade';
 import {
 	beginCreate,
 	Killed,
@@ -170,6 +174,75 @@ describe('a rollback the data allows', () => {
 	});
 });
 
+describe('a rollback in a customer account', () => {
+	it('uploads the earlier bundle with no name, authority or resource change', async () => {
+		const world = await makeWorld({ plane: 'self-managed' });
+		await beginCreate(world);
+		await runSiteCreate(makeRunner(new Map()).runner, world.deps, world.input);
+		const next = await makeBundle('v1.0.5', 7);
+		world.deps.releases = combined(world.bundle, next);
+		const site: SiteUpgradeInput['site'] = {
+			id: world.siteId,
+			orgId: world.orgId,
+			kind: 'drupal',
+			plane: 'self-managed',
+			config: 'managed',
+			ring: 'R1',
+			plan: 'free',
+			accountId: world.accountId
+		};
+		const up: SiteUpgradeInput = {
+			operationId: UPGRADE_ID,
+			site,
+			hostname: world.input.hostname,
+			releaseId: 'v1.0.5',
+			currentRelease: 'v1.0.4',
+			probe: { path: '/health', expectStatus: 200, auth: 'owner-token' }
+		};
+		await world.store.begin({
+			operation: newOperation({
+				id: UPGRADE_ID,
+				orgId: world.orgId,
+				idempotencyKey: 'upgrade-1',
+				frozen: await freezePlan(planSiteUpgrade(up)),
+				now: world.clock.now()
+			}),
+			accountId: world.accountId,
+			siteId: world.siteId
+		});
+		expect(await runSiteUpgrade(makeRunner(new Map()).runner, world.deps, up)).toEqual({
+			status: 'succeeded'
+		});
+		const input: SiteRollbackInput = {
+			...up,
+			operationId: ROLLBACK_ID,
+			releaseId: 'v1.0.4',
+			currentRelease: 'v1.0.5'
+		};
+		await world.store.begin({
+			operation: newOperation({
+				id: ROLLBACK_ID,
+				orgId: world.orgId,
+				idempotencyKey: 'rollback-1',
+				frozen: await freezePlan(planSiteRollback(input)),
+				now: world.clock.now()
+			}),
+			accountId: world.accountId,
+			siteId: world.siteId
+		});
+		const names = [...world.names.calls];
+		const hosts = world.authority.snapshot();
+		const deps: RollbackDeps = { ...world.deps, rollbackFacts: async () => OPEN };
+		expect(await runSiteRollback(makeRunner(new Map()).runner, deps, input)).toEqual({
+			status: 'succeeded'
+		});
+		expect(live(world).tags).toContain('v:v1.0.4');
+		expect(releaseRow(world)).toBe('v1.0.4');
+		expect(world.names.calls).toEqual(names);
+		expect(world.authority.snapshot()).toEqual(hosts);
+	});
+});
+
 describe('a rollback the data refuses', () => {
 	const refusals: [string, RollbackFacts][] = [
 		[
@@ -218,11 +291,11 @@ describe('what the preflight refuses', () => {
 		expect(releaseRow(world)).toBe('v1.0.5');
 	});
 
-	it('refuses a site that is not managed', async () => {
+	it('refuses a site that is neither managed nor self-managed', async () => {
 		const { input, deps } = await updatedSite();
 		const outcome = await runSiteRollback(makeRunner(new Map()).runner, deps, {
 			...input,
-			site: { ...input.site, plane: 'self-managed' }
+			site: { ...input.site, plane: 'self-hosted' }
 		});
 		expect((outcome as { reason: string }).reason).toContain('unsupported_plane');
 	});

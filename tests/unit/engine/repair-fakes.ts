@@ -25,6 +25,14 @@ export const SITE_HOST = 'repair.drupflare.app';
 // findings an /invalidate clears when it works
 export const INVALIDATE_CLEARS = ['render.empty', 'render.size_anomaly', 'cache.anonymous_purity'];
 
+// findings a /recycle clears when it works
+export const RECYCLE_CLEARS = [
+	'bridge.asyncify_called',
+	'bridge.mask_leaked',
+	'memory.highwater_rising',
+	'memory.trend_rising'
+];
+
 // a site the repair routes act on: each route changes the state the next read reports
 export function fakeRepairSite() {
 	const state = {
@@ -79,6 +87,17 @@ export function fakeRepairSite() {
 					return { status: 200, json: { ran: { id: 'step' } } };
 				}
 				return { status: 200, json: { ran: null } };
+			}
+			if (call.path === '/recycle') {
+				if (state.transactionDepth) return { status: 409, json: { error: 'open' } };
+				if (state.fixes) {
+					for (const code of RECYCLE_CLEARS) state.findings.delete(code);
+				}
+				return { status: 200, json: { ok: true, recycled: state.fixes } };
+			}
+			if (call.path === '/ledger-gc') {
+				if (state.fixes) state.findings.delete('health.ledger_oversized');
+				return { status: 200, json: { ok: true, rowsDeleted: state.fixes ? 7 : 0 } };
 			}
 			return { status: 404, json: null };
 		}

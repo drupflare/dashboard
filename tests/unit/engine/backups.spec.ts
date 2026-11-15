@@ -815,6 +815,105 @@ describe('the worker adapter', () => {
 			return { worker, seen };
 		};
 
+		it('posts one window of a lock with the cursor and reads the answer', async () => {
+			const lock = new TextEncoder().encode(JSON.stringify({ packages: [{ name: 'a/b' }] }));
+			const window = {
+				ok: true,
+				done: false,
+				cursor: 40,
+				total: 100,
+				installed: [{}, {}],
+				skipped: [
+					{ name: 'c/d', version: '1.0.0', reason: 'metapackage: it carries no files' }
+				],
+				failed: [],
+				session: 'a1b2c3d4e5f6a7b8',
+				patches: 'not applied'
+			};
+			const ok = answering(200, window);
+			expect(await ok.worker.installLock('h.app', lock, 0, auth)).toEqual({
+				done: false,
+				cursor: 40,
+				total: 100,
+				installed: 2,
+				skipped: 1,
+				failure: null,
+				session: 'a1b2c3d4e5f6a7b8',
+				skippedPackages: [{ name: 'c/d', reason: 'metapackage: it carries no files' }],
+				patches: 'not applied'
+			});
+			expect(ok.seen[0]).toMatchObject({ url: 'https://h.app/install-lock', method: 'POST' });
+			expect(JSON.parse(String(ok.seen[0]?.body))).toEqual({
+				packages: [{ name: 'a/b' }],
+				cursor: 0
+			});
+			const failed = answering(502, {
+				...window,
+				ok: false,
+				failed: [{ name: 'drupal/token', error: 'archive 502' }]
+			});
+			expect(
+				(await failed.worker.installLock('h.app', lock, 40, auth)) as object
+			).toMatchObject({
+				failure: { name: 'drupal/token', error: 'archive 502' }
+			});
+			expect(await answering(404, 'no').worker.installLock('h.app', lock, 0, auth)).toBe(
+				'absent'
+			);
+			await expect(
+				answering(422, { error: 'core 10.3 against 11.4' }).worker.installLock(
+					'h.app',
+					lock,
+					0,
+					auth
+				)
+			).rejects.toMatchObject({
+				code: 'install_lock_refused',
+				message: expect.stringContaining('core 10.3 against 11.4')
+			});
+			await expect(
+				answering(401).worker.installLock('h.app', lock, 0, auth)
+			).rejects.toMatchObject({ code: 'owner_token_rejected' });
+			await expect(
+				answering(503).worker.installLock('h.app', lock, 0, auth)
+			).rejects.toBeInstanceOf(Error);
+			await expect(
+				answering(200).worker.installLock(
+					'h.app',
+					new TextEncoder().encode('nope'),
+					0,
+					auth
+				)
+			).rejects.toMatchObject({ code: 'install_lock_unreadable' });
+		});
+
+		it('rolls back a lock session with a DELETE, and a session the site lacks is already gone', async () => {
+			const rolled = answering(200, {
+				ok: true,
+				session: 'a1b2c3d4e5f6a7b8',
+				rolledBack: true
+			});
+			await rolled.worker.rollbackLock('h.app', 'a1b2c3d4e5f6a7b8', auth);
+			expect(rolled.seen[0]).toMatchObject({
+				url: 'https://h.app/install-lock?session=a1b2c3d4e5f6a7b8',
+				method: 'DELETE'
+			});
+			await expect(
+				answering(404, { error: 'no such session' }).worker.rollbackLock(
+					'h.app',
+					'a1b2c3d4e5f6a7b8',
+					auth
+				)
+			).resolves.toBeUndefined();
+			await expect(
+				answering(409, { error: 'a transaction is open' }).worker.rollbackLock(
+					'h.app',
+					'a1b2c3d4e5f6a7b8',
+					auth
+				)
+			).rejects.toBeInstanceOf(Error);
+		});
+
 		it('probes the route and treats a missing one as an old site', async () => {
 			expect(
 				await answering(200, { ok: true, upload: null }).worker.pagedRestoreSupported(
