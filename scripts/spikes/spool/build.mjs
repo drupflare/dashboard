@@ -4,8 +4,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const out = join(here, 'site');
-const pkg = join(here, '..', '..', '..', 'node_modules', '@drupflare', 'spool', 'dist', 'cdn');
+const out = process.env.SITE_DIR ?? join(here, 'site');
+const pkg =
+	process.env.SPOOL_CDN ??
+	join(here, '..', '..', '..', 'node_modules', '@drupflare', 'spool', 'dist', 'cdn');
 const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
 const tag = process.env.SPIKE_NO_CLIENT
 	? ''
