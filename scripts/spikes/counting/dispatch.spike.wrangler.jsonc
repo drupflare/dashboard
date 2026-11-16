@@ -1,0 +1,27 @@
+{
+	"name": "drupflare-dispatch-spike",
+	"main": "../../../dispatch/src/index.ts",
+	"compatibility_date": "2026-08-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"observability": { "enabled": true },
+	"vars": {
+		"SPIKE_MODE": "1",
+		"CONTROL_HOST": "ctl-spike.drupflare.app",
+		"GATE_ORIGIN": "",
+		"GATE_PUBLIC_KEY": ""
+	},
+	"dispatch_namespaces": [{ "binding": "DISPATCH", "namespace": "drupflare-stage" }],
+	"kv_namespaces": [{ "binding": "HOSTS_KV", "id": "1550a54a12394d51b28c9ff3ee7219e1" }],
+	"analytics_engine_datasets": [{ "binding": "USAGE", "dataset": "drupflare_usage_spike" }],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "SITE_AUTH", "class_name": "SiteAuth" },
+			{ "name": "NAMES", "class_name": "Names" },
+			{ "name": "USAGE_COUNTER", "class_name": "UsageCounter" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["SiteAuth", "Names"] },
+		{ "tag": "v2", "new_sqlite_classes": ["UsageCounter"] }
+	]
+}
