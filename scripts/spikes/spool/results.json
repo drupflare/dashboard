@@ -1,0 +1,2743 @@
+{
+	"chromium": [
+		{
+			"i": 0,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 1,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 2,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 3,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 4,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 5,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 6,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 7,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 8,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 9,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"bypassReload": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		}
+	],
+	"firefox": [
+		{
+			"i": 0,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 1,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 2,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 3,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 4,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 5,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 6,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 7,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 8,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		},
+		{
+			"i": 9,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {},
+				"regsAfterNav1": 1,
+				"nav2": {},
+				"regsAfterNav2": 1,
+				"nav3": {},
+				"tagInDom": true
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/spool-sw.js": 1
+				},
+				"tagInDom": true
+			}
+		}
+	],
+	"webkit": [
+		{
+			"i": 0,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {
+					"/spool-sw.js": 1
+				},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			}
+		},
+		{
+			"i": 1,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {
+					"/spool-sw.js": 1
+				},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			}
+		},
+		{
+			"i": 2,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {
+					"/spool-sw.js": 1
+				},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			}
+		},
+		{
+			"i": 3,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {
+					"/spool-sw.js": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {
+					"/spool-sw.js": 1
+				},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			}
+		},
+		{
+			"i": 4,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {
+					"/spool-sw.js": 1
+				},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			}
+		},
+		{
+			"i": 5,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {
+					"/spool-sw.js": 1
+				},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			}
+		},
+		{
+			"i": 6,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {
+					"/spool-sw.js": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			}
+		},
+		{
+			"i": 7,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {
+					"/spool-sw.js": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {
+					"/spool-sw.js": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			}
+		},
+		{
+			"i": 8,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {
+					"/spool-sw.js": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			}
+		},
+		{
+			"i": 9,
+			"spool": {
+				"arm": "spool",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {},
+				"keyboardReload": {
+					"/spool-sw.js": 1
+				},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"control": {
+				"arm": "control",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"spoolNoStore": {
+				"arm": "spoolNoStore",
+				"second": {
+					"/docs/b": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1,
+					"/client.js": 1
+				},
+				"revisit": {},
+				"fresh": {
+					"/docs/d": 1,
+					"/spool-sw.js": 1
+				},
+				"reload": {
+					"/spool-sw.js": 1
+				},
+				"keyboardReload": {},
+				"unlisted": {
+					"/docs/unlisted": 1
+				}
+			},
+			"controlNoStore": {
+				"arm": "controlNoStore",
+				"second": {
+					"/docs/b": 1
+				},
+				"revisit": {
+					"/docs/b": 1
+				},
+				"fresh": {
+					"/docs/d": 1
+				}
+			},
+			"kill": {
+				"arm": "kill-swAge86400",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			},
+			"killNoCache": {
+				"arm": "kill-swAge0",
+				"regsBefore": 1,
+				"nav1": {
+					"/spool-sw.js": 1
+				},
+				"regsAfterNav1": 0,
+				"nav2": {
+					"/docs/c": 1,
+					"/docs/style.css": 1,
+					"/docs/app.js": 1
+				},
+				"regsAfterNav2": 0,
+				"nav3": {
+					"/docs/d": 1
+				},
+				"tagInDom": false
+			}
+		}
+	]
+}

@@ -1,0 +1,60 @@
+{
+	"schema": 1,
+	"routes": [
+		{
+			"pattern": "/docs/a",
+			"strategy": "static",
+			"version": "sha256-NtvUkoUQXNz+/gAQcfhVTR6zAIBzmMwzUTDUe4avAiQ="
+		},
+		{
+			"pattern": "/docs/b",
+			"strategy": "static",
+			"version": "sha256-vFFALcTsByAekgvd/Ha7cDR7C4KL7qYgUPMQ4eCMRTI="
+		},
+		{
+			"pattern": "/docs/c",
+			"strategy": "static",
+			"version": "sha256-Xu5hy3WmMEJASDMjpJwaS7q9Z6S2EGQT6+v2k8tPqUY="
+		},
+		{
+			"pattern": "/docs/d",
+			"strategy": "static",
+			"version": "sha256-modS17g3R1nzD5eqTBRO3y8VkUCg0GGxHsg3Ll2gUTM="
+		},
+		{
+			"pattern": "/docs/e",
+			"strategy": "static",
+			"version": "sha256-jT7awyofp5HSvuchLJYBJcUXgi95IcyBo+PCp3/ZCNc="
+		},
+		{
+			"pattern": "/docs/f",
+			"strategy": "static",
+			"version": "sha256-C9RrLrWdvbiZvaomL2kb+QUL21ST/mf6fIMthPzrv9I="
+		},
+		{
+			"pattern": "/docs/g",
+			"strategy": "static",
+			"version": "sha256-AWA4vaiMuvhraDZDWNjxZGIaRnM25Zze9Lc0XStbmu0="
+		},
+		{
+			"pattern": "/docs/h",
+			"strategy": "static",
+			"version": "sha256-ubPZXWC9TLs3K0ql+XeUA753H904J8M6kj0rdb7Affo="
+		},
+		{
+			"pattern": "/docs/style.css",
+			"strategy": "static",
+			"version": "sha256-t3vL8I9Ccze1G86vR6ACzdN576xvTR80DDsrNzpYZ+U="
+		},
+		{
+			"pattern": "/docs/app.js",
+			"strategy": "static",
+			"version": "sha256-mYgnB0yXNmoSEgnbgCWQBmC3Ha9ahWCcaPk0DXjojDY="
+		},
+		{
+			"pattern": "/client.js",
+			"strategy": "static",
+			"version": "sha384-9IVGtEpjUD9iMvbttwonVRcqLMzcqu1h+ejr241O16BA/pwIFzacKWZ9VvtK/SuR"
+		}
+	]
+}
