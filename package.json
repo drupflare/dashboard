@@ -3,6 +3,7 @@
 	"type": "module",
 	"name": "@drupflare/dashboard",
 	"version": "1.0.0",
+	"license": "AGPL-3.0-only",
 	"scripts": {
 		"postinstall": "nuxt prepare",
 		"dev": "nuxt dev",
