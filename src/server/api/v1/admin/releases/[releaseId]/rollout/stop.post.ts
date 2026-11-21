@@ -17,5 +17,6 @@ export default defineApi(
 		body: z.strictObject({ rolloutId: z.string().min(1) }),
 		response: rolloutView
 	},
-	async ({ body }) => viewOf(await stopReleaseRollout(siteServices(), body.rolloutId), null)
+	async ({ params, body }) =>
+		viewOf(await stopReleaseRollout(siteServices(), params.releaseId, body.rolloutId), null)
 );

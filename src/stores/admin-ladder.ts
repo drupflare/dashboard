@@ -55,14 +55,11 @@ export const useAdminLadderStore = defineStore('admin-ladder', {
 			confirmation?: string
 		): Promise<void> {
 			try {
-				await $fetch('/api/v1/admin/ladder/switch', {
-					method: 'PUT',
-					body: {
-						scope,
-						scopeId,
-						auto,
-						...(confirmation === undefined ? {} : { confirmation })
-					}
+				await useApi().put('/admin/ladder/switch', {
+					scope,
+					scopeId,
+					auto,
+					...(confirmation === undefined ? {} : { confirmation })
 				});
 			} catch (error) {
 				const apiError = toApiClientError(error);

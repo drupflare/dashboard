@@ -14,6 +14,14 @@ const me = (platformRole: 'admin' | null) => ({
 	stepUpUntil: null
 });
 
+// the admin front page cards; every overview mock carries them
+const CARDS = {
+	work: { running: 0, failedLastDay: 0 },
+	abuseOpen: 0,
+	switchesOn: [],
+	rollout: null
+};
+
 let cleanup: () => void = () => undefined;
 const mounted: { unmount: () => void }[] = [];
 
@@ -32,7 +40,13 @@ async function mountPage(role: 'admin' | null) {
 	cleanup = registerApi({
 		'GET /api/v1/me': { body: me(role) },
 		'GET /api/v1/admin/overview': {
-			body: { users: 4, organizations: 2, sites: { active: 3 }, operations: { succeeded: 5 } }
+			body: {
+				users: 4,
+				organizations: 2,
+				sites: { active: 3 },
+				operations: { succeeded: 5 },
+				...CARDS
+			}
 		},
 		'GET /api/v1/admin/users': {
 			body: {
@@ -63,7 +77,13 @@ describe('admin page states', () => {
 			'GET /api/v1/admin/overview': async () => {
 				await new Promise((resolve) => setTimeout(resolve, 150));
 				return {
-					body: { users: 4, organizations: 2, sites: { active: 3 }, operations: {} }
+					body: {
+						users: 4,
+						organizations: 2,
+						sites: { active: 3 },
+						operations: {},
+						...CARDS
+					}
 				};
 			}
 		});
@@ -86,7 +106,7 @@ describe('admin page states', () => {
 		cleanup = registerApi({
 			'GET /api/v1/me': { body: me('admin') },
 			'GET /api/v1/admin/overview': {
-				body: { users: 1, organizations: 1, sites: {}, operations: {} }
+				body: { users: 1, organizations: 1, sites: {}, operations: {}, ...CARDS }
 			},
 			'GET /api/v1/admin/users': async () => {
 				await new Promise((resolve) => setTimeout(resolve, 150));
@@ -140,7 +160,7 @@ describe('admin page', () => {
 		cleanup = registerApi({
 			'GET /api/v1/me': { body: me('admin') },
 			'GET /api/v1/admin/overview': {
-				body: { users: 1, organizations: 1, sites: {}, operations: {} }
+				body: { users: 1, organizations: 1, sites: {}, operations: {}, ...CARDS }
 			},
 			'GET /api/v1/admin/operations': {
 				body: {
@@ -196,7 +216,7 @@ describe('admin page', () => {
 		cleanup = registerApi({
 			'GET /api/v1/me': { body: me('admin') },
 			'GET /api/v1/admin/overview': {
-				body: { users: 1, organizations: 1, sites: {}, operations: {} }
+				body: { users: 1, organizations: 1, sites: {}, operations: {}, ...CARDS }
 			},
 			'GET /api/v1/admin/capacity': {
 				body: {

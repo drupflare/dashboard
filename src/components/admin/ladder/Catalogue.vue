@@ -5,7 +5,12 @@ defineProps<{ rows: LadderRow[] }>();
 </script>
 
 <template>
-	<div class="overflow-x-auto rounded-lg border border-default">
+	<div
+		class="overflow-x-auto rounded-lg border border-default"
+		tabindex="0"
+		role="region"
+		aria-label="Repair Catalogue"
+	>
 		<table class="w-full text-left text-sm">
 			<caption class="sr-only">
 				Repair Catalogue

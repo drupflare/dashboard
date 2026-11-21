@@ -153,15 +153,17 @@ interface OrganizationRow {
 	created_at: number;
 }
 
+// the search matches a name anywhere in it; the wildcard characters in the term match themselves
 export async function listAdminOrganizations(
 	db: CollegeDBClient,
-	options: { before?: number; limit: number }
+	options: { before?: number; limit: number; q?: string }
 ): Promise<Page<AdminOrganization>> {
+	const pattern = `%${(options.q ?? '').replace(/[\\%_]/g, '\\$&')}%`;
 	const rows = await eachShard<OrganizationRow>(
 		db,
 		`SELECT id, name, personal, created_by, created_at FROM organizations
-		 WHERE created_at < ? ORDER BY created_at DESC LIMIT ?`,
-		[options.before ?? NEWEST, options.limit + 1]
+		 WHERE created_at < ? AND name LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT ?`,
+		[options.before ?? NEWEST, pattern, options.limit + 1]
 	);
 	return toPage(
 		rows.map((row) => ({
@@ -223,9 +225,18 @@ interface OperationRow {
 	updated_at: number;
 }
 
+// the same statuses adminWork counts as in flight and as failed
+const OPERATION_FILTERS = {
+	all: '1 = 1',
+	'in-flight': "o.status IN ('running', 'verifying')",
+	failed: "o.status IN ('failed', 'rolled-back')"
+} as const;
+
+export type OperationFilter = keyof typeof OPERATION_FILTERS;
+
 export async function listAdminOperations(
 	db: CollegeDBClient,
-	options: { before?: number; limit: number }
+	options: { before?: number; limit: number; filter?: OperationFilter }
 ): Promise<Page<AdminOperation>> {
 	const rows = await eachShard<OperationRow>(
 		db,
@@ -233,7 +244,8 @@ export async function listAdminOperations(
 			(SELECT s.id FROM operation_steps s
 			 WHERE s.operation_id = o.id AND s.state = 'failed' ORDER BY s.position LIMIT 1) AS failed_step,
 			o.created_at, o.updated_at
-		 FROM operations o WHERE o.created_at < ? ORDER BY o.created_at DESC LIMIT ?`,
+		 FROM operations o WHERE o.created_at < ? AND ${OPERATION_FILTERS[options.filter ?? 'all']}
+		 ORDER BY o.created_at DESC LIMIT ?`,
 		[options.before ?? NEWEST, options.limit + 1]
 	);
 	return toPage(
@@ -254,6 +266,24 @@ export async function listAdminOperations(
 		})),
 		options.limit
 	);
+}
+
+// the members sit on the organisation's own shard; its sites are read from every shard
+export async function adminOrganizationCounts(
+	db: CollegeDBClient,
+	organizationId: string
+): Promise<{ members: number; sites: Record<string, number> }> {
+	const members = await db.first<{ n: number }>(
+		organizationId,
+		'SELECT COUNT(*) AS n FROM members WHERE organization_id = ?',
+		[organizationId]
+	);
+	const sites = await eachShard<{ key: string; n: number }>(
+		db,
+		'SELECT state AS key, COUNT(*) AS n FROM sites WHERE organization_id = ? GROUP BY state',
+		[organizationId]
+	);
+	return { members: members?.n ?? 0, sites: countsBy(sites) };
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;

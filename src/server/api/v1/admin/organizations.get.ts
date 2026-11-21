@@ -11,8 +11,9 @@ export default defineApi(
 		rateClass: 'read',
 		tags: ['admin'],
 		summary: 'List organizations',
-		description: 'The newest organizations first across every shard.',
-		query: adminPageQuery,
+		description:
+			'The newest organizations first across every shard. A name search matches any part of the name.',
+		query: adminPageQuery.extend({ q: z.string().trim().max(100).optional() }),
 		response: adminPageOf(
 			z.object({
 				id: z.string(),

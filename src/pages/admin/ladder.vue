@@ -43,7 +43,7 @@ useHead({ title: 'Repair Ladder' });
 		title="Page Not Found"
 		text="There is nothing at this address."
 	/>
-	<main
+	<div
 		v-else
 		class="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6"
 	>
@@ -77,5 +77,5 @@ useHead({ title: 'Repair Ladder' });
 				@save="save"
 			/>
 		</template>
-	</main>
+	</div>
 </template>

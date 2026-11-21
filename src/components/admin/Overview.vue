@@ -7,6 +7,16 @@ interface Overview {
 	organizations: number;
 	sites: Record<string, number>;
 	operations: Record<string, number>;
+	work: { running: number; failedLastDay: number };
+	abuseOpen: number;
+	switchesOn: string[];
+	rollout: {
+		releaseId: string;
+		upgraded: number;
+		failed: number;
+		reverted: number;
+		stuck: number;
+	} | null;
 }
 
 const data = ref<Overview | null>(null);
@@ -77,6 +87,24 @@ const groups = computed(() =>
 		class="flex flex-col gap-8"
 	>
 		<dl class="grid max-w-md grid-cols-2 gap-y-3 text-lg">
+			<dt class="text-muted">Operations in Flight</dt>
+			<dd class="text-right font-semibold text-highlighted">{{ data.work.running }}</dd>
+			<dt class="text-muted">Failed in the Last Day</dt>
+			<dd class="text-right font-semibold text-highlighted">{{ data.work.failedLastDay }}</dd>
+			<dt class="text-muted">Open Abuse Reports</dt>
+			<dd class="text-right font-semibold text-highlighted">{{ data.abuseOpen }}</dd>
+			<dt class="text-muted">Switches On</dt>
+			<dd class="text-right font-semibold text-highlighted">
+				{{ data.switchesOn.length === 0 ? 'None' : data.switchesOn.join(', ') }}
+			</dd>
+			<dt class="text-muted">Rollout</dt>
+			<dd class="text-right font-semibold text-highlighted">
+				{{
+					data.rollout
+						? `${data.rollout.upgraded} upgraded, ${data.rollout.failed} failed, ${data.rollout.stuck} stuck`
+						: 'None running'
+				}}
+			</dd>
 			<dt class="text-muted">Users</dt>
 			<dd class="text-right font-semibold text-highlighted">{{ data.users }}</dd>
 			<dt class="text-muted">Organizations</dt>

@@ -9,7 +9,14 @@ interface Column {
 	kind?: 'text' | 'date' | 'mono';
 }
 
-const props = defineProps<{ path: string; columns: Column[]; empty: string }>();
+const props = defineProps<{
+	path: string;
+	columns: Column[];
+	empty: string;
+	query?: Record<string, string>;
+	// when set, the first cell links to this prefix plus the row id
+	rowTo?: string;
+}>();
 
 const rows = ref<Row[]>([]);
 const next = ref<number | null>(null);
@@ -19,7 +26,7 @@ const error = ref('');
 async function load(more: boolean) {
 	status.value = 'loading';
 	try {
-		const query: Record<string, string> = { limit: '25' };
+		const query: Record<string, string> = { limit: '25', ...props.query };
 		if (more && next.value !== null) query.before = String(next.value);
 		const page = await adminGet<{ items: Row[]; nextBefore: number | null }>(props.path, query);
 		rows.value = more ? [...rows.value, ...page.items] : page.items;
@@ -70,6 +77,9 @@ function cell(row: Row, column: Column): string {
 		<div
 			v-else
 			class="overflow-x-auto rounded-lg border border-default"
+			tabindex="0"
+			role="region"
+			aria-label="Records"
 		>
 			<table class="w-full text-left text-sm">
 				<thead class="bg-elevated text-muted">
@@ -99,7 +109,13 @@ function cell(row: Row, column: Column): string {
 								column.kind === 'date' ? 'whitespace-nowrap text-muted' : ''
 							]"
 						>
-							{{ cell(row, column) }}
+							<NuxtLink
+								v-if="rowTo && column === columns[0]"
+								:to="`${rowTo}${String(row.id)}`"
+								class="text-brand-700 hover:underline dark:text-brand-300"
+								>{{ cell(row, column) }}</NuxtLink
+							>
+							<template v-else>{{ cell(row, column) }}</template>
 						</td>
 					</tr>
 				</tbody>

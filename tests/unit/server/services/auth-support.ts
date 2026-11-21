@@ -284,6 +284,7 @@ export interface Harness extends AuthDeps {
 	mail: MemoryMail;
 	turnstileCalls: { token: string | undefined; ip: string | undefined }[];
 	passTurnstile: boolean;
+	paused: boolean;
 }
 
 // a full set of fake collaborators; set passturnstile false to make the bot check fail
@@ -298,6 +299,8 @@ export function harness(): Harness {
 		codeSecret: SECRET,
 		turnstileCalls,
 		passTurnstile: true,
+		paused: false,
+		signupsPaused: async () => h.paused,
 		turnstile: async (token, ip) => {
 			turnstileCalls.push({ token, ip });
 			return h.passTurnstile;

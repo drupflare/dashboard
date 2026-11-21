@@ -176,7 +176,7 @@ export function rig(over: Partial<BillingServices> = {}): Rig {
 		audit: async (orgId, input) => {
 			audits.push({ orgId, input });
 		},
-		flags: { ssoBuilt: false, overageEnabled: false },
+		flags: { ssoBuilt: { oidc: true, saml: false }, overageEnabled: false },
 		now: () => clock.now,
 		log: (message, detail) => {
 			logs.push({ message, detail });

@@ -1,8 +1,11 @@
 <script setup lang="ts">
+import { ADMIN_CONSOLES, platformRoleHolds } from '~/shared/navigation';
+
 definePageMeta({ middleware: ['auth'] });
 useHead({ title: 'Admin' });
 
 const session = useSessionStore();
+const consoles = ADMIN_CONSOLES.filter((item) => platformRoleHolds('admin', item.action));
 
 const tabs = [
 	{ label: 'Overview', icon: 'i-lucide-chart-no-axes-column', value: 'overview' },
@@ -82,20 +85,14 @@ const listFor = computed(() => (tab.value in lists ? lists[tab.value as ListTab]
 				text="Read-only platform metadata. Site content is never shown."
 			>
 				<UButton
+					v-for="console in consoles"
+					:key="console.to"
 					color="neutral"
 					variant="outline"
-					icon="i-lucide-rocket"
-					to="/admin/releases"
+					:icon="console.icon"
+					:to="console.to"
 				>
-					Releases
-				</UButton>
-				<UButton
-					color="neutral"
-					variant="outline"
-					icon="i-lucide-list-ordered"
-					to="/admin/ladder"
-				>
-					Repair Ladder
+					{{ console.label }}
 				</UButton>
 			</UiPageHeader>
 			<UTabs

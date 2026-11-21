@@ -12,8 +12,10 @@ export default defineApi(
 		tags: ['admin'],
 		summary: 'List operations',
 		description:
-			'The newest operations first across every shard: type, status, verification and, for a failed one, the plain reason it stopped.',
-		query: adminPageQuery,
+			'The newest operations first across every shard: type, status, verification and, for a failed one, the plain reason it stopped. The filter narrows to operations in flight or failed.',
+		query: adminPageQuery.extend({
+			filter: z.enum(['all', 'in-flight', 'failed']).default('all')
+		}),
 		response: adminPageOf(
 			z.object({
 				id: z.string(),
