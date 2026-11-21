@@ -53,6 +53,9 @@ const when = (at: number) => new Date(at).toISOString().slice(0, 16).replace('T'
 		<div
 			v-else
 			class="overflow-x-auto rounded-lg border border-default"
+			tabindex="0"
+			role="region"
+			aria-label="Recent Failures"
 		>
 			<table class="w-full text-left text-sm">
 				<thead class="bg-elevated text-muted">
