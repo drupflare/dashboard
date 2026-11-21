@@ -32,6 +32,7 @@ import {
 } from '../db/repos/operations';
 import { listUserOrganizations } from '../db/repos/organization';
 import { getPlaneConnection } from '../db/repos/plane-connections';
+import { assertPolicy } from '../db/repos/policies';
 import {
 	countOrganizationSites,
 	getReadySite,
@@ -41,6 +42,7 @@ import {
 	type SiteRecord
 } from '../db/repos/sites';
 import { check, managedIsFree, type CheckDenial, type Entitlement } from '../domain/entitlements';
+import { checkTemplate } from '../domain/policy';
 import type { EngineStartRequest } from '../integrations/engine';
 import { EngineStartError } from '../integrations/engine';
 import { entitlementOf, type BillingStore } from './billing';
@@ -262,6 +264,13 @@ export async function createSite(
 					input.templateEntryId,
 					decision.entitlement.managedPlanId
 				);
+
+	const templateId = input.templateEntryId;
+	if (templateId !== undefined) {
+		await assertPolicy(await services.getDb(), { orgId: input.orgId }, (groups) =>
+			checkTemplate(groups, { template: templateId })
+		);
+	}
 
 	const siteId = newId('site');
 	const operationId = newId('op');

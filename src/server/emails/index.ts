@@ -1,3 +1,4 @@
+import type { AlertKey } from '../../shared/budget-rules';
 import type { NotificationCategory } from '../../shared/notifications';
 import { listHeaders } from '../services/notifications';
 
@@ -40,7 +41,37 @@ export type MailInput =
 			forecastUrl: string;
 			unsubscribeUrl: string;
 	  }
-	| { kind: 'digest'; windowLabel: string; lines: string[]; unsubscribeUrl: string };
+	| {
+			kind: 'budget-alert';
+			alert: AlertKey;
+			orgName: string;
+			// null: the alert is about the whole organisation
+			siteName: string | null;
+			views: number | null;
+			allowanceViews: number | null;
+			budgetPercent: number;
+			soft: boolean;
+			budgetUrl: string;
+			// present on the optional classes only
+			unsubscribeUrl?: string;
+	  }
+	| {
+			kind: 'access-review';
+			orgName: string;
+			scopeName: string;
+			dueDate: string;
+			reviewUrl: string;
+			unsubscribeUrl: string;
+	  }
+	| { kind: 'digest'; windowLabel: string; lines: string[]; unsubscribeUrl: string }
+	| {
+			kind: 'contact-verify';
+			orgName: string;
+			role: string;
+			confirmUrl: string;
+			expiresInDays: number;
+	  }
+	| { kind: 'test-notice'; orgName: string; role: string; sentAt: string; settingsUrl: string };
 
 export interface RenderedMail {
 	category: NotificationCategory;
@@ -76,8 +107,67 @@ const LOGIN_SUBJECT = {
 	'verify-email': 'Confirm your Drupflare email address'
 };
 
+const count = (value: number) => value.toLocaleString('en-US');
+
+// the block notice and the 90 percent of budget notice are essential; allowance alerts are optional
+export function budgetAlertCategory(alert: AlertKey): NotificationCategory {
+	return alert === 'blocked' || alert === 'budget-90' ? 'budget-limit' : 'billing-info';
+}
+
+function budgetContent(input: Extract<MailInput, { kind: 'budget-alert' }>): Content {
+	const who = input.siteName ?? input.orgName;
+	const percent = `${input.budgetPercent} percent`;
+	const cap =
+		input.allowanceViews === null
+			? null
+			: Math.ceil((input.allowanceViews * Math.round(input.budgetPercent * 10)) / 1000);
+	const used =
+		input.views === null
+			? []
+			: [
+					`We have counted at least ${count(input.views)} views this month${
+						input.allowanceViews === null
+							? '.'
+							: `, against a monthly allowance of ${count(input.allowanceViews)} views.`
+					}`
+				];
+	let subject: string;
+	let lead: string;
+	if (input.alert === 'blocked') {
+		subject = `${who} reached its spend budget`;
+		lead = `${who} on ${input.orgName} reached its spend budget of ${percent} of the monthly view allowance.`;
+	} else if (input.alert === 'budget-90') {
+		subject = `${who} is at 90 percent of its spend budget`;
+		lead = `${who} on ${input.orgName} has used 90 percent of its spend budget, which is ${percent} of the monthly view allowance.`;
+	} else {
+		const level = input.alert.slice('allowance-'.length);
+		subject = `${who} has used ${level} percent of its monthly views`;
+		lead = `${who} on ${input.orgName} has used ${level} percent of its monthly view allowance.`;
+	}
+	let meaning: string;
+	if (input.soft) {
+		meaning =
+			'Your budget is soft, so nothing is blocked. Visitors keep reaching the site whatever the count.';
+	} else if (input.alert === 'blocked') {
+		meaning =
+			'Visitors are no longer being served. A higher budget lifts the stop the next time the site renews its lease.';
+	} else {
+		meaning = `When the site reaches the budget${
+			cap === null ? '' : `, about ${count(cap)} views`
+		}, visitors stop being served until you raise the budget or the month ends.`;
+	}
+	return {
+		category: budgetAlertCategory(input.alert),
+		subject,
+		paragraphs: [lead, ...used, meaning],
+		links: [{ label: 'Change the budget', url: input.budgetUrl }]
+	};
+}
+
 function contentFor(input: MailInput): Content {
 	switch (input.kind) {
+		case 'budget-alert':
+			return budgetContent(input);
 		case 'login-code':
 			return {
 				category: 'login-code',
@@ -150,6 +240,36 @@ function contentFor(input: MailInput): Content {
 					'Check the usage forecast to see whether it will reach the limit.'
 				],
 				links: [{ label: 'Open the usage forecast', url: input.forecastUrl }]
+			};
+		case 'contact-verify':
+			return {
+				category: 'security-event',
+				subject: `Confirm your ${input.role} contact for ${input.orgName}`,
+				paragraphs: [
+					`Someone listed this address as the ${input.role} contact for ${input.orgName} on Drupflare.`,
+					`The link expires in ${input.expiresInDays} days. If you don't know this organisation, ignore this email.`
+				],
+				links: [{ label: 'Confirm this address', url: input.confirmUrl }]
+			};
+		case 'test-notice':
+			return {
+				category: 'ops',
+				subject: `Test notification for ${input.orgName}`,
+				paragraphs: [
+					`This is a test from ${input.orgName} on Drupflare, sent to the ${input.role} contact at ${input.sentAt}.`,
+					'No action is needed.'
+				],
+				links: [{ label: 'Open the contacts page', url: input.settingsUrl }]
+			};
+		case 'access-review':
+			return {
+				category: 'ops',
+				subject: `An access review is ready for ${input.orgName}`,
+				paragraphs: [
+					`A new access review is open for ${input.orgName}. It covers ${input.scopeName.toLowerCase()}.`,
+					`Decide each item by ${input.dueDate}: keep it, or remove it. Nobody can decide an item about themselves.`
+				],
+				links: [{ label: 'Open the review', url: input.reviewUrl }]
 			};
 		case 'digest':
 			return {

@@ -127,7 +127,7 @@ describe('composeDrupalDiscovery', () => {
 		}
 		expect(doc.redirects).toContainEqual({
 			from: '/_cfw/deploy',
-			to: `/sites/${siteId}/readiness`
+			to: `/sites/${siteId}`
 		});
 	});
 

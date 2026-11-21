@@ -158,3 +158,87 @@ describe('renderMail', () => {
 		}
 	});
 });
+
+describe('security-event mail', () => {
+	it('links the review button to the page the event names, not a fixed page', () => {
+		const site = renderMail({
+			kind: 'security-event',
+			summary: 'the site was suspended',
+			occurredAt: '2026-01-01T09:00:00Z',
+			reviewUrl: 'https://app.example.test/sites/site_1'
+		});
+		expect(site.html).toContain('https://app.example.test/sites/site_1');
+		expect(site.html).not.toContain('/org/sso');
+		expect(site.text).not.toContain('/org/sso');
+	});
+});
+
+describe('budget mail', () => {
+	const KEYS = [
+		'allowance-75',
+		'allowance-90',
+		'allowance-100',
+		'allowance-250',
+		'budget-90',
+		'blocked'
+	] as const;
+	const all = (): Extract<MailInput, { kind: 'budget-alert' }>[] =>
+		KEYS.flatMap((alert) =>
+			[true, false].flatMap((soft) =>
+				[null, 'Main site'].flatMap((siteName) =>
+					[1_234_567, null].map((views) => ({
+						kind: 'budget-alert' as const,
+						alert,
+						orgName: 'Riverside College',
+						siteName,
+						views,
+						allowanceViews: 1_000_000,
+						budgetPercent: 500,
+						soft,
+						budgetUrl: 'https://app.example.test/billing',
+						...(alert === 'blocked' || alert === 'budget-90'
+							? {}
+							: { unsubscribeUrl: `${UNSUBSCRIBE_BASE}x` })
+					}))
+				)
+			)
+		);
+
+	it('has no em dash, no price and never says instantly', () => {
+		for (const input of all()) {
+			const mail = renderMail(input);
+			for (const body of [mail.subject, mail.text, mail.html]) {
+				expect(body).not.toContain('—');
+				expect(body).not.toMatch(/\$|dollar|price|\binstant/i);
+				expect(body).not.toMatch(/\b(white-glove|seamless|robust|leverag\w*)\b/i);
+			}
+		}
+	});
+
+	it('puts the block notice and the 90 percent notice in the essential class', () => {
+		for (const input of all()) {
+			const mail = renderMail(input);
+			const essentialAlert = input.alert === 'blocked' || input.alert === 'budget-90';
+			expect(mail.category).toBe(essentialAlert ? 'budget-limit' : 'billing-info');
+			expect('List-Unsubscribe' in mail.headers).toBe(!essentialAlert);
+		}
+	});
+
+	it('says what happened, the numbers, what it means for visitors and where to change it', () => {
+		const hard = renderMail({
+			...all()[0]!,
+			alert: 'budget-90',
+			soft: false,
+			views: 4_600_000
+		});
+		expect(hard.text).toContain('90 percent of its spend budget');
+		expect(hard.text).toContain('4,600,000');
+		expect(hard.text).toContain('visitors stop being served');
+		expect(hard.text).toContain('Change the budget: https://app.example.test/billing');
+		const soft = renderMail({ ...all()[0]!, alert: 'budget-90', soft: true });
+		expect(soft.text).toContain('nothing is blocked');
+		expect(soft.text).not.toContain('stop being served');
+		const stop = renderMail({ ...all()[0]!, alert: 'blocked', soft: false });
+		expect(stop.text).toContain('no longer being served');
+	});
+});

@@ -21,9 +21,11 @@ import {
 	type AccessRuleRecord
 } from '../db/repos/access-rules';
 import { getEnvironment } from '../db/repos/environments';
+import { assertPolicy } from '../db/repos/policies';
 import { getReadySite } from '../db/repos/sites';
 import type { Principal } from '../domain/authorize';
 import type { Entitlement } from '../domain/entitlements';
+import { checkAccessRule } from '../domain/policy';
 import type { EngineStartRequest } from '../integrations/engine';
 import type { AuditInput } from './audit';
 import { newOperation, startAndReturn } from './backups';
@@ -291,6 +293,9 @@ export async function addAccessRule(
 	const { body } = input;
 	const db = await s.getDb();
 	await requireSite(db, input.orgId, input.siteId);
+	await assertPolicy(db, { orgId: input.orgId, siteId: input.siteId }, (groups) =>
+		checkAccessRule(groups, { preset: body.preset, emails: body.values ?? [] })
+	);
 	const entitlement = await s.planOf(input.orgId);
 	const unlocked = presetUnlocked(body.preset, entitlement.planId);
 	if (!unlocked.ok) {

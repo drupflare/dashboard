@@ -16,7 +16,8 @@ export const FEATURES = [
 	'customDomains',
 	'customCode',
 	'strata',
-	'ssoSaml'
+	'ssoSaml',
+	'ssoOidc'
 ] as const;
 export type Feature = (typeof FEATURES)[number];
 
@@ -56,6 +57,7 @@ export interface Entitlement {
 	supportHoursPerYear: number | null;
 	assurance: boolean;
 	environments: boolean;
+	pilots: boolean;
 	customDomains: number | null;
 	backupDays: number | null;
 	features: Record<Feature, boolean>;
@@ -114,7 +116,8 @@ function featuresOf(site: Plan, own: Plan): Record<Feature, boolean> {
 		customDomains: (num(site.customDomains) ?? 0) > 0,
 		customCode: site.customCode === true,
 		strata: site.strata === true,
-		ssoSaml: own.ssoSaml === true
+		ssoSaml: own.ssoSaml === true,
+		ssoOidc: own.ssoOidc === true
 	};
 }
 
@@ -168,6 +171,7 @@ export function derive(
 		}
 		if (addOn.meter === 'assurance') assurance = true;
 		features.ssoSaml ||= addOn.ssoSaml;
+		features.ssoOidc ||= addOn.ssoOidc;
 	}
 	// retention goes with the pooled backup storage on a self plan, which falls back to Managed Free
 	const ownDays = plan.plane === 'managed' ? null : num(plan.backupDays);
@@ -186,18 +190,25 @@ export function derive(
 			support,
 			assurance,
 			environments: site.staging === true,
+			pilots: plan.pilots,
 			backupDays,
 			features
 		}
 	};
 }
 
-// an entitlement with single sign-on stays blocked until the feature has shipped
+export interface SsoBuilt {
+	oidc: boolean;
+	saml: boolean;
+}
+
+// each protocol is gated on its own feature and its own built flag
 export function canActivate(
 	entitlement: Entitlement,
-	flags: { ssoBuilt: boolean }
+	flags: { ssoBuilt: SsoBuilt }
 ): { ok: true } | { ok: false; reason: 'sso_not_built' } {
-	if (entitlement.features.ssoSaml && !flags.ssoBuilt) {
+	const { ssoSaml, ssoOidc } = entitlement.features;
+	if ((ssoSaml && !flags.ssoBuilt.saml) || (ssoOidc && !flags.ssoBuilt.oidc)) {
 		return { ok: false, reason: 'sso_not_built' };
 	}
 	return { ok: true };
@@ -277,8 +288,9 @@ export function check(
 export function entitlementKeys(entitlement: Entitlement | null): string[] {
 	if (entitlement === null || !entitlement.dashboard) return [];
 	const keys: string[] = [];
-	if (entitlement.features.ssoSaml) keys.push('sso');
+	if (entitlement.features.ssoSaml || entitlement.features.ssoOidc) keys.push('sso');
 	if (entitlement.environments) keys.push('environments', 'previews');
+	if (entitlement.pilots) keys.push('pilots');
 	return keys;
 }
 

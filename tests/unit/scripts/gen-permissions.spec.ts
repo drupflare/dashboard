@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { parse } from 'yaml';
 import { OUTPUT, render } from '../../../scripts/gen-permissions';
 import {
 	ACTIONS,
@@ -11,6 +12,13 @@ import {
 describe('gen-permissions', () => {
 	it('matches the committed docs/reference/permissions.md', () => {
 		expect(readFileSync(OUTPUT, 'utf8')).toBe(render());
+	});
+
+	it('starts with the frontmatter the docs collection requires', () => {
+		const meta = parse(render().split('---\n')[1] ?? '');
+		expect(meta).toMatchObject({ title: 'Permissions', type: 'generated', draft: false });
+		expect(meta.description).toMatch(/\.$/);
+		expect(meta.audience.length).toBeGreaterThan(0);
 	});
 
 	it('lists every action once', () => {

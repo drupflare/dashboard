@@ -9,6 +9,7 @@ import {
 import { ApiError } from '../../shared/errors';
 import { nowUtc } from '../../shared/utils/time';
 import { createOperationRecord } from '../db/repos/backups';
+import { isPlatformFlagOn } from '../db/repos/platform-flags';
 import { getRelease } from '../db/repos/releases';
 import {
 	createRollout,
@@ -96,6 +97,11 @@ export async function startReleaseRollout(
 	input: { releaseId: string; body: StartRolloutBody; idempotencyKey: string }
 ): Promise<RolloutRecord> {
 	const db = await services.getDb();
+	if (await isPlatformFlagOn(db, 'promotion.stopped')) {
+		throw new ApiError('conflict', 'Promotion is stopped by a platform switch', {
+			reason: 'promotion_stopped'
+		});
+	}
 	const release = await getRelease(db, input.releaseId);
 	if (release === null) throw new ApiError('not_found', 'That release is not registered');
 	const rolling = await findRollingRollout(db);
@@ -208,11 +214,14 @@ export async function startReleaseRollout(
 
 export async function stopReleaseRollout(
 	services: SiteServices,
+	releaseId: string,
 	rolloutId: string
 ): Promise<RolloutRecord> {
 	const db = await services.getDb();
 	const rollout = await getRollout(db, rolloutId);
-	if (rollout === null) throw new ApiError('not_found', 'Not found');
+	// a rollout of another release answers as a missing one
+	if (rollout === null || rollout.releaseId !== releaseId)
+		throw new ApiError('not_found', 'Not found');
 	if (rollout.status !== 'rolling') {
 		throw new ApiError('conflict', 'That rollout has already ended', {
 			reason: 'rollout_ended'

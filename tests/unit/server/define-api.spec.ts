@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { errorEnvelope } from '../../../contracts/src/common';
 import { acceptDelegation, createDelegation } from '../../../src/server/domain/delegation';
 import { sha256Hex } from '../../../src/server/services/crypto';
+import { factsLoader, type FactsStore } from '../../../src/server/services/facts';
 import {
 	PLACEHOLDER_RATES,
 	defineApi,
@@ -1537,5 +1538,37 @@ describe('defineApi: paging stays inside the organisation', () => {
 			headers: asUser
 		});
 		expect(reply.status).toBe(400);
+	});
+});
+
+describe('defineApi: a site the caller has no access to', () => {
+	// user-1 belongs to org-1 only; site-1 is org-1's, site-2 is org-2's, site-9 does not exist
+	const store: FactsStore = {
+		organization: async (id) => (['org-1', 'org-2'].includes(id) ? { id } : null),
+		site: async (id) => (SITES[id] ? { id, orgId: SITES[id] } : null),
+		member: async (orgId, userId) =>
+			orgId === 'org-1' && userId === 'user-1' ? { orgId, role: 'owner' } : null,
+		siteGrants: async () => [],
+		delegations: async () => []
+	};
+
+	it('answers a site of another organisation exactly like a site that does not exist', async () => {
+		setup({ deps: { load: factsLoader({ store }) } });
+		const read = (id: string) =>
+			send(siteGet, SITE_ROUTE, { path: `/api/v1/sites/${id}`, headers: asUser });
+		const own = await read('site-1');
+		const foreign = await read('site-2');
+		const missing = await read('site-9');
+		expect(own.status).toBe(200);
+		expect(foreign.status).toBe(404);
+		expect(missing.status).toBe(404);
+		const strip = (reply: Reply) => ({ ...(reply.json as object), requestId: null });
+		expect(strip(foreign)).toEqual(strip(missing));
+	});
+
+	it('does not write a denial audit row for a site the caller cannot see', async () => {
+		const { denials } = setup({ deps: { load: factsLoader({ store }) } });
+		await send(siteGet, SITE_ROUTE, { path: '/api/v1/sites/site-2', headers: asUser });
+		expect(denials).toEqual([]);
 	});
 });

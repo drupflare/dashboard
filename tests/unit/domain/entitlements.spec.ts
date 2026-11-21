@@ -272,28 +272,43 @@ describe('derived features', () => {
 			expect(features.privateSites, plan.id).toBe(plan.privateSites === true);
 			expect(features.customCode, plan.id).toBe(plan.customCode === true);
 			expect(features.ssoSaml, plan.id).toBe(plan.ssoSaml === true);
+			expect(features.ssoOidc, plan.id).toBe(plan.ssoOidc === true);
 		}
 	});
 });
 
 describe('canActivate', () => {
-	it('refuses an entitlement with single sign-on while sso.built is false', () => {
+	it('gates each sign-in protocol on its own built flag', () => {
 		const standard = of('institution-standard');
 		expect(standard.features.ssoSaml).toBe(true);
-		expect(canActivate(standard, { ssoBuilt: false })).toEqual({
+		expect(canActivate(standard, { ssoBuilt: { oidc: true, saml: false } })).toEqual({
 			ok: false,
 			reason: 'sso_not_built'
 		});
 		const assured = of('institution-standard', [hold('assurance')]);
-		expect(canActivate(assured, { ssoBuilt: false }).ok).toBe(false);
-		expect(canActivate(standard, { ssoBuilt: true })).toEqual({ ok: true });
+		expect(canActivate(assured, { ssoBuilt: { oidc: true, saml: false } }).ok).toBe(false);
+		expect(canActivate(standard, { ssoBuilt: { oidc: false, saml: true } }).ok).toBe(false);
+		expect(canActivate(standard, { ssoBuilt: { oidc: true, saml: true } })).toEqual({
+			ok: true
+		});
+		const oidcOnly = {
+			...standard,
+			features: { ...standard.features, ssoSaml: false, ssoOidc: true }
+		};
+		expect(canActivate(oidcOnly, { ssoBuilt: { oidc: true, saml: false } })).toEqual({
+			ok: true
+		});
+		expect(canActivate(oidcOnly, { ssoBuilt: { oidc: false, saml: true } }).ok).toBe(false);
 	});
 
 	it('lets every plan without single sign-on activate with the flag off', () => {
 		for (const plan of PLANS) {
 			const result = derive(plan.id);
 			if (!result.ok || result.entitlement.features.ssoSaml) continue;
-			expect(canActivate(result.entitlement, { ssoBuilt: false }), plan.id).toEqual({
+			expect(
+				canActivate(result.entitlement, { ssoBuilt: { oidc: true, saml: false } }),
+				plan.id
+			).toEqual({
 				ok: true
 			});
 		}
@@ -430,7 +445,7 @@ describe('keys and limits', () => {
 		expect(entitlementKeys(null)).toEqual([]);
 		expect(entitlementKeys(of(FREE_PLAN_ID))).toEqual([]);
 		expect(entitlementKeys(of('managed-pro'))).toEqual(['environments', 'previews']);
-		expect(entitlementKeys(of('institution-standard'))).toEqual(['sso']);
+		expect(entitlementKeys(of('institution-standard'))).toEqual(['sso', 'pilots']);
 		expect(entitlementKeys(of('self-managed'))).toEqual([]);
 		expect(entitlementKeys({ ...of('managed-pro'), dashboard: false })).toEqual([]);
 	});

@@ -59,6 +59,7 @@ export interface ApiKey {
 export interface Delegation {
 	id: string;
 	organizationId: string;
+	batchId: string;
 	agencyOrganizationId: string;
 	role: DelegationRole;
 	siteId: string | null;
@@ -79,6 +80,7 @@ export interface SiteGrant {
 	role: SiteGrantRole;
 	createdBy: string;
 	createdAt: number;
+	expiresAt: number | null;
 	revokedAt: number | null;
 }
 
@@ -124,9 +126,10 @@ interface ApiKeyRow {
 	last_used_at: number | null;
 }
 
-interface DelegationRow {
+export interface DelegationRow {
 	id: string;
 	organization_id: string;
+	batch_id: string;
 	agency_organization_id: string;
 	role: DelegationRole;
 	site_id: string | null;
@@ -147,6 +150,7 @@ interface SiteGrantRow {
 	role: SiteGrantRole;
 	created_by: string;
 	created_at: number;
+	expires_at: number | null;
 	revoked_at: number | null;
 }
 
@@ -156,10 +160,10 @@ const INVITE_COLUMNS =
 	'id, organization_id, email, role, state, invited_by, expires_at, created_at, updated_at';
 const API_KEY_COLUMNS =
 	'id, organization_id, name, scopes, created_by, expires_at, revoked_at, created_at, last_used_at';
-const DELEGATION_COLUMNS = `id, organization_id, agency_organization_id, role, site_id,
+export const DELEGATION_COLUMNS = `id, organization_id, batch_id, agency_organization_id, role, site_id,
 	state, expires_at, created_by, accepted_by, created_at, updated_at, revoked_at`;
 const SITE_GRANT_COLUMNS =
-	'id, organization_id, site_id, user_id, role, created_by, created_at, revoked_at';
+	'id, organization_id, site_id, user_id, role, created_by, created_at, expires_at, revoked_at';
 
 function toOrganization(row: OrganizationRow): Organization {
 	return {
@@ -211,10 +215,11 @@ function toApiKey(row: ApiKeyRow): ApiKey {
 	};
 }
 
-function toDelegation(row: DelegationRow): Delegation {
+export function toDelegation(row: DelegationRow): Delegation {
 	return {
 		id: row.id,
 		organizationId: row.organization_id,
+		batchId: row.batch_id,
 		agencyOrganizationId: row.agency_organization_id,
 		role: row.role,
 		siteId: row.site_id,
@@ -237,6 +242,7 @@ function toSiteGrant(row: SiteGrantRow): SiteGrant {
 		role: row.role,
 		createdBy: row.created_by,
 		createdAt: row.created_at,
+		expiresAt: row.expires_at,
 		revokedAt: row.revoked_at
 	};
 }
@@ -549,6 +555,21 @@ export async function getApiKey(
 	return row ? toApiKey(row) : null;
 }
 
+// every live key a person made, as one statement; returns how many it revoked
+export async function revokeApiKeysCreatedBy(
+	db: CollegeDBClient,
+	organizationId: string,
+	userId: string,
+	at: number = Date.now()
+): Promise<number> {
+	const result = await db.run(
+		organizationId,
+		'UPDATE api_keys SET revoked_at = ? WHERE organization_id = ? AND created_by = ? AND revoked_at IS NULL',
+		[at, organizationId, userId]
+	);
+	return Number(result.meta.changes ?? 0);
+}
+
 export async function revokeApiKey(
 	db: CollegeDBClient,
 	organizationId: string,
@@ -623,12 +644,15 @@ export async function createDelegation(
 		siteId: string | null;
 		createdBy: string;
 		expiresAt: number | null;
+		batchId?: string;
 	}
 ): Promise<Delegation> {
 	const now = Date.now();
+	const id = crypto.randomUUID();
 	const delegation: Delegation = {
-		id: crypto.randomUUID(),
+		id,
 		organizationId: clientOrganizationId,
+		batchId: input.batchId ?? id,
 		agencyOrganizationId: input.agencyOrganizationId,
 		role: input.role,
 		siteId: input.siteId,
@@ -643,10 +667,11 @@ export async function createDelegation(
 	await db.run(
 		clientOrganizationId,
 		`INSERT INTO delegations (${DELEGATION_COLUMNS})
-		 VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, NULL, ?, ?, NULL)`,
+		 VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL, ?, ?, NULL)`,
 		[
 			delegation.id,
 			clientOrganizationId,
+			delegation.batchId,
 			delegation.agencyOrganizationId,
 			delegation.role,
 			delegation.siteId,
@@ -705,7 +730,13 @@ export async function revokeDelegation(
 export async function createSiteGrant(
 	db: CollegeDBClient,
 	organizationId: string,
-	input: { siteId: string; userId: string; role: SiteGrantRole; createdBy: string }
+	input: {
+		siteId: string;
+		userId: string;
+		role: SiteGrantRole;
+		createdBy: string;
+		expiresAt?: number | null;
+	}
 ): Promise<SiteGrant> {
 	const now = Date.now();
 	const grant: SiteGrant = {
@@ -716,16 +747,134 @@ export async function createSiteGrant(
 		role: input.role,
 		createdBy: input.createdBy,
 		createdAt: now,
+		expiresAt: input.expiresAt ?? null,
 		revokedAt: null
 	};
 	await uniqueOrDuplicate(() =>
 		db.run(
 			organizationId,
-			`INSERT INTO site_grants (${SITE_GRANT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`,
-			[grant.id, organizationId, grant.siteId, grant.userId, grant.role, grant.createdBy, now]
+			`INSERT INTO site_grants (${SITE_GRANT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+			[
+				grant.id,
+				organizationId,
+				grant.siteId,
+				grant.userId,
+				grant.role,
+				grant.createdBy,
+				now,
+				grant.expiresAt
+			]
 		)
 	);
 	return grant;
+}
+
+export async function listSiteGrants(
+	db: CollegeDBClient,
+	organizationId: string,
+	siteId: string
+): Promise<SiteGrant[]> {
+	const { results } = await db.all<SiteGrantRow>(
+		organizationId,
+		`SELECT ${SITE_GRANT_COLUMNS} FROM site_grants
+		 WHERE organization_id = ? AND site_id = ? AND revoked_at IS NULL
+		 ORDER BY created_at, id`,
+		[organizationId, siteId]
+	);
+	return results.map(toSiteGrant);
+}
+
+export async function updateSiteGrant(
+	db: CollegeDBClient,
+	organizationId: string,
+	id: string,
+	input: { role: SiteGrantRole; expiresAt: number | null }
+): Promise<boolean> {
+	const result = await db.run(
+		organizationId,
+		`UPDATE site_grants SET role = ?, expires_at = ?
+		 WHERE organization_id = ? AND id = ? AND revoked_at IS NULL`,
+		[input.role, input.expiresAt, organizationId, id]
+	);
+	return wasChanged(result);
+}
+
+export async function removeMember(
+	db: CollegeDBClient,
+	organizationId: string,
+	memberId: string
+): Promise<boolean> {
+	const result = await db.run(
+		organizationId,
+		'DELETE FROM members WHERE organization_id = ? AND id = ?',
+		[organizationId, memberId]
+	);
+	return wasChanged(result);
+}
+
+export async function getMemberById(
+	db: CollegeDBClient,
+	organizationId: string,
+	memberId: string
+): Promise<Member | null> {
+	const row = await db.first<MemberRow>(
+		organizationId,
+		`SELECT ${MEMBER_COLUMNS} FROM members WHERE organization_id = ? AND id = ?`,
+		[organizationId, memberId]
+	);
+	return row ? toMember(row) : null;
+}
+
+export async function countOwners(db: CollegeDBClient, organizationId: string): Promise<number> {
+	const row = await db.first<{ n: number }>(
+		organizationId,
+		`SELECT COUNT(*) AS n FROM members WHERE organization_id = ? AND role = 'owner'`,
+		[organizationId]
+	);
+	return row?.n ?? 0;
+}
+
+export async function listPendingInvites(
+	db: CollegeDBClient,
+	organizationId: string
+): Promise<Invite[]> {
+	const { results } = await db.all<InviteRow>(
+		organizationId,
+		`SELECT ${INVITE_COLUMNS} FROM invites
+		 WHERE organization_id = ? AND state = 'pending' ORDER BY created_at, id`,
+		[organizationId]
+	);
+	return results.map(toInvite);
+}
+
+// the token hash is the only way back to a pending invite, so the lookup stays inside one organisation
+export async function findPendingInviteByHash(
+	db: CollegeDBClient,
+	organizationId: string,
+	tokenHash: string
+): Promise<Invite | null> {
+	const row = await db.first<InviteRow>(
+		organizationId,
+		`SELECT ${INVITE_COLUMNS} FROM invites
+		 WHERE organization_id = ? AND token_hash = ? AND state = 'pending'`,
+		[organizationId, tokenHash]
+	);
+	return row ? toInvite(row) : null;
+}
+
+export async function rotateInvite(
+	db: CollegeDBClient,
+	organizationId: string,
+	id: string,
+	input: { tokenHash: string; expiresAt: number }
+): Promise<boolean> {
+	const result = await db.run(
+		organizationId,
+		`UPDATE invites SET token_hash = ?, expires_at = ?, updated_at = ?
+		 WHERE organization_id = ? AND id = ? AND state = 'pending'`,
+		[input.tokenHash, input.expiresAt, Date.now(), organizationId, id]
+	);
+	return wasChanged(result);
 }
 
 export async function getSiteGrant(

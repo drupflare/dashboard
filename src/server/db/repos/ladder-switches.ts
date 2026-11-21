@@ -54,6 +54,19 @@ export async function setLadderSwitch(
 	);
 }
 
+export async function getGlobalLadderSwitch(
+	db: CollegeDBClient
+): Promise<{ auto: boolean; updatedAt: number; updatedBy: string } | null> {
+	const row = await db.first<{ auto: number; updated_at: number; updated_by: string }>(
+		DIRECTORY_KEY,
+		"SELECT auto, updated_at, updated_by FROM ladder_switches WHERE scope = 'global' AND scope_id = ''",
+		[]
+	);
+	return row
+		? { auto: row.auto === 1, updatedAt: row.updated_at, updatedBy: row.updated_by }
+		: null;
+}
+
 // a level with no row is unset, which the ladder reads as off at the global level
 export async function clearLadderSwitch(
 	db: CollegeDBClient,

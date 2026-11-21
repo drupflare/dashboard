@@ -49,6 +49,8 @@ export interface AuthDeps {
 	mail: MailSender;
 	turnstile: TurnstileCheck;
 	codeSecret: string;
+	// the platform's signups.paused switch; only a new account is refused
+	signupsPaused: () => Promise<boolean>;
 }
 
 // the h2 repositories behind the directory seam; the handle resolves on first use
@@ -147,13 +149,19 @@ export async function healAccount(directory: Directory, user: User): Promise<voi
 }
 
 async function findOrCreateUser(
-	directory: Directory,
+	deps: Pick<AuthDeps, 'directory' | 'signupsPaused'>,
 	email: string
 ): Promise<{ user: User; isNew: boolean }> {
+	const { directory } = deps;
 	const existing = await directory.findUserByEmail(email);
 	if (existing) {
 		await healAccount(directory, existing);
 		return { user: existing, isNew: false };
+	}
+	if (await deps.signupsPaused()) {
+		throw new ApiError('forbidden', 'New accounts are not being created right now', {
+			reason: 'signups_paused'
+		});
 	}
 	const created = await createAccount(directory, email, 'email-code');
 	if (created) return { user: created, isNew: true };
@@ -215,7 +223,7 @@ export async function verifyCode(
 		});
 		throw invalidCode();
 	}
-	const { user, isNew } = await findOrCreateUser(deps.directory, email);
+	const { user, isNew } = await findOrCreateUser(deps, email);
 	const issued = await createSession(deps.kv, {
 		userId: user.id,
 		userAgent: input.userAgent,

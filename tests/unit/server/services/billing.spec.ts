@@ -357,6 +357,36 @@ describe('customer.subscription events', () => {
 		expect(r.audits.at(-1)?.input.action).toBe('billing.entitlement.activated');
 	});
 
+	it('runs the activation hook once per activating event and never for a revoked account', async () => {
+		const activated: string[] = [];
+		const r = rig({
+			onActivated: async (orgId) => {
+				activated.push(orgId);
+			}
+		});
+		await handle(r.services, 'checkout.session.completed', checkoutCompleted());
+		await handle(r.services, 'customer.subscription.created', subscription());
+		expect(activated).toEqual(['org-1']);
+		await handle(
+			r.services,
+			'customer.subscription.deleted',
+			subscription({ status: 'canceled' })
+		);
+		expect(activated).toEqual(['org-1']);
+	});
+
+	it('handles the event and logs when the activation hook fails', async () => {
+		const r = rig({
+			onActivated: async () => {
+				throw new Error('budget store down');
+			}
+		});
+		await handle(r.services, 'checkout.session.completed', checkoutCompleted());
+		await handle(r.services, 'customer.subscription.created', subscription());
+		expect(r.store.accounts.get('org-1')?.entitlementState).toBe('activated');
+		expect(r.logs.some((entry) => entry.message === 'activation hook failed')).toBe(true);
+	});
+
 	it('moves to a new plan on an update and bumps the revision', async () => {
 		const r = await linked();
 		await handle(r.services, 'customer.subscription.created', subscription());
@@ -454,14 +484,14 @@ describe('customer.subscription events', () => {
 			entitlementState: 'blocked'
 		});
 		expect(entitlementOf(blocked ?? null).planId).toBe('managed-free');
-		const on = rig({ flags: { ssoBuilt: true, overageEnabled: false } });
+		const on = rig({ flags: { ssoBuilt: { oidc: true, saml: true }, overageEnabled: false } });
 		await handle(on.services, 'checkout.session.completed', checkoutCompleted());
 		await handle(on.services, 'customer.subscription.created', sub);
 		expect(on.store.accounts.get('org-1')?.entitlementState).toBe('activated');
 	});
 
 	it('takes the assurance add-on on the standard plan only', async () => {
-		const r = rig({ flags: { ssoBuilt: true, overageEnabled: false } });
+		const r = rig({ flags: { ssoBuilt: { oidc: true, saml: true }, overageEnabled: false } });
 		await handle(r.services, 'checkout.session.completed', checkoutCompleted());
 		await handle(
 			r.services,
@@ -955,13 +985,16 @@ describe('services and desired state', () => {
 	});
 
 	it('reads both flags as off unless they say true', () => {
-		expect(billingFlags({})).toEqual({ ssoBuilt: false, overageEnabled: false });
-		expect(billingFlags({ SSO_BUILT: 'yes', BILLING_OVERAGE_ENABLED: '1' })).toEqual({
-			ssoBuilt: false,
+		expect(billingFlags({})).toEqual({
+			ssoBuilt: { oidc: true, saml: false },
 			overageEnabled: false
 		});
-		expect(billingFlags({ SSO_BUILT: 'true', BILLING_OVERAGE_ENABLED: 'true' })).toEqual({
-			ssoBuilt: true,
+		expect(billingFlags({ SSO_SAML_BUILT: 'yes', BILLING_OVERAGE_ENABLED: '1' })).toEqual({
+			ssoBuilt: { oidc: true, saml: false },
+			overageEnabled: false
+		});
+		expect(billingFlags({ SSO_SAML_BUILT: 'true', BILLING_OVERAGE_ENABLED: 'true' })).toEqual({
+			ssoBuilt: { oidc: true, saml: true },
 			overageEnabled: true
 		});
 	});

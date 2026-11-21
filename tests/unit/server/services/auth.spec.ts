@@ -65,6 +65,27 @@ async function signIn(h: Harness, email = 'ada@example.com') {
 	return result;
 }
 
+describe('signups.paused', () => {
+	it('refuses a new address while sign-ups are paused and creates no account', async () => {
+		const h = harness();
+		h.paused = true;
+		const error = await thrown(
+			verifyCode(h, { email: 'new@example.com', code: await codeFor(h, 'new@example.com') })
+		);
+		expect(error.code).toBe('forbidden');
+		expect(error.details).toEqual({ reason: 'signups_paused' });
+		expect(await h.directory.findUserByEmail('new@example.com')).toBeNull();
+	});
+
+	it('still signs in an existing account while sign-ups are paused', async () => {
+		const h = harness();
+		await signIn(h, 'ada@example.com');
+		h.paused = true;
+		const result = await signIn(h, 'ada@example.com');
+		expect(result.isNew).toBe(false);
+	});
+});
+
 describe('denied sign-ins are audited', () => {
 	const wrongFor = (code: string) => String((Number(code) + 1) % 1_000_000).padStart(6, '0');
 

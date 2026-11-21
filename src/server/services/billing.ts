@@ -40,7 +40,8 @@ import {
 	canActivate,
 	derive,
 	type AddOnHolding,
-	type Entitlement
+	type Entitlement,
+	type SsoBuilt
 } from '../domain/entitlements';
 import type { Desired, DesiredSite } from '../domain/reconcile';
 import {
@@ -127,8 +128,8 @@ export function collegeBillingStore(getDb: () => Promise<CollegeDBClient>): Bill
 // #region services
 
 export interface BillingFlags {
-	// sso.built
-	ssoBuilt: boolean;
+	// sso.built, per protocol
+	ssoBuilt: SsoBuilt;
 	// billing.overage.enabled
 	overageEnabled: boolean;
 }
@@ -138,6 +139,8 @@ export interface BillingServices {
 	webhookSecret: string | null;
 	store: BillingStore;
 	audit(orgId: string, input: AuditInput): Promise<void>;
+	// runs after an account becomes activated; a failure is logged and never fails the webhook
+	onActivated?(orgId: string): Promise<void>;
 	flags: BillingFlags;
 	now(): number;
 	log(message: string, detail: Record<string, unknown>): void;
@@ -157,7 +160,10 @@ export function billingServices(): BillingServices {
 
 export function billingFlags(env: Record<string, unknown>): BillingFlags {
 	const on = (name: string) => env[name] === 'true';
-	return { ssoBuilt: on('SSO_BUILT'), overageEnabled: on('BILLING_OVERAGE_ENABLED') };
+	return {
+		ssoBuilt: { oidc: true, saml: on('SSO_SAML_BUILT') },
+		overageEnabled: on('BILLING_OVERAGE_ENABLED')
+	};
 }
 
 // #endregion
@@ -540,6 +546,17 @@ async function onSubscription(ctx: EventContext, raw: unknown): Promise<EventOut
 		subscriptionId: sub.id,
 		revision
 	});
+	if (entitlementState === 'activated' && s.onActivated !== undefined) {
+		try {
+			await s.onActivated(orgId);
+		} catch (error) {
+			s.log('activation hook failed', {
+				eventId: ctx.eventId,
+				orgId,
+				message: error instanceof Error ? error.message : String(error)
+			});
+		}
+	}
 	return 'handled';
 }
 

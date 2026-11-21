@@ -7,6 +7,7 @@ import {
 } from '../../../../engine/src/backup-parts';
 import { BatchFailedError } from './accounts';
 import { getOperationByKey, type NewOperation, type StoredOperation } from './operations';
+import { assertOperationAllowed } from './policies';
 
 // backups shard by organisation, as operations do, so the engine's write and these reads agree
 export async function getBackup(
@@ -56,6 +57,7 @@ export async function createOperationRecord(
 		operation.idempotencyKey
 	);
 	if (existing) return { operation: existing, created: false };
+	await assertOperationAllowed(db, operation);
 	const org = operation.organizationId;
 	const groups = await db.batch([
 		{

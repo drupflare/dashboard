@@ -250,7 +250,7 @@ async function suite(config: string | undefined, label: string) {
 			webhookSecret: WEBHOOK_SECRET,
 			store,
 			audit: async () => undefined,
-			flags: { ssoBuilt: false, overageEnabled: false },
+			flags: { ssoBuilt: { oidc: true, saml: false }, overageEnabled: false },
 			now: () => NOW,
 			log: () => undefined,
 			baseUrl: 'https://app.example.test',

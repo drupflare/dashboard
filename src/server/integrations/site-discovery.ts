@@ -115,8 +115,8 @@ const REDIRECTS: readonly [from: string, to: string][] = [
 	['/_cfw/extend', '/sites/{id}/modules'],
 	['/_cfw/commands', '/sites/{id}/repairs'],
 	['/_cfw/operate', '/sites/{id}/repairs'],
-	['/_cfw/deploy', '/sites/{id}/readiness'],
-	['/_cfw/git', '/sites/{id}/git'],
+	['/_cfw/deploy', '/sites/{id}'],
+	['/_cfw/git', '/sites/{id}/code-history'],
 	['/_cfw/access', '/sites/{id}/access']
 ];
 

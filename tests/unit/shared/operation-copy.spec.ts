@@ -57,7 +57,8 @@ const COVERED = [
 	'module.enable',
 	'modify.apply',
 	'module.remove',
-	'theme.default'
+	'theme.default',
+	'site.transfer'
 ];
 const WORKFLOWS = fileURLToPath(new URL('../../../engine/src/workflows/', import.meta.url));
 

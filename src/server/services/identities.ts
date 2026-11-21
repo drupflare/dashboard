@@ -30,7 +30,6 @@ import {
 	type User
 } from '../db/repos/identity';
 import {
-	OAUTH_PROVIDERS,
 	type FetchLike,
 	type OAuthClients,
 	type OAuthProvider,
@@ -177,7 +176,7 @@ export const LINK_TTL_MS = 15 * 60 * 1000;
 const linkKey = (hash: string) => `link:pending:${hash}`;
 
 const pendingSchema = z.object({
-	provider: z.enum(OAUTH_PROVIDERS),
+	provider: z.string(),
 	subject: z.string(),
 	email: z.string(),
 	createdAt: z.number()
@@ -185,7 +184,10 @@ const pendingSchema = z.object({
 
 type Pending = z.infer<typeof pendingSchema>;
 
-async function putPending(once: OnceStore, pending: Omit<Pending, 'createdAt'>): Promise<string> {
+export async function putPending(
+	once: OnceStore,
+	pending: Omit<Pending, 'createdAt'>
+): Promise<string> {
 	const token = randomToken();
 	const now = nowUtc().toMillis();
 	const record: Pending = { ...pending, createdAt: now };

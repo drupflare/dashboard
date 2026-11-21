@@ -8,7 +8,7 @@ interface GrantRow {
 	role: SiteGrantRole;
 }
 
-// the live site grants one user holds in one organisation; a revoked grant is not read
+// the live site grants one user holds in one organisation; a revoked or expired grant is not read
 export async function listUserSiteGrants(
 	db: CollegeDBClient,
 	organizationId: string,
@@ -17,8 +17,9 @@ export async function listUserSiteGrants(
 	const { results } = await db.all<GrantRow>(
 		organizationId,
 		`SELECT organization_id, site_id, role FROM site_grants
-		 WHERE organization_id = ? AND user_id = ? AND revoked_at IS NULL`,
-		[organizationId, userId]
+		 WHERE organization_id = ? AND user_id = ? AND revoked_at IS NULL
+		   AND (expires_at IS NULL OR expires_at > ?)`,
+		[organizationId, userId, Date.now()]
 	);
 	return results.map((row) => ({
 		level: 'site',

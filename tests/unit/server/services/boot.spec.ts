@@ -55,6 +55,7 @@ describe('buildServices', () => {
 			'auditDenied',
 			'idempotency',
 			'load',
+			'notifyOwners',
 			'resolvePrincipal'
 		]);
 		expect(built.ownerTokens).toBeDefined();

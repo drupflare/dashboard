@@ -34,6 +34,8 @@ const sessionSchema = z.object({
 	createdAt: z.number(),
 	lastSeenAt: z.number(),
 	stepUpAt: z.number().optional(),
+	// a shorter absolute life than the default, set for sign-ins through an organisation
+	maxAgeMs: z.number().optional(),
 	device: z.string(),
 	ip: z.string().nullable()
 });
@@ -67,13 +69,16 @@ const tokenKey = (hash: string) => `session:token:${hash}`;
 const userPrefix = (userId: string) => `session:user:${userId}:`;
 const userKey = (userId: string, id: string) => `${userPrefix(userId)}${id}`;
 
+const absoluteMs = (session: SessionRecord) =>
+	Math.min(SESSION_ABSOLUTE_MS, session.maxAgeMs ?? SESSION_ABSOLUTE_MS);
+
 const alive = (session: SessionRecord, now: number) =>
-	now < session.createdAt + SESSION_ABSOLUTE_MS && now < session.lastSeenAt + SESSION_IDLE_MS;
+	now < session.createdAt + absoluteMs(session) && now < session.lastSeenAt + SESSION_IDLE_MS;
 
 function ttlSeconds(session: SessionRecord, now: number): number {
 	const end = Math.min(
 		session.lastSeenAt + SESSION_IDLE_MS,
-		session.createdAt + SESSION_ABSOLUTE_MS
+		session.createdAt + absoluteMs(session)
 	);
 	return Math.max(MIN_KV_TTL_SECONDS, Math.ceil((end - now) / 1000));
 }
@@ -172,6 +177,7 @@ export async function createSession(
 		userAgent?: string | null;
 		ip?: string | null;
 		stepUpAt?: number;
+		maxAgeMs?: number;
 	}
 ): Promise<IssuedSession> {
 	const now = nowUtc().toMillis();
@@ -192,6 +198,7 @@ export async function createSession(
 		ip: truncateIp(input.ip)
 	};
 	if (input.stepUpAt !== undefined) session.stepUpAt = input.stepUpAt;
+	if (input.maxAgeMs !== undefined) session.maxAgeMs = input.maxAgeMs;
 	await store(kv, await hashSessionToken(token), session, now);
 	return { token, session };
 }
@@ -292,7 +299,7 @@ export async function rotateSession(
 
 // the __host- prefix needs secure, path=/ and no domain
 export function sessionCookieOptions(session: SessionRecord, now = nowUtc().toMillis()) {
-	const remaining = session.createdAt + SESSION_ABSOLUTE_MS - now;
+	const remaining = session.createdAt + absoluteMs(session) - now;
 	return {
 		httpOnly: true,
 		secure: true,

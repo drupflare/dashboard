@@ -63,6 +63,10 @@ const planSchema = z.object({
 	backupDays: figureSchema,
 	staging: z.boolean().nullable(),
 	ssoSaml: z.boolean().nullable(),
+	// unreviewed: OpenID Connect sign-in is on the institution plans until Gregory confirms the plan row
+	ssoOidc: z.boolean(),
+	// unreviewed: the institution plans carry pilots until Gregory confirms the plan row
+	pilots: z.boolean(),
 	source: z.string().min(1)
 });
 
@@ -105,6 +109,7 @@ const ROWS = [
 		backupDays: unknown('the customer runs the backups'),
 		staging: null,
 		ssoSaml: null,
+		ssoOidc: false,
 		source: DECISION
 	},
 	{
@@ -133,6 +138,7 @@ const ROWS = [
 		backupDays: assumed(7, 'the managed free allowance'),
 		staging: null,
 		ssoSaml: null,
+		ssoOidc: false,
 		source: DECISION
 	},
 	{
@@ -164,6 +170,7 @@ const ROWS = [
 		backupDays: assumed(30, 'the managed paid allowance'),
 		staging: null,
 		ssoSaml: null,
+		ssoOidc: false,
 		source: DECISION
 	},
 	{
@@ -189,6 +196,7 @@ const ROWS = [
 		backupDays: assumed(7, 'roadmap, The Plans, 7 days'),
 		staging: false,
 		ssoSaml: null,
+		ssoOidc: false,
 		source: `${DECISION}; roadmap, The Plans`
 	},
 	{
@@ -217,6 +225,7 @@ const ROWS = [
 		backupDays: assumed(30, 'roadmap, The Plans, 30 days'),
 		staging: true,
 		ssoSaml: null,
+		ssoOidc: false,
 		source: DECISION
 	},
 	{
@@ -245,6 +254,7 @@ const ROWS = [
 		backupDays: assumed(30, 'roadmap, The Plans, 30 days'),
 		staging: true,
 		ssoSaml: null,
+		ssoOidc: false,
 		source: 'roadmap, The Plans'
 	},
 	{
@@ -270,6 +280,7 @@ const ROWS = [
 		backupDays: unknown('roadmap gives no backup days'),
 		staging: null,
 		ssoSaml: null,
+		ssoOidc: false,
 		source: 'roadmap, The Plans'
 	},
 	{
@@ -295,6 +306,7 @@ const ROWS = [
 		backupDays: unknown('roadmap gives no backup days'),
 		staging: null,
 		ssoSaml: true,
+		ssoOidc: true,
 		source: 'roadmap, The Plans; roadmap, Institution plans'
 	},
 	{
@@ -320,6 +332,7 @@ const ROWS = [
 		backupDays: unknown('roadmap says negotiated'),
 		staging: null,
 		ssoSaml: null,
+		ssoOidc: false,
 		source: 'roadmap, The Plans'
 	}
 ];
@@ -334,7 +347,8 @@ const DEFAULTS = {
 	rollback: null,
 	upgrade: null,
 	customCode: null,
-	strata: true
+	strata: true,
+	pilots: false
 };
 
 // a flag the roadmap does not state stays null, and null denies. Features are the same on
@@ -357,13 +371,15 @@ const OVERRIDES: Record<string, Record<string, unknown>> = {
 		supportLevel: 'business',
 		customCode: true,
 		rollback: true,
-		upgrade: true
+		upgrade: true,
+		pilots: true
 	},
 	'institution-standard': {
 		supportLevel: 'business',
 		customCode: true,
 		rollback: true,
-		upgrade: true
+		upgrade: true,
+		pilots: true
 	},
 	enterprise: { supportLevel: 'critical', customCode: true, rollback: true, upgrade: true }
 };
@@ -413,6 +429,8 @@ const addOnSchema = z.object({
 	// what one unit costs us at list rates, the base the price is set against
 	unitCost: figureSchema,
 	ssoSaml: z.boolean(),
+	// unreviewed, as on the plan rows
+	ssoOidc: z.boolean(),
 	available: z.boolean(),
 	availableNote: z.string().min(1).nullable(),
 	unreviewed: z.boolean(),
@@ -743,6 +761,7 @@ const ADD_ON_ROWS = [
 		packs: [],
 		unitCost: unknown('a security packet, a recovery drill and a patch commitment'),
 		ssoSaml: true,
+		ssoOidc: true,
 		source: 'roadmap, The Plans'
 	}
 ];
@@ -750,6 +769,7 @@ const ADD_ON_ROWS = [
 const ADD_ON_DEFAULTS = {
 	supportLevel: null,
 	ssoSaml: false,
+	ssoOidc: false,
 	available: true,
 	availableNote: null,
 	unreviewed: true
@@ -913,3 +933,39 @@ export function intervalPrice(plan: Plan | AddOn, interval: Interval): number | 
 	}
 	return (interval === 'month' ? plan.monthly : plan.annual).value;
 }
+
+// #region spend budgets
+
+const SPEND_BUDGET_SOURCE = 'spend budget decision, Gregory 2026-11-15 and 2026-11-21';
+
+const percentFigureSchema = z.object({
+	value: z.number(),
+	label: z.enum(FIGURE_LABELS),
+	source: figureSource
+});
+
+export const SPEND_BUDGET = z
+	.object({
+		minPercent: percentFigureSchema,
+		defaultPercent: percentFigureSchema,
+		maxPercent: percentFigureSchema,
+		pooledSiteDefaultPercent: percentFigureSchema,
+		unreviewed: z.boolean()
+	})
+	.parse({
+		minPercent: assumed(100, SPEND_BUDGET_SOURCE),
+		defaultPercent: assumed(500, SPEND_BUDGET_SOURCE),
+		maxPercent: assumed(1000, SPEND_BUDGET_SOURCE),
+		pooledSiteDefaultPercent: assumed(250, `${SPEND_BUDGET_SOURCE}; a percent of the pool`),
+		unreviewed: true
+	});
+
+// only a plan that says its views are pooled shares them; null is unknown and counts as not pooled
+export function viewsPool(plan: Pick<Plan, 'views' | 'viewsPooled' | 'sites'>): {
+	pooled: boolean;
+	sites: number | null;
+} {
+	return { pooled: plan.viewsPooled === true, sites: plan.sites.value };
+}
+
+// #endregion

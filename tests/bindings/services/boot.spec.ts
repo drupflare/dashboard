@@ -24,9 +24,12 @@ import {
 	resetBoot,
 	type BootEnv
 } from '../../../src/server/services/boot';
+import { budgetServices } from '../../../src/server/services/budgets';
 import { setIdentityServices } from '../../../src/server/services/identities';
 import { setKeyServices } from '../../../src/server/services/key-admin';
+import { preferenceServices } from '../../../src/server/services/notification-preferences';
 import { SESSION_COOKIE_NAME } from '../../../src/server/services/sessions';
+import { usageCollectDepsFor } from '../../../src/server/services/usage-collect';
 import { setAuthServices } from '../../../src/server/utils/auth';
 import { resetApiDeps, setApiDeps } from '../../../src/server/utils/define-api';
 import {
@@ -412,5 +415,94 @@ describe('billing install', () => {
 		resetBoot();
 		bootOnce(withStripe({ STRIPE_WEBHOOK_SECRET: 'whsec_boot' }));
 		expect(billingServices().webhookSecret).toBe('whsec_boot');
+	});
+});
+
+describe('enforcement install', () => {
+	afterEach(() => resetBoot());
+
+	const BUDGET = 'budget-boot-secret-'.repeat(2);
+	const COUNTS = 'counts-boot-secret-'.repeat(2);
+	const seen: { url: string; headers: Headers; body: string }[] = [];
+	const engine = {
+		async fetch(input: string | Request, init?: RequestInit) {
+			const body = String(init?.body ?? '');
+			seen.push({ url: String(input), headers: new Headers(init?.headers), body });
+			const reads = (JSON.parse(body) as { reads?: { siteId: string }[] }).reads ?? [];
+			return Response.json({
+				ok: true,
+				results: reads.map((read) => ({
+					siteId: read.siteId,
+					ok: true,
+					hours: [],
+					months: [{ month: '2026-11', views: 42 }]
+				}))
+			});
+		}
+	};
+	const booted = (extra: Record<string, unknown> = {}) =>
+		bootOnce(Object.assign({}, env, extra) as BootEnv);
+
+	it('installs neither port without the engine binding and the counts secret', () => {
+		booted();
+		expect(budgetServices().enforcement()).toBeNull();
+		expect(usageCollectDepsFor()).toBeNull();
+		resetBoot();
+		booted({ ENGINE: engine });
+		expect(budgetServices().enforcement()).toBeNull();
+		expect(usageCollectDepsFor()).toBeNull();
+	});
+
+	it('reads counts in shadow mode with the counts secret alone and never installs a write for a missing secret', () => {
+		booted({ ENGINE: engine, COUNTS_SECRET: COUNTS });
+		const deps = budgetServices().enforcement();
+		expect(deps?.mode).toBe('shadow');
+		expect(usageCollectDepsFor()).not.toBeNull();
+		resetBoot();
+		booted({ ENGINE: engine, COUNTS_SECRET: COUNTS, BUDGET_ENFORCEMENT: 'on' });
+		expect(budgetServices().enforcement()).toBeNull();
+		resetBoot();
+		booted({
+			ENGINE: engine,
+			COUNTS_SECRET: COUNTS,
+			BUDGET_SECRET: BUDGET,
+			BUDGET_ENFORCEMENT: 'on'
+		});
+		expect(budgetServices().enforcement()?.mode).toBe('on');
+		expect(budgetServices().mode()).toBe('on');
+	});
+
+	it('falls back to the start secret for both message types and attaches the alert sink', () => {
+		const START = 'start-boot-secret-'.repeat(2);
+		booted({ ENGINE: engine, START_SECRET: START, BUDGET_ENFORCEMENT: 'on' });
+		const deps = budgetServices().enforcement();
+		expect(deps?.mode).toBe('on');
+		expect(deps?.alerts).toBeDefined();
+		expect(usageCollectDepsFor()).not.toBeNull();
+	});
+
+	it('installs the preference service and takes the unsubscribe key from the sign-in code secret', () => {
+		booted();
+		expect(preferenceServices().keySecret).toBeUndefined();
+		resetBoot();
+		booted({ AUTH_CODE_SECRET: 'boot-code-secret-'.repeat(2) });
+		expect(preferenceServices().keySecret).toBe('boot-code-secret-'.repeat(2));
+	});
+
+	it('treats any value but on as shadow', () => {
+		booted({ ENGINE: engine, COUNTS_SECRET: COUNTS, BUDGET_ENFORCEMENT: 'true' });
+		expect(budgetServices().enforcement()?.mode).toBe('shadow');
+	});
+
+	it('reaches the engine with a signed counts read, never a write', async () => {
+		seen.length = 0;
+		booted({ ENGINE: engine, COUNTS_SECRET: COUNTS });
+		const deps = budgetServices().enforcement()!;
+		expect(await deps.counts.monthViews('site_x', '2026-11')).toBe(42);
+		expect(seen).toHaveLength(1);
+		expect(new URL(seen[0]!.url).pathname).toBe('/counts');
+		expect(seen[0]!.headers.get('x-drupflare-signature')).toMatch(/^[0-9a-f]{64}$/);
+		const hours = await usageCollectDepsFor()!.hours.read('site_x', [1]);
+		expect(hours).toEqual([]);
 	});
 });

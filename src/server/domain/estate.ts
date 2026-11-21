@@ -15,6 +15,7 @@ import {
 	type SourceSiteId
 } from '@contracts/estate';
 import type { PreflightResult } from '../../shared/preflight';
+import { csvCell } from './csv';
 import { DRUPAL_MAJOR, type Dossier } from './dossier';
 import { registrableDomain } from './preflight';
 
@@ -680,11 +681,6 @@ export function aggregate(rows: readonly ReportRow[]): EstateReport {
 	};
 }
 
-const cell = (value: string) => {
-	const guarded = /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
-	return /[",\n\r]/.test(guarded) ? `"${guarded.replaceAll('"', '""')}"` : guarded;
-};
-
 // the inventory columns come first, so the file is a valid inventory again
 export function toCsv(rows: readonly ReportRow[]): string {
 	const head = [...INVENTORY_COLUMNS, ...REPORT_COLUMNS].join(',');
@@ -704,7 +700,7 @@ export function toCsv(rows: readonly ReportRow[]): string {
 			verdict.missing ?? '',
 			'Not estimated'
 		);
-		return values.map(cell).join(',');
+		return values.map(csvCell).join(',');
 	});
 	return `${[head, ...lines].join('\r\n')}\r\n`;
 }

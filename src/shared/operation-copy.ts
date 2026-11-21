@@ -218,6 +218,15 @@ export const OPERATION_COPY = {
 		link: environmentsOf,
 		failureLink: environmentsOf
 	},
+	'site.transfer': {
+		title: 'Moving the Site',
+		running:
+			'The site is moving to another organisation. Leaving this page does not stop the move.',
+		success: 'The site now belongs to the other organisation.',
+		failure: 'Could Not Move the Site',
+		link: () => sites,
+		failureLink: () => sites
+	},
 	'access.sync': {
 		title: 'Applying Access Changes',
 		running:
@@ -364,7 +373,8 @@ const TYPE_LABELS: Record<string, string> = {
 	'module.install': 'Install',
 	'module.enable': 'Enable',
 	'module.remove': 'Remove',
-	'theme.default': 'Theme'
+	'theme.default': 'Theme',
+	'site.transfer': 'Transfer'
 };
 
 export function operationTypeLabel(type: string | undefined): string {
@@ -513,6 +523,11 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		gate: 'applying the environment access rules',
 		activate: 'marking the environment ready'
 	},
+	'site.transfer': {
+		lease: 'locking the site for this change',
+		copy: 'copying the site records to the new organisation',
+		verify: 'checking the move from the site records'
+	},
 	'access.sync': {
 		lease: 'locking the site for this change',
 		digests: 'working out who can open each environment',
@@ -554,7 +569,10 @@ const STEP_PHRASES: Record<string, Record<string, string>> = {
 		check: 'checking the settings against what the site holds now',
 		write: 'sending the settings to the site',
 		verify: 'reading the settings back from the site',
-		record: 'saving the change to the history'
+		record: 'saving the change to the history',
+		apply: 'changing whether the site serves visitors',
+		mirror: 'recording the new state on the site',
+		confirm: 'reading the site state back'
 	},
 	'git.pull': {
 		lease: 'locking the site for this change',

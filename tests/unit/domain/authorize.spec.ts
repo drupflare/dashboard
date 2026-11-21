@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { authorize, permittedActions, stepUpFresh } from '../../../src/server/domain/authorize';
+import * as cap from '../../../src/server/domain/cap-by-policy';
 import { acceptDelegation, createDelegation } from '../../../src/server/domain/delegation';
 import type { PolicyGroup } from '../../../src/server/domain/policy';
 import {
@@ -394,6 +395,25 @@ describe('authorize: delegation', () => {
 		);
 	});
 
+	it('refuses a delegated action while the acting agency is suspended', () => {
+		const suspended = facts({
+			delegations: [delegation('maintainer')],
+			agencyMemberships: [{ orgId: AGENCY, role: 'owner' }],
+			flags: { suspendedOrgIds: [AGENCY] }
+		});
+		expect(check('site.deploy', suspended)).toBe('org_suspended');
+		expect(check('site.read', suspended)).toBe('org_suspended');
+	});
+
+	it('refuses a delegated action while the client organisation is suspended', () => {
+		const suspended = facts({
+			delegations: [delegation('maintainer')],
+			agencyMemberships: [{ orgId: AGENCY, role: 'owner' }],
+			flags: { suspendedOrgIds: [ORG] }
+		});
+		expect(check('site.deploy', suspended)).toBe('org_suspended');
+	});
+
 	it('covers every site of the client when the delegation says all', () => {
 		const f = agencyFacts('admin', delegation('viewer', { sites: 'all' }));
 		expect(check('site.read', f, { resource: { orgId: ORG, siteId: 'site-9' } })).toBe('allow');
@@ -426,9 +446,58 @@ describe('authorize: policy, step-up, entitlement and budget', () => {
 		expect(d).toEqual({
 			allow: false,
 			reason: 'policy_denied',
-			detail: { policy: 'freeze', rule: 'no-deploys' }
+			detail: { policy: 'freeze', policyName: 'Change freeze', rule: 'no-deploys' }
 		});
 		expect(check('site.read', f)).toBe('allow');
+	});
+
+	it('caps a grant at every layer above it and names the group and rule', () => {
+		const stack = [{ ...denyDeploy, id: 'inherited', name: 'Inherited freeze' }];
+		const layers = {
+			organisation: facts({ ...member('owner'), policy: stack }),
+			department: facts({
+				...fresh,
+				grants: [{ level: 'department', orgId: ORG, targetId: DEPT, role: 'admin' }],
+				departments: [{ id: DEPT, parentId: null, kind: 'department' }],
+				policy: stack
+			}),
+			site: facts({
+				grants: [{ level: 'site', orgId: ORG, targetId: SITE, role: 'site-admin' }],
+				policy: stack
+			})
+		};
+		const target = { resource: { orgId: ORG, departmentId: DEPT, siteId: SITE } };
+		for (const [layer, f] of Object.entries(layers)) {
+			const d = authorize({
+				principal: user,
+				action: 'site.deploy',
+				resource: target.resource,
+				facts: f
+			});
+			expect(d, layer).toMatchObject({
+				allow: false,
+				reason: 'policy_denied',
+				detail: { policy: 'inherited', policyName: 'Inherited freeze', rule: 'no-deploys' }
+			});
+		}
+	});
+
+	it('names the group on a policy step-up requirement', () => {
+		const policy: PolicyGroup[] = [
+			{
+				id: 'g',
+				name: 'Fresh sign-in',
+				rules: [{ id: 'step-up', stepUp: ['site.transfer'] }]
+			}
+		];
+		const f = facts({ ...member('owner'), policy });
+		expect(
+			authorize({ principal: user, action: 'site.transfer', resource, facts: f })
+		).toMatchObject({
+			allow: false,
+			reason: 'step_up_required',
+			detail: { policy: 'g', policyName: 'Fresh sign-in', rule: 'step-up' }
+		});
 	});
 
 	it('applies the policy to a site grant and a delegation as well', () => {
@@ -551,6 +620,138 @@ describe('authorize: api keys', () => {
 		);
 		expect(asKey('site.read', keyFacts(['site.read'], { siteIds: [SITE] }))).toBe('allow');
 		expect(asKey('org.read', keyFacts(['org.read'], { siteIds: [SITE] }))).toBe('key_scope');
+	});
+});
+
+describe('authorize: departments', () => {
+	const CHILD = 'child-dept';
+	const PARENT = 'parent-dept';
+	const SIBLING = 'sibling-dept';
+	const tree = [
+		{ id: PARENT, parentId: null, kind: 'division' as const },
+		{ id: DEPT, parentId: PARENT, kind: 'department' as const },
+		{ id: CHILD, parentId: DEPT, kind: 'department' as const },
+		{ id: SIBLING, parentId: null, kind: 'department' as const }
+	];
+	const grant = (targetId: string, role: OrgRole) => ({
+		level: 'department' as const,
+		orgId: ORG,
+		targetId,
+		role
+	});
+	const at = (departmentId?: string) => ({
+		resource: { orgId: ORG, ...(departmentId ? { departmentId } : {}) }
+	});
+	const departmentActions = ACTIONS.filter((a) => actionDef(a).scope === 'department');
+
+	it('has department-scope actions to test', () => {
+		expect(departmentActions).toEqual(
+			expect.arrayContaining([
+				'department.manage',
+				'member.invite',
+				'grant.manage',
+				'site.create'
+			])
+		);
+	});
+
+	it('gives a department admin every department action in their department only', () => {
+		const f = facts({ ...fresh, grants: [grant(DEPT, 'admin')], departments: tree });
+		for (const action of departmentActions) {
+			expect(check(action, f, at(DEPT)), `${action} in the department`).toBe('allow');
+			expect(check(action, f, at(CHILD)), `${action} below it`).toBe('allow');
+			expect(check(action, f, at(PARENT)), `${action} above it`).toBe('forbidden');
+			expect(check(action, f, at(SIBLING)), `${action} in a sibling`).toBe('forbidden');
+			expect(check(action, f, at()), `${action} with no department`).toBe('forbidden');
+		}
+	});
+
+	it('reports a grant on a parent department as the department route', () => {
+		const f = facts({ ...fresh, grants: [grant(PARENT, 'admin')], departments: tree });
+		const d = authorize({ principal: user, action: 'member.invite', ...at(CHILD), facts: f });
+		expect(d).toMatchObject({ allow: true, via: 'department' });
+	});
+
+	it('does not reach below a grant when the tree is unknown', () => {
+		const f = facts({ ...fresh, grants: [grant(PARENT, 'admin')] });
+		expect(check('member.invite', f, at(CHILD))).toBe('forbidden');
+		expect(check('member.invite', f, at(PARENT))).toBe('allow');
+	});
+
+	it('never lets a department grant reach an organisation-scope action', () => {
+		const f = facts({ ...fresh, grants: [grant(DEPT, 'admin')], departments: tree });
+		for (const action of [
+			'org.update',
+			'department.read',
+			'policy.manage',
+			'key.create'
+		] as const) {
+			expect(check(action, f, at(DEPT)), action).toBe('forbidden');
+		}
+	});
+
+	it('limits a department developer to what the developer role holds', () => {
+		const f = facts({ ...fresh, grants: [grant(DEPT, 'developer')], departments: tree });
+		expect(check('site.create', f, at(DEPT))).toBe('allow');
+		expect(check('member.invite', f, at(DEPT))).toBe('forbidden');
+		expect(check('department.manage', f, at(DEPT))).toBe('forbidden');
+	});
+
+	it('adds a department admin grant to an organisation viewer', () => {
+		const f = facts({
+			...fresh,
+			...member('viewer'),
+			grants: [grant(DEPT, 'admin')],
+			departments: tree
+		});
+		expect(check('org.read', f, at(SIBLING))).toBe('allow');
+		expect(check('member.invite', f, at(DEPT))).toBe('allow');
+		expect(check('member.invite', f, at(SIBLING))).toBe('forbidden');
+		expect(check('org.update', f, at(DEPT))).toBe('forbidden');
+	});
+
+	it('takes a site action from the grant on the site department or its parent', () => {
+		const f = facts({ ...fresh, grants: [grant(PARENT, 'developer')], departments: tree });
+		const inside = { resource: { orgId: ORG, departmentId: CHILD, siteId: SITE } };
+		const elsewhere = { resource: { orgId: ORG, departmentId: SIBLING, siteId: SITE } };
+		expect(check('site.deploy', f, inside)).toBe('allow');
+		expect(check('site.deploy', f, elsewhere)).toBe('forbidden');
+		expect(check('site.delete', f, inside)).toBe('forbidden');
+	});
+
+	it('refuses a suspended person even with a department grant', () => {
+		const f = facts({
+			...fresh,
+			grants: [grant(DEPT, 'admin')],
+			departments: tree,
+			flags: { userSuspended: true }
+		});
+		expect(check('member.invite', f, at(DEPT))).toBe('user_suspended');
+	});
+
+	it('refuses a department grant in another organisation', () => {
+		const f = facts({
+			...fresh,
+			grants: [{ ...grant(DEPT, 'admin'), orgId: OTHER_ORG }],
+			departments: tree
+		});
+		expect(check('member.invite', f, at(DEPT))).toBe('not_a_member');
+	});
+
+	it('asks the policy hook with the department and the site before it allows', () => {
+		const f = facts({ ...fresh, grants: [grant(DEPT, 'admin')], departments: tree });
+		const spy = vi.spyOn(cap, 'capByPolicy');
+		const target = { resource: { orgId: ORG, departmentId: DEPT, siteId: SITE } };
+		expect(check('site.deploy', f, target)).toBe('allow');
+		expect(spy).toHaveBeenCalledWith(new Set(['site.deploy']), {
+			orgId: ORG,
+			departmentId: DEPT,
+			siteId: SITE,
+			policy: []
+		});
+		spy.mockImplementation(() => new Set());
+		expect(check('site.deploy', f, target)).toBe('policy_denied');
+		spy.mockRestore();
 	});
 });
 

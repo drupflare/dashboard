@@ -102,7 +102,7 @@ describe('route table', () => {
 		}
 	});
 
-	it('lets only the OAuth hops and the provider repository list use GET with a write class', async () => {
+	it('lets only the sign-in hops and the provider repository list use GET with a write class', async () => {
 		const { routes } = await scanRoutes();
 		const odd = routes
 			.filter((route) => route.method === 'get' && route.meta.rateClass !== 'read')
@@ -111,6 +111,8 @@ describe('route table', () => {
 		expect(odd).toEqual([
 			'v1/auth/oauth/[provider]/callback.get.ts',
 			'v1/auth/oauth/[provider]/start.get.ts',
+			'v1/auth/sso/[orgSlug]/callback.get.ts',
+			'v1/auth/sso/[orgSlug]/start.get.ts',
 			'v1/me/identities/connect/[provider]/callback.get.ts',
 			'v1/orgs/[orgId]/repo-connections/[id]/repositories.get.ts'
 		]);

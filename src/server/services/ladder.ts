@@ -111,7 +111,10 @@ export async function listSwitches(db: CollegeDBClient): Promise<SwitchView[]> {
 }
 
 // the site's organisation is found across shards, because the admin names only the site
-async function organisationOfSite(db: CollegeDBClient, siteId: string): Promise<string | null> {
+export async function organisationOfSite(
+	db: CollegeDBClient,
+	siteId: string
+): Promise<string | null> {
 	const shards = await db.allAllShards<{ organization_id: string }>(
 		'SELECT organization_id FROM sites WHERE id = ?',
 		[siteId]

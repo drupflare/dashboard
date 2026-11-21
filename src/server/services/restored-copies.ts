@@ -38,9 +38,11 @@ import {
 	getOperationInputs,
 	type StoredOperation
 } from '../db/repos/operations';
+import { assertPolicy } from '../db/repos/policies';
 import { getOrganizationOwnerId, listDrillCandidates } from '../db/repos/restore-drills';
 import { getReadySite, getSite, setSiteState, type SiteRecord } from '../db/repos/sites';
 import type { Principal } from '../domain/authorize';
+import { checkPreviewTtl } from '../domain/policy';
 import { backupServices } from './backups';
 import { buildSiteCreateInput, SiteInputError } from './site-input';
 import { siteServices, startRecorded, type SiteServices } from './sites';
@@ -334,6 +336,10 @@ export async function startEnvCreate(
 	let ttlMs = input.ttlMs;
 	if (input.kind === 'preview') {
 		ttlMs = clampPreviewTtl(ttlMs);
+		const hours = ttlMs / 3_600_000;
+		await assertPolicy(db, { orgId: input.orgId, siteId: site.id }, (groups) =>
+			checkPreviewTtl(groups, { hours })
+		);
 		if (number === undefined) {
 			const taken = (await listEnvironments(db, input.orgId, site.id))
 				.filter((row) => row.kind === 'preview')
