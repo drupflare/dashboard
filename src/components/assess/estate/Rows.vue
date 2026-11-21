@@ -109,6 +109,9 @@ function applyFilter(): void {
 		<div
 			v-if="rows.length > 0"
 			class="overflow-x-auto rounded-lg border border-default"
+			tabindex="0"
+			role="region"
+			aria-label="Sites in This Assessment"
 		>
 			<table class="w-full text-left text-sm">
 				<caption class="sr-only">

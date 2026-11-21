@@ -117,6 +117,7 @@ const showPlain = computed(
 				v-else-if="options.length > 0"
 				:model-value="inputText"
 				:items="options"
+				:aria-label="field.label"
 				class="w-64"
 				@update:model-value="emit('edit', String($event))"
 			/>
@@ -124,6 +125,7 @@ const showPlain = computed(
 				v-else-if="isJson"
 				:model-value="inputText"
 				:rows="4"
+				:aria-label="field.label"
 				class="font-mono"
 				@update:model-value="typed(String($event))"
 				@blur="emit('check')"

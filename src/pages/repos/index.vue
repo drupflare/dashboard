@@ -293,6 +293,7 @@ const repoColumns: TableColumn<RepoRow>[] = [
 							v-model="repoFilter"
 							icon="i-lucide-search"
 							placeholder="Filter by repository name"
+							aria-label="Filter by repository name"
 							class="max-w-sm"
 						/>
 

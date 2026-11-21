@@ -29,7 +29,7 @@ function submit(): void {
 			:href="templateUrl"
 			target="_blank"
 			rel="noopener noreferrer"
-			class="w-fit text-sm font-medium text-primary underline underline-offset-4"
+			class="w-fit text-sm font-medium text-brand-700 underline underline-offset-4 dark:text-brand-300"
 		>
 			Create a Token With These Permissions
 		</a>

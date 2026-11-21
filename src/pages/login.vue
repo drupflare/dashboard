@@ -17,5 +17,6 @@ onMounted(async () => {
 	<div class="flex flex-col gap-6">
 		<h1 class="text-xl font-semibold text-highlighted">Sign In</h1>
 		<AuthMethods />
+		<AuthOrg />
 	</div>
 </template>

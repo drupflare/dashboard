@@ -16,7 +16,12 @@ function show(value: unknown): string {
 </script>
 
 <template>
-	<div class="overflow-x-auto">
+	<div
+		class="overflow-x-auto"
+		tabindex="0"
+		role="region"
+		aria-label="Settings Changes"
+	>
 		<table class="w-full text-left text-sm">
 			<caption class="sr-only">
 				Settings changes

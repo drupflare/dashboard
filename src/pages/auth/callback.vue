@@ -22,6 +22,7 @@ const phase = ref<'working' | 'signin' | 'confirm' | 'repo' | 'failed'>('working
 const message = ref('');
 const linkEmail = ref('');
 const linkProvider = ref<OAuthProvider | null>(null);
+const linkIsSso = ref(false);
 const connecting = ref(false);
 const linking = ref(false);
 const needsStepUp = ref(false);
@@ -31,7 +32,11 @@ const fresh = () => {
 	return until != null && Date.parse(until) > Date.now();
 };
 
-const linkLabel = computed(() => (linkProvider.value ? OAUTH_LABELS[linkProvider.value] : ''));
+const linkLabel = computed(() => {
+	if (linkIsSso.value) return 'your organization sign-in';
+	return linkProvider.value ? OAUTH_LABELS[linkProvider.value] : '';
+});
+const linkParam = () => (linkIsSso.value ? 'sso' : linkProvider.value);
 const linkLabelOf = (provider: OAuthProvider | undefined) =>
 	provider ? OAUTH_LABELS[provider] : 'The provider';
 
@@ -58,7 +63,7 @@ async function showLinkStep() {
 
 // the OAuth code is single-use, so only the provider comes back
 const signInRedirect = () =>
-	`/login?redirect=${encodeURIComponent(`/auth/callback?link=${linkProvider.value}`)}`;
+	`/login?redirect=${encodeURIComponent(`/auth/callback?link=${linkParam()}`)}`;
 
 type RepoReturn = {
 	orgId: string;
@@ -112,7 +117,7 @@ async function confirmLink() {
 	linking.value = true;
 	try {
 		await useApi().post('/me/identities/link');
-		await navigateTo(`/account?connected=${linkProvider.value}`);
+		await navigateTo(`/account?connected=${linkParam()}`);
 	} catch (cause) {
 		const apiError = toApiClientError(cause);
 		const details = apiError.details as { requires?: string } | null;
@@ -133,6 +138,12 @@ onMounted(async () => {
 	const error = single(route.query.error);
 	const provider = state ? providerOfState(state) : null;
 	const linked = providerNamed(single(route.query.link));
+	if (!state && !code && !error && single(route.query.link) === 'sso') {
+		linkIsSso.value = true;
+		linkEmail.value = single(route.query.email) ?? '';
+		await showLinkStep();
+		return;
+	}
 	if (!state && !code && !error && linked) {
 		linkProvider.value = linked;
 		await showLinkStep();

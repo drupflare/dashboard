@@ -73,7 +73,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-	<main class="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-10">
+	<div class="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-10">
 		<header class="flex flex-col gap-2">
 			<h1 class="text-2xl font-semibold text-highlighted">
 				Create in Your Cloudflare Account
@@ -161,10 +161,10 @@ onBeforeUnmount(() => {
 			Manage the connected accounts on the
 			<NuxtLink
 				to="/planes"
-				class="font-medium text-primary underline"
+				class="font-medium text-brand-700 underline dark:text-brand-300"
 				>Planes</NuxtLink
 			>
 			page.
 		</p>
-	</main>
+	</div>
 </template>

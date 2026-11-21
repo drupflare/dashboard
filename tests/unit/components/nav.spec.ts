@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import NavBar from '~/components/NavBar.vue';
 import PublicNav from '~/components/PublicNav.vue';
 import SideNav from '~/components/SideNav.vue';
+import { ADMIN_CONSOLES, ORG_NAV_GROUPS, orgRoleHolds, WORKSPACE_NAV } from '~/shared/navigation';
+import { actionDef, ACTIONS, ORG_ROLES, type Action } from '~/shared/permissions';
 import { useOrgStore } from '~/stores/org';
 import { useSessionStore, type Me } from '~/stores/session';
 import { useSitesStore } from '~/stores/sites';
@@ -21,6 +23,18 @@ const me: Me = {
 	stepUpUntil: null
 };
 const personal = { id: 'org_personal', name: 'Personal', personal: true, role: 'owner' };
+
+// organization read actions with no side nav entry, and the reason each one has none
+const UNLINKED_READS: Record<string, string> = {
+	'org.read': 'lists sites; the Sites entry covers it',
+	'operation.read': 'activity shows on each site; no organization list yet',
+	'node.read': 'nodes are listed under Planes',
+	'template.read': 'repository and site create flows read the templates',
+	'assessment.read': 'read by the Assess pages',
+	'audit.read': 'no page yet',
+	'notification.read': 'no page yet',
+	'release.read': 'no route uses it yet'
+};
 
 let cleanup: () => void = () => undefined;
 const mounted: { unmount: () => void }[] = [];
@@ -114,6 +128,11 @@ describe('PublicNav', () => {
 });
 
 describe('SideNav', () => {
+	beforeEach(() => {
+		useOrgStore().items = [personal];
+		useOrgStore().currentId = personal.id;
+	});
+
 	it('links the admin area as a full page load, never a client route', async () => {
 		useSessionStore().me = { ...me, platformRole: 'admin' };
 		const wrapper = await mount(SideNav);
@@ -148,7 +167,7 @@ describe('SideNav', () => {
 		const billing = wrapper
 			.findAllComponents(NuxtLink)
 			.find((link) => link.props('to') === '/org/billing');
-		expect(billing?.text()).toBe('Billing');
+		expect(billing?.text()).toBe('Plan and Invoices');
 		expect(billing?.props('external')).toBe(false);
 	});
 
@@ -170,5 +189,62 @@ describe('SideNav', () => {
 			.find((link) => link.props('to') === '/org/integrations');
 		expect(integrations?.text()).toBe('Integrations');
 		expect(integrations?.props('external')).toBe(false);
+	});
+
+	it('links each page the lanes owed under the read action of its data route', () => {
+		const org = ORG_NAV_GROUPS.flatMap((group) => group.items);
+		const owedOrg: [string, Action][] = [
+			['/org/support', 'support-grant.read'],
+			['/org/delegations', 'delegation.read'],
+			['/org/transfers', 'transfer.read'],
+			['/org/clients', 'client.read'],
+			['/org/usage', 'usage.read'],
+			['/org/budget', 'billing.manage']
+		];
+		for (const [to, action] of owedOrg) {
+			expect(org.find((item) => item.to === to)?.action, to).toBe(action);
+		}
+		const owedAdmin: [string, Action][] = [
+			['/admin/trust', 'admin.trust.read'],
+			['/admin/support-grants', 'admin.support-grants.read'],
+			['/admin/db', 'admin.db.read']
+		];
+		for (const [to, action] of owedAdmin) {
+			expect(ADMIN_CONSOLES.find((item) => item.to === to)?.action, to).toBe(action);
+		}
+	});
+
+	it('shows each organization page to the roles that hold its read action, from the catalogue', async () => {
+		const items = [...WORKSPACE_NAV, ...ORG_NAV_GROUPS.flatMap((group) => group.items)];
+		useSessionStore().me = me;
+		for (const role of ORG_ROLES) {
+			useOrgStore().items = [{ ...personal, role }];
+			const wrapper = await mount(SideNav);
+			const shown = new Set(
+				wrapper.findAllComponents(NuxtLink).map((link) => link.props('to'))
+			);
+			for (const item of items) {
+				expect(shown.has(item.to), `${role} ${item.to}`).toBe(
+					orgRoleHolds(role, item.action)
+				);
+			}
+			wrapper.unmount();
+		}
+	});
+
+	it('reaches every organization read action from a navigation entry, or names why it has none', () => {
+		const linked = new Set<Action>(
+			[...WORKSPACE_NAV, ...ORG_NAV_GROUPS.flatMap((group) => group.items)].map(
+				(item) => item.action
+			)
+		);
+		for (const action of ACTIONS) {
+			const def = actionDef(action);
+			if (def.scope !== 'org' || !action.endsWith('.read')) continue;
+			expect(linked.has(action) || action in UNLINKED_READS, action).toBe(true);
+		}
+		for (const action of Object.keys(UNLINKED_READS)) {
+			expect(linked.has(action as Action), action).toBe(false);
+		}
 	});
 });

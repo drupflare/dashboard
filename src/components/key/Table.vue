@@ -16,7 +16,12 @@ const STATE: Record<KeyState, { label: string; color: 'success' | 'neutral' | 'w
 </script>
 
 <template>
-	<div class="overflow-x-auto rounded-lg border border-default">
+	<div
+		class="overflow-x-auto rounded-lg border border-default"
+		tabindex="0"
+		role="region"
+		aria-label="API Keys"
+	>
 		<table class="w-full text-left text-sm">
 			<thead class="bg-elevated text-muted">
 				<tr>

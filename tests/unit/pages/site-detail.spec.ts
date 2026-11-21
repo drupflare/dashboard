@@ -1,6 +1,7 @@
 import { mountSuspended } from '@nuxt/test-utils/runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import SitePage from '~/pages/sites/[id]/index.vue';
+import { useOrgStore } from '~/stores/org';
 import { useSessionStore } from '~/stores/session';
 import { calls, clearBrowserState, registerApi, type Reply } from '../stores/store-support';
 
@@ -325,7 +326,46 @@ describe('site page', () => {
 	});
 });
 
+describe('site transfer and client grouping', () => {
+	let stopExtra: () => void = () => undefined;
+
+	beforeEach(() => {
+		useOrgStore().$reset();
+	});
+
+	afterEach(() => stopExtra());
+
+	function asRole(role: string) {
+		useOrgStore().items = [{ id: 'org_personal', name: 'Personal', personal: true, role }];
+		stopExtra = registerApi({
+			'GET /api/v1/orgs/org_personal/transfers': { body: { outgoing: [], incoming: [] } },
+			'GET /api/v1/orgs/org_personal/clients': { body: { items: [] } }
+		});
+	}
+
+	it('offers Transfer This Site and the Client select to an admin', async () => {
+		asRole('admin');
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Transfer This Site'));
+		expect(wrapper.find('[aria-label="Client"]').exists()).toBe(true);
+	});
+
+	it('shows neither to a viewer', async () => {
+		asRole('viewer');
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(wrapper.find('h1').text()).toBe('quiet-oak-harbor'));
+		expect(wrapper.text()).not.toContain('Transfer This Site');
+		expect(wrapper.find('[aria-label="Client"]').exists()).toBe(false);
+	});
+});
+
 describe('site sections', () => {
+	beforeEach(() => {
+		useOrgStore().items = [
+			{ id: 'org_personal', name: 'Personal', personal: true, role: 'admin' }
+		];
+	});
+
 	it('links each section of a Drupal site', async () => {
 		const wrapper = await mountPage();
 

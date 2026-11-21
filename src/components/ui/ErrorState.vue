@@ -1,12 +1,23 @@
 <script setup lang="ts">
-withDefaults(
+import type { PolicyBlockDetail } from '~/shared/policies';
+
+const props = withDefaults(
 	defineProps<{
 		title: string;
 		text?: string;
 		requestId?: string | null;
+		// the error details; a policy refusal names its group and rule
+		detail?: unknown;
 	}>(),
 	{ text: 'The request failed. Try again.' }
 );
+
+const policy = computed<PolicyBlockDetail | null>(() => {
+	const value = props.detail;
+	if (typeof value !== 'object' || value === null) return null;
+	const block = value as PolicyBlockDetail;
+	return block.requires === 'policy' ? block : null;
+});
 </script>
 
 <template>
@@ -27,6 +38,10 @@ withDefaults(
 		>
 			Request ID: <code class="break-all">{{ requestId }}</code>
 		</p>
+		<TeamPolicyWhy
+			v-if="policy"
+			:detail="policy"
+		/>
 		<slot />
 	</div>
 </template>

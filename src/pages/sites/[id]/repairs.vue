@@ -61,7 +61,7 @@ useHead({ title: () => (site.value ? `Repairs for ${site.value.name}` : 'Repairs
 </script>
 
 <template>
-	<main class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">
+	<div class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">
 		<header>
 			<h1 class="text-2xl font-bold">Automatic Repairs</h1>
 			<p class="text-sm text-muted">
@@ -84,5 +84,5 @@ useHead({ title: () => (site.value ? `Repairs for ${site.value.name}` : 'Repairs
 			@load-more="loadMore"
 			@undo="undo"
 		/>
-	</main>
+	</div>
 </template>

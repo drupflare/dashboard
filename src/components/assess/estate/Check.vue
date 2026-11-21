@@ -54,7 +54,12 @@ defineProps<{ check: CheckView }>();
 			>
 				Showing {{ check.rejected.length }} of {{ check.rejectedTotal }} rejected rows.
 			</p>
-			<div class="overflow-x-auto rounded-lg border border-default">
+			<div
+				class="overflow-x-auto rounded-lg border border-default"
+				tabindex="0"
+				role="region"
+				aria-label="Rejected Rows"
+			>
 				<table class="w-full text-left text-sm">
 					<thead class="bg-elevated text-muted">
 						<tr>

@@ -15,7 +15,12 @@ function when(value: string): string {
 		<p class="text-sm text-muted">
 			A copy counts as verified only after a test restore passes.
 		</p>
-		<div class="overflow-x-auto rounded-lg border border-default">
+		<div
+			class="overflow-x-auto rounded-lg border border-default"
+			tabindex="0"
+			role="region"
+			aria-label="Restore Points of This Site"
+		>
 			<table class="w-full text-left text-sm">
 				<caption class="sr-only">
 					Restore Points of This Site, Newest First

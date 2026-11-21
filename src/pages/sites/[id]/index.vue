@@ -4,10 +4,13 @@ import { ApiClientError, toApiClientError, useApi } from '~/composables/useApi';
 import { adminUrlFor } from '~/composables/useOnboarding';
 import { boxDeleteCase } from '~/shared/box-sites';
 import { DOMAINS_OFF_COPY } from '~/shared/domain-copy';
+import { orgRoleHolds } from '~/shared/navigation';
 import { canRetry, operationTypeLabel, refusalReason } from '~/shared/operation-copy';
+import { isOrgRole } from '~/shared/permissions';
 import { useCutoverStore } from '~/stores/cutover';
 import { useDomainStore, type DomainPayload } from '~/stores/domain';
 import { useOperationsStore } from '~/stores/operations';
+import { useOrgStore } from '~/stores/org';
 import type { SiteSummary } from '~/stores/sites';
 
 definePageMeta({ middleware: ['auth'] });
@@ -99,6 +102,15 @@ const canAdopt = computed(
 );
 const siteMissing = computed(() => siteError.value?.status === 404);
 
+// the caller's role in the site's organization, which the navigation and the budget screen read
+const orgRole = computed(() => {
+	const role = useOrgStore().items?.find((org) => org.id === site.value?.orgId)?.role;
+	return isOrgRole(role) ? role : null;
+});
+const canManageBudget = computed(() => orgRoleHolds(orgRole.value, 'site.budget.manage'));
+const canTransferSite = computed(() => orgRoleHolds(orgRole.value, 'site.transfer'));
+const canGroupSite = computed(() => orgRoleHolds(orgRole.value, 'site.client.manage'));
+
 // a site the box reported has no managed copy to update or back up, and no address to read health
 // from when the box kept it back
 const found = computed(() => site.value?.box?.found === true);
@@ -169,6 +181,7 @@ async function tryAgain(operation: Operation): Promise<void> {
 					v-if="readable"
 					:site-id="site.id"
 					:kind="site.kind"
+					:org-role="orgRole"
 				/>
 				<SiteBox
 					:site="site"
@@ -260,6 +273,24 @@ async function tryAgain(operation: Operation): Promise<void> {
 					/>
 				</template>
 
+				<SiteBudgetPanel
+					v-if="readable"
+					:site-id="site.id"
+					:can-manage="canManageBudget"
+				/>
+				<template v-if="readable">
+					<AgencyTransferPropose
+						v-if="canTransferSite"
+						:org-id="site.orgId"
+						:site-id="site.id"
+						:site-name="site.name"
+					/>
+					<AgencyClientSelect
+						v-if="canGroupSite"
+						:org-id="site.orgId"
+						:site-id="site.id"
+					/>
+				</template>
 				<SiteAdopt
 					v-if="canAdopt"
 					:org-id="site.orgId"

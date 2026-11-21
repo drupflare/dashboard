@@ -5,7 +5,12 @@ defineProps<{ sites: SiteSummary[] }>();
 </script>
 
 <template>
-	<div class="hidden overflow-x-auto rounded-lg border border-default md:block">
+	<div
+		class="hidden overflow-x-auto rounded-lg border border-default md:block"
+		tabindex="0"
+		role="region"
+		aria-label="Sites"
+	>
 		<table class="w-full text-left text-sm">
 			<thead class="bg-elevated text-muted">
 				<tr>

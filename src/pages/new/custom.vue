@@ -115,7 +115,7 @@ onMounted(() => {
 </script>
 
 <template>
-	<main class="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-10">
+	<div class="mx-auto flex w-full max-w-2xl flex-col gap-8 px-4 py-10">
 		<header class="flex flex-col gap-2">
 			<h1 class="text-2xl font-semibold text-highlighted">Upload Your Own Worker</h1>
 			<p class="text-sm text-muted">
@@ -196,5 +196,5 @@ onMounted(() => {
 				</div>
 			</form>
 		</template>
-	</main>
+	</div>
 </template>

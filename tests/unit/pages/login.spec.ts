@@ -141,4 +141,30 @@ describe('login page', () => {
 			)
 		);
 	});
+
+	it('sends an organization sign-in name to the start route', async () => {
+		cleanup = registerApi({ 'GET /api/v1/me': unauthenticated });
+		const wrapper = await mountPage();
+		const input = wrapper.find('input[name="organization"]');
+		const form = input.element.closest('form');
+		await input.setValue(' Example-EDU ');
+		form?.dispatchEvent(new Event('submit', { cancelable: true }));
+		await vi.waitFor(() =>
+			expect(navigate).toHaveBeenCalledWith('/api/v1/auth/sso/example-edu/start', {
+				external: true
+			})
+		);
+	});
+
+	it('refuses a malformed name without leaving the page', async () => {
+		cleanup = registerApi({ 'GET /api/v1/me': unauthenticated });
+		const wrapper = await mountPage();
+		const input = wrapper.find('input[name="organization"]');
+		await input.setValue('not a name!');
+		input.element.closest('form')?.dispatchEvent(new Event('submit', { cancelable: true }));
+		await vi.waitFor(() =>
+			expect(wrapper.find('#sso-name-error').text()).toContain('sign-in name')
+		);
+		expect(navigate).not.toHaveBeenCalled();
+	});
 });

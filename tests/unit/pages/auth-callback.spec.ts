@@ -219,6 +219,21 @@ describe('auth callback page', () => {
 		);
 	});
 
+	it('offers the confirm step for an organization sign-in that matched an existing account', async () => {
+		cleanup = registerApi({
+			'GET /api/v1/me': { body: { ...me, stepUpUntil: soon() } },
+			'POST /api/v1/me/identities/link': { status: 201, body: { identity: {} } }
+		});
+		const wrapper = await mountAt('?link=sso&email=owner%40example.test');
+		await vi.waitFor(() => expect(wrapper.text()).toContain('Confirm the Link'));
+		expect(wrapper.text()).toContain('your organization sign-in');
+		await wrapper
+			.findAll('button')
+			.find((b) => b.text() === 'Confirm Link')!
+			.trigger('click');
+		await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/account?connected=sso'));
+	});
+
 	it('asks for a fresh sign-in before linking when the session is stale', async () => {
 		cleanup = registerApi({
 			'GET /api/v1/auth/oauth/github/callback': {

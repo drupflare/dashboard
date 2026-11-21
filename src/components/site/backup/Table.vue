@@ -31,7 +31,12 @@ function size(bytes: number): string {
 </script>
 
 <template>
-	<div class="overflow-x-auto rounded-lg border border-default">
+	<div
+		class="overflow-x-auto rounded-lg border border-default"
+		tabindex="0"
+		role="region"
+		aria-label="Backups of This Site"
+	>
 		<table class="w-full text-left text-sm">
 			<caption class="sr-only">
 				Backups of This Site, Newest First

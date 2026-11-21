@@ -185,7 +185,7 @@ onMounted(() => {
 						Want it on a server you run?
 						<NuxtLink
 							to="/new/self-hosted"
-							class="font-medium text-primary underline"
+							class="font-medium text-brand-700 underline dark:text-brand-300"
 							>Create it on your own box</NuxtLink
 						>
 					</p>
