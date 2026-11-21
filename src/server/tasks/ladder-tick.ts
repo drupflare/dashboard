@@ -4,6 +4,7 @@ import { ensureCollegeDB, type CollegeDBEnv } from '../db/collegedb';
 import { withAtomicBatch } from '../db/repos/atomic-shards';
 import { productionLadderDeps, tickLadder } from '../services/ladder-tick';
 import { siteServices } from '../services/sites';
+import { notInstalled } from '../utils/task-skip';
 
 export default defineTask({
 	meta: {
@@ -18,9 +19,7 @@ export default defineTask({
 			return { result: await tickLadder(productionLadderDeps(db, siteServices())) };
 		} catch (error) {
 			if (error instanceof ApiError && error.code === 'not_built') {
-				return {
-					result: { skipped: 'the services are not installed in this isolate yet' }
-				};
+				return notInstalled('ladder-tick');
 			}
 			throw error;
 		}
