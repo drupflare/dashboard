@@ -9,15 +9,30 @@ import { nowUtc } from '../../shared/utils/time';
 import { ensureCollegeDB, type CollegeDBEnv } from '../db/collegedb';
 import { personalOrganizationId } from '../db/repos/accounts';
 import { withAtomicBatch } from '../db/repos/atomic-shards';
+import { collegeStateLedger } from '../db/repos/budget-states';
+import { collegeBudgetSource } from '../db/repos/budgets';
 import { getUserById } from '../db/repos/identity';
+import { countMailSentSince, recordMail, recordMailSent } from '../db/repos/mail-log';
+import { appendPlatformAudit } from '../db/repos/platform-audit';
+import { isPlatformFlagOn } from '../db/repos/platform-flags';
+import { loadPolicyFor } from '../db/repos/policies';
 import { findSiteHome } from '../db/repos/site-lookup';
 import type { Principal } from '../domain/authorize';
 import { entitlementKeys } from '../domain/entitlements';
 import { renderMail } from '../emails';
+import { dohResolver } from '../integrations/dns-resolver';
 import { cloudflareEmailSender, type EmailBinding } from '../integrations/email';
 import { engineConfigOf, engineEventSender, engineStarter } from '../integrations/engine';
+import {
+	budgetConfigured,
+	countsConfigured,
+	engineBatchConfigOf,
+	engineBudgetWriter,
+	engineCountsReaders
+} from '../integrations/engine-batch';
 import { guardedProviderFetch } from '../integrations/git-providers/guard';
 import { OAUTH_PROVIDERS, oauthClients, type OAuthConfig } from '../integrations/oauth';
+import { createJwksCache } from '../integrations/oidc';
 import { probeHostKey } from '../integrations/ssh-key';
 import { STRIPE_SECRET_NAMES, createStripeClient } from '../integrations/stripe';
 import { dohResolve } from '../integrations/url-guard';
@@ -50,24 +65,49 @@ import {
 	type BillingStore
 } from './billing';
 import {
+	DAILY_MAIL_CAP,
+	budgetAlertSink,
+	collegeAlertStore,
+	collegeNames,
+	collegeRecipients
+} from './budget-alerts';
+import { budgetModeOf, type BudgetMode } from './budget-enforcement';
+import {
+	collegeBudgetStore,
+	seedOrgBudgetFor,
+	setBudgetServices,
+	type BudgetServices
+} from './budgets';
+import {
 	cloudflareReadsOf,
 	resetCapacityServices,
 	setCapacityServices,
 	type CapacityServices
 } from './capacity';
+import { setClientServices, type ClientServices } from './client-workspaces';
+import { setContactServices, type ContactMail, type ContactServices } from './contacts';
+import { setCostCenterServices, type CostCenterServices } from './cost-centers';
 import {
 	resetCustomBundleServices,
 	setCustomBundleServices,
 	type CustomBundleServices
 } from './custom-bundles';
+import { setDelegationServices, type DelegationServices } from './delegations';
+import {
+	defaultDepartmentServices,
+	setDepartmentServices,
+	type DepartmentServices
+} from './departments';
 import { collegeAttemptStore, consoleMailSender, type MailSender } from './email-codes';
 import { resetEstateServices, setEstateServices } from './estate';
-import { collegeFactsStore, factsLoader, type FactsDeps } from './facts';
+import { collegeFactsStore, factsLoader, loadFacts, type FactsDeps } from './facts';
 import { fleetConfigOf, resetFleetServices, setFleetServices, type FleetServices } from './fleet';
 import { startGitPull } from './git-pull';
+import { setGovernanceServices, type GovernanceServices } from './governance';
 import { collegeIdentityStore, setIdentityServices, type IdentityServices } from './identities';
 import { setKeyServices, type KeyServices } from './key-admin';
 import { setLadderServices, type LadderServices } from './ladder';
+import { setMembersServices, type InviteMail, type MembersServices } from './members';
 import {
 	resetCutoverServices,
 	setCutoverServices,
@@ -75,6 +115,12 @@ import {
 } from './migration-cutover';
 import { resetModifyServices, setModifyServices, type ModifyServices } from './modify';
 import { resetModuleServices, setModuleServices, type ModuleServices } from './modules';
+import {
+	setPreferenceServices,
+	unsubscribeUrlFor,
+	type PreferenceServices
+} from './notification-preferences';
+import { isEssential } from './notifications';
 import { setOrganizationServices, type OrganizationServices } from './organizations';
 import {
 	collegeOwnerTokenStore,
@@ -86,13 +132,17 @@ import {
 	type OwnerTokenStore,
 	type PendingSecretDeps
 } from './owner-tokens';
+import { setPilotServices, type PilotServices } from './pilots';
 import { setPlaneConnectionDeps, type PlaneConnectionDeps } from './plane-connections';
+import { defaultPolicyServices, setPolicyServices, type PolicyServices } from './policies';
+import { setProcurementServices, type ProcurementServices } from './procurement';
 import { setReleaseServices, type ReleaseServices } from './releases';
 import {
 	collegeRepoStore,
 	setRepoConnectionDeps,
 	type RepoConnectionDeps
 } from './repo-connections';
+import { collegeReviewers, reviewMailer } from './review-mail';
 import { collegeOnceStore } from './single-use';
 import {
 	domainServicesOf,
@@ -100,6 +150,7 @@ import {
 	setDomainServices,
 	type DomainServices
 } from './site-domain';
+import { setSiteGrantServices, type SiteGrantServices } from './site-grants';
 import {
 	resetSiteHealthServices,
 	setSiteHealthServices,
@@ -119,6 +170,17 @@ import {
 	setSiteServices,
 	type SiteServices
 } from './sites';
+import { collegeSsoMembers, collegeSsoStore, setSsoServices, type SsoServices } from './sso';
+import { setSupportServices, supportStanding, type SupportServices } from './support';
+import { setTransferServices, type TransferServices } from './transfers';
+import { setTrustServices, type TrustBlobs, type TrustServices } from './trust';
+import { setUsageServices, usageReadsOf, type UsageServices } from './usage';
+import {
+	productionSites,
+	productionUsageStore,
+	setUsageCollectFactory,
+	type UsageCollectDeps
+} from './usage-collect';
 
 export interface BootEnv extends CollegeDBEnv {
 	BLOB?: R2Bucket;
@@ -282,6 +344,82 @@ export function mailFor(env: BootEnv, options: BootOptions): MailSender {
 	};
 }
 
+// an essential invitation mail; with no email binding only a development server prints it
+export function inviteMailOf(env: BootEnv, options: BootOptions): InviteMail {
+	const binding = emailBindingOf(env.EMAIL);
+	if (binding === undefined) {
+		return async (to, input) => {
+			if (options.dev === true)
+				console.info(`[dev mail] invitation to ${to}: ${input.acceptUrl}`);
+		};
+	}
+	const sender = cloudflareEmailSender(binding, {
+		email: text(env, 'MAIL_FROM') ?? DEFAULT_MAIL_FROM,
+		name: 'Drupflare'
+	});
+	return (to, input) => sender.send(to, renderMail({ kind: 'invitation', ...input }));
+}
+
+// no binding outside development is an error, so a test notice never reports a send that did not happen
+export function contactMailOf(env: BootEnv, options: BootOptions): ContactMail {
+	const binding = emailBindingOf(env.EMAIL);
+	if (binding === undefined) {
+		return {
+			async send(to, input) {
+				if (options.dev !== true)
+					throw new ApiError('not_built', 'Mail is not available yet');
+				console.info(`[dev mail] ${input.kind} to ${to}`);
+			}
+		};
+	}
+	const sender = cloudflareEmailSender(binding, {
+		email: text(env, 'MAIL_FROM') ?? DEFAULT_MAIL_FROM,
+		name: 'Drupflare'
+	});
+	return { send: (to, input) => sender.send(to, renderMail(input)) };
+}
+
+export function trustBlobsOf(bucket: R2Bucket): TrustBlobs {
+	return {
+		async put(key, bytes, contentType) {
+			await bucket.put(key, bytes, { httpMetadata: { contentType } });
+		},
+		async open(key) {
+			const object = await bucket.get(key);
+			return object === null ? null : (object.body as ReadableStream);
+		}
+	};
+}
+
+// an essential security-event mail; with no email binding only a development server prints it
+export function securityMailOf(
+	env: BootEnv,
+	options: BootOptions,
+	baseUrl: string
+): SsoServices['notify'] {
+	const binding = emailBindingOf(env.EMAIL);
+	if (binding === undefined) {
+		return async (to, summary) => {
+			if (options.dev === true)
+				console.info(`[dev mail] security-event to ${to}: ${summary}`);
+		};
+	}
+	const sender = cloudflareEmailSender(binding, {
+		email: text(env, 'MAIL_FROM') ?? DEFAULT_MAIL_FROM,
+		name: 'Drupflare'
+	});
+	return (to, summary, reviewPath) =>
+		sender.send(
+			to,
+			renderMail({
+				kind: 'security-event',
+				summary,
+				occurredAt: new Date().toISOString(),
+				reviewUrl: `${baseUrl}${reviewPath}`
+			})
+		);
+}
+
 // #endregion
 
 // #region audit
@@ -313,6 +451,16 @@ export function auditWriters(
 				}
 			};
 			const ids = [...new Set(record.orgIds)];
+			// a use of support access is visible to the customer and to the platform
+			if (record.via === 'support-grant' || record.via === 'break-glass') {
+				await appendPlatformAudit(db, {
+					actor: input.actor,
+					action: record.action,
+					target: input.target,
+					detail: { ...input.detail, organizationIds: ids },
+					now: Date.now()
+				});
+			}
 			const [first, second] = ids;
 			if (ids.length === 2 && first && second) {
 				await appendBoth(db, first, second, input, heads);
@@ -377,8 +525,25 @@ function siteAuditSink(getDb: () => Promise<CollegeDBClient>, heads: HeadStore):
 export interface BuiltServices {
 	auth: AuthServices;
 	identity: IdentityServices;
+	sso: SsoServices;
+	costCenters: CostCenterServices;
+	delegations: DelegationServices;
+	transfers: TransferServices;
+	clients: ClientServices;
+	pilots: PilotServices;
+	trust: TrustServices;
+	procurement: ProcurementServices;
+	contacts: ContactServices;
+	preferences: PreferenceServices;
 	organizations: OrganizationServices;
 	keys: KeyServices;
+	members: MembersServices;
+	departments: DepartmentServices;
+	governance: GovernanceServices;
+	policies: PolicyServices;
+	support: SupportServices;
+	siteGrants: SiteGrantServices;
+	usageViews: UsageServices;
 	api: Partial<ApiDeps>;
 	ownerTokens: OwnerTokenStore;
 	sites: SiteServices;
@@ -402,6 +567,9 @@ export interface BuiltServices {
 	heads: HeadStore;
 	// null without a Stripe secret, so the billing routes keep answering 501
 	billing: BillingServices | null;
+	budgets: BudgetServices;
+	// null while the engine binding is missing or no counts secret resolves (the start secret is the fallback)
+	usageCollect: () => UsageCollectDeps | null;
 }
 
 // a missing Stripe secret leaves billing uninstalled; a missing webhook secret leaves only the webhook off
@@ -412,6 +580,7 @@ export function billingServicesOf(
 		audit: BillingServices['audit'];
 		baseUrl: string;
 		now?: () => number;
+		onActivated?: BillingServices['onActivated'];
 	}
 ): BillingServices | null {
 	const secretKey = text(env, STRIPE_SECRET_NAMES.secretKey);
@@ -421,6 +590,7 @@ export function billingServicesOf(
 		webhookSecret: text(env, STRIPE_SECRET_NAMES.webhookSecret) ?? null,
 		store: deps.store,
 		audit: deps.audit,
+		onActivated: deps.onActivated,
 		flags: billingFlags(env),
 		now: deps.now ?? Date.now,
 		log: (message, detail) => console.warn(message, detail),
@@ -438,7 +608,88 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 	const heads = r2HeadStore(env.BLOB);
 	const baseUrl = options.baseUrl ?? 'https://app.drupflare.com';
 	const billing = collegeBillingStore(getDb);
+	// the unsubscribe key is derived from the sign-in code secret, which every deployment already has
+	const preferences: PreferenceServices = {
+		getDb,
+		audit: async (orgId, input) => {
+			await append(await getDb(), orgId, input, heads);
+		},
+		now: Date.now,
+		keySecret: text(env, 'AUTH_CODE_SECRET'),
+		baseUrl
+	};
 	const planOf = async (orgId: string) => entitlementOf(await billing.getAccount(orgId));
+	// counts and lease writes go through the engine, which holds the control key; the dashboard signs
+	// each message type with its own secret, and an unset one resolves to the start secret
+	const batch = {
+		...engineBatchConfigOf(env),
+		now: Date.now,
+		newId: () => crypto.randomUUID()
+	};
+	const engineCounts = engineCountsReaders(batch);
+	const budgetMode = (): BudgetMode => budgetModeOf(text(env, 'BUDGET_ENFORCEMENT'));
+	const budgets: BudgetServices = {
+		store: collegeBudgetStore(getDb),
+		source: collegeBudgetSource(getDb, planOf),
+		planOf,
+		audit: async (orgId, input) => {
+			await append(await getDb(), orgId, input, heads);
+		},
+		// shadow reads counts and writes nothing; `on` also needs the write secret
+		enforcement: () => {
+			const mode = budgetMode();
+			if (!countsConfigured(batch) || (mode === 'on' && !budgetConfigured(batch)))
+				return null;
+			return {
+				mode,
+				now: Date.now,
+				source: budgets.source,
+				counts: engineCounts.views,
+				authority: engineBudgetWriter(batch),
+				ledger: collegeStateLedger(getDb, Date.now),
+				audit: budgets.audit,
+				// without the secret there is no unsubscribeUrl, and optional alerts are held
+				alerts: budgetAlertSink({
+					...(preferences.keySecret === undefined
+						? {}
+						: {
+								unsubscribeUrl: (recipient, category) =>
+									unsubscribeUrlFor(preferences, recipient, category)
+							}),
+					now: Date.now,
+					log: (message, detail) => console.warn(message, detail),
+					paused: async () => isPlatformFlagOn(await getDb(), 'notifications.paused'),
+					record: async (category, status) =>
+						recordMail(await getDb(), {
+							category,
+							class: isEssential(category) ? 'essential' : 'optional',
+							status,
+							at: Date.now()
+						}),
+					remaining: async () => {
+						const dayStart = Math.floor(Date.now() / 86_400_000) * 86_400_000;
+						return DAILY_MAIL_CAP - (await countMailSentSince(await getDb(), dayStart));
+					},
+					...collegeAlertStore(getDb),
+					recipients: async (orgId) => collegeRecipients(await getDb(), orgId),
+					names: async (orgId, siteId) => collegeNames(await getDb(), orgId, siteId),
+					budgetUrl: () => `${baseUrl}/billing`,
+					send: (to, input) => contactMailOf(env, options).send(to, input),
+					recordSent: async (category) =>
+						recordMailSent(await getDb(), {
+							category,
+							class: isEssential(category) ? 'essential' : 'optional',
+							at: Date.now()
+						})
+				}),
+				log: (message, detail) => console.warn(message, detail)
+			};
+		},
+		mode: budgetMode,
+		overageBilled: () => billingFlags(env).overageEnabled,
+		newId: () => `bg_${crypto.randomUUID()}`,
+		now: Date.now
+	};
 	const billingAccountOf = async (orgId: string) =>
 		Boolean((await billing.getAccount(orgId))?.stripeCustomerId);
 	const startOperation = engineStarter({ ...engineConfigOf(env), now: Date.now });
@@ -479,6 +730,7 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			mail: mailFor(env, options),
 			turnstile: siteverifyTurnstile(turnstileSecretOf(env)),
 			codeSecret: text(env, 'AUTH_CODE_SECRET') ?? '',
+			signupsPaused: async () => isPlatformFlagOn(await getDb(), 'signups.paused'),
 			keys: collegeKeyIndex(getDb)
 		},
 		identity: {
@@ -487,11 +739,122 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			clients: oauthClients(oauthConfig(env, baseUrl, options.oauthClientIds)),
 			fetch: (input, init) => fetch(input, init)
 		},
+		sso: {
+			store: collegeSsoStore(getDb),
+			members: collegeSsoMembers(getDb),
+			identities: collegeIdentityStore(getDb),
+			directory: collegeDirectory(getDb, heads),
+			kv: env.KV,
+			once: collegeOnceStore(getDb),
+			ring: async () => (await pendingSecrets()).ring,
+			oidc: {
+				fetch: (input, init) => fetch(input, init),
+				resolve: (hostname) => dohResolve(hostname),
+				once: collegeOnceStore(getDb),
+				cache: createJwksCache(),
+				now: Date.now
+			},
+			dns: dohResolver(),
+			redirectUri: (slug) => `${baseUrl}/api/v1/auth/sso/${slug}/callback`,
+			notify: securityMailOf(env, options, baseUrl),
+			now: Date.now
+		},
 		organizations: { getDb },
 		keys: {
 			getDb,
 			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
 			now: () => nowUtc().toMillis()
+		},
+		members: {
+			getDb,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			inviteMail: inviteMailOf(env, options),
+			baseUrl,
+			now: Date.now
+		},
+		governance: {
+			getDb,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			now: Date.now,
+			newId: () => crypto.randomUUID(),
+			ownerFacts: async (orgId, userId) =>
+				(
+					await loadFacts(
+						{
+							store: collegeFactsStore(getDb),
+							entitlements: async (id) => entitlementKeys(await planOf(id)),
+							policy: async (input) => loadPolicyFor(await getDb(), input)
+						},
+						{
+							principal: { kind: 'user', userId },
+							scope: 'organization',
+							action: 'key.create',
+							params: { orgId }
+						}
+					)
+				)?.facts ?? null,
+			reviewMail: reviewMailer({
+				recipients: async (orgId) => collegeReviewers(await getDb(), orgId),
+				paused: async () => isPlatformFlagOn(await getDb(), 'notifications.paused'),
+				record: async (category, status) =>
+					recordMail(await getDb(), {
+						category,
+						class: isEssential(category) ? 'essential' : 'optional',
+						status,
+						at: Date.now()
+					}),
+				unsubscribeUrl: (reviewer, category) =>
+					unsubscribeUrlFor(preferences, reviewer, category),
+				send: (to, input) => contactMailOf(env, options).send(to, input),
+				baseUrl
+			})
+		},
+		departments: defaultDepartmentServices(getDb, (orgId, input) =>
+			getDb().then((db) => append(db, orgId, input, heads))
+		),
+		policies: defaultPolicyServices(getDb, (orgId, input) =>
+			getDb().then((db) => append(db, orgId, input, heads))
+		),
+		support: {
+			getDb,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			ownerEmails: collegeSsoMembers(getDb).ownerEmails,
+			notify: securityMailOf(env, options, baseUrl),
+			startOperation,
+			newId: () => `sg_${crypto.randomUUID()}`,
+			now: Date.now
+		},
+		delegations: {
+			getDb,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			now: Date.now
+		},
+		transfers: {
+			getDb,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			now: Date.now,
+			targetLimits: async (orgId) => {
+				const { sites } = await planOf(orgId);
+				if (sites === null) {
+					throw new ApiError(
+						'not_built',
+						'The site limit of the receiving plan is not known'
+					);
+				}
+				return { siteLimit: sites };
+			},
+			startCompletion: startOperation
+		},
+		clients: {
+			getDb,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			now: Date.now,
+			usage: usageReadsOf(getDb).samples
+		},
+		siteGrants: {
+			getDb,
+			audit: (orgId, input) => getDb().then((db) => append(db, orgId, input, heads)),
+			now: Date.now
 		},
 		api: {
 			resolvePrincipal: createPrincipalResolver(),
@@ -499,7 +862,9 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			load: factsLoader({
 				entitlements: async (orgId) => entitlementKeys(await planOf(orgId)),
 				budgets: collegeBudgets(getDb),
+				policy: async (input) => loadPolicyFor(await getDb(), input),
 				platform: platformStanding(getDb),
+				support: supportStanding(getDb, platformStanding(getDb), Date.now),
 				...options.facts,
 				store: collegeFactsStore(getDb)
 			}),
@@ -508,8 +873,46 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 					accessTokenOf(event),
 					accessConfigOf(text(env, 'ACCESS_TEAM'), text(env, 'ACCESS_AUD'))
 				),
+			// break-glass owners are told once when it starts, so a later use sends nothing
+			notifyOwners: async () => undefined,
 			...auditWriters(getDb, heads)
 		},
+		costCenters: {
+			getDb,
+			usage: usageReadsOf(getDb).reads,
+			newId: () => crypto.randomUUID(),
+			now: Date.now
+		},
+		usageViews: { getDb, now: Date.now, planOf },
+		usageCollect: () =>
+			countsConfigured(batch)
+				? {
+						now: Date.now,
+						sites: productionSites(getDb),
+						hours: engineCounts.hours,
+						store: productionUsageStore(getDb)
+					}
+				: null,
+		pilots: {
+			getDb,
+			usage: usageReadsOf(getDb).reads,
+			newId: () => crypto.randomUUID(),
+			now: Date.now
+		},
+		trust: {
+			getDb,
+			blobs: trustBlobsOf(env.BLOB),
+			newId: () => crypto.randomUUID(),
+			now: Date.now
+		},
+		procurement: { getDb, newId: () => crypto.randomUUID(), now: Date.now },
+		contacts: {
+			getDb,
+			mail: contactMailOf(env, options),
+			baseUrl,
+			now: Date.now
+		},
+		preferences,
 		ownerTokens,
 		sites: siteServices,
 		backups: backupServicesOf({ BLOB: env.BLOB }, { getDb, startOperation }, heads, {
@@ -657,8 +1060,12 @@ export function buildServices(env: BootEnv, options: BootOptions = {}): BuiltSer
 			audit: async (orgId, input) => {
 				await append(await getDb(), orgId, input, heads);
 			},
-			baseUrl
-		})
+			baseUrl,
+			onActivated: async (orgId) => {
+				await seedOrgBudgetFor(budgets, orgId);
+			}
+		}),
+		budgets
 	};
 }
 
@@ -670,8 +1077,25 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	const built = buildServices(env, options);
 	setAuthServices(built.auth);
 	setIdentityServices(built.identity);
+	setSsoServices(built.sso);
+	setCostCenterServices(built.costCenters);
+	setUsageServices(built.usageViews);
+	setPilotServices(built.pilots);
+	setTrustServices(built.trust);
+	setProcurementServices(built.procurement);
+	setContactServices(built.contacts);
+	setPreferenceServices(built.preferences);
 	setOrganizationServices(built.organizations);
 	setKeyServices(built.keys);
+	setMembersServices(built.members);
+	setDepartmentServices(built.departments);
+	setGovernanceServices(built.governance);
+	setPolicyServices(built.policies);
+	setSupportServices(built.support);
+	setSiteGrantServices(built.siteGrants);
+	setDelegationServices(built.delegations);
+	setTransferServices(built.transfers);
+	setClientServices(built.clients);
 	setApiDeps(built.api);
 	setSiteServices(built.sites);
 	setBackupServices(built.backups);
@@ -693,9 +1117,13 @@ export function bootOnce(env: BootEnv, options: BootOptions = {}): BuiltServices
 	setEstateServices({ keys: built.domain.keys, dns: built.domain.resolver });
 	setPendingSecretDeps(built.pendingSecrets);
 	setBillingServices(built.billing);
+	setBudgetServices(built.budgets);
+	setUsageCollectFactory(built.usageCollect);
 	booted = built;
 	return built;
 }
+
+export const isBooted = (): boolean => booted !== null;
 
 export function bootedServices(): BuiltServices {
 	if (!booted) throw new ApiError('not_built', 'The services are not installed yet');
@@ -706,8 +1134,26 @@ export function resetBoot(): void {
 	booted = null;
 	setAuthServices(null);
 	setIdentityServices(null);
+	setSsoServices(null);
+	setCostCenterServices(null);
+	setUsageServices(null);
+	setUsageCollectFactory(null);
+	setPilotServices(null);
+	setTrustServices(null);
+	setProcurementServices(null);
+	setContactServices(null);
+	setPreferenceServices(null);
 	setOrganizationServices(null);
 	setKeyServices(null);
+	setMembersServices(null);
+	setDepartmentServices(null);
+	setGovernanceServices(null);
+	setPolicyServices(null);
+	setSupportServices(null);
+	setSiteGrantServices(null);
+	setDelegationServices(null);
+	setTransferServices(null);
+	setClientServices(null);
 	resetApiDeps();
 	resetSiteServices();
 	resetBackupServices();
@@ -729,6 +1175,7 @@ export function resetBoot(): void {
 	resetEstateServices();
 	resetPendingSecretDeps();
 	setBillingServices(null);
+	setBudgetServices(null);
 }
 
 // #endregion

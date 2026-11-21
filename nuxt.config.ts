@@ -2,6 +2,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { fileURLToPath } from 'node:url';
 import { defineOrganization } from 'nuxt-schema-org/schema';
 import { defineNuxtConfig } from 'nuxt/config';
+import { draftDocRoutes } from './scripts/docs-drafts';
 export default defineNuxtConfig({
 	modules: [
 		'@nuxthub/core',
@@ -22,6 +23,7 @@ export default defineNuxtConfig({
 	runtimeConfig: {
 		baseUrl: process.env.NUXT_BASE_URL || 'https://app.drupflare.com',
 		public: {
+			spool: process.env.NUXT_PUBLIC_SPOOL === 'on',
 			githubClientId: process.env.NUXT_PUBLIC_GITHUB_CLIENT_ID || '',
 			gitlabClientId: process.env.NUXT_PUBLIC_GITLAB_CLIENT_ID || '',
 			cloudflareClientId: process.env.NUXT_PUBLIC_CLOUDFLARE_CLIENT_ID || '',
@@ -62,6 +64,7 @@ export default defineNuxtConfig({
 	},
 	app: {
 		head: {
+			htmlAttrs: { lang: 'en' },
 			link: [
 				{ rel: 'icon', href: '/favicon.ico', sizes: 'any' },
 				{ rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon-32.png' },
@@ -74,6 +77,7 @@ export default defineNuxtConfig({
 		}
 	},
 	nitro: {
+		prerender: { ignore: draftDocRoutes() },
 		preset: 'cloudflare_module',
 		experimental: { tasks: true },
 		moduleSideEffects: ['reflect-metadata'],
@@ -103,8 +107,10 @@ export default defineNuxtConfig({
 				'ladder-tick',
 				'import-credentials-purge',
 				'environment-ttl-sweep',
-				'restore-drill'
-			]
+				'restore-drill',
+				'access-review-schedule'
+			],
+			'* * * * *': ['budget-evaluate', 'usage-collect', 'docs-mirror-refresh']
 		},
 		publicAssets: [
 			{
@@ -119,11 +125,16 @@ export default defineNuxtConfig({
 		}
 	},
 	routeRules: {
-		'/docs/**': { prerender: true, headers: { 'cache-control': 'public, max-age=300' } }
+		'/docs/**': { headers: { 'cache-control': 'public, max-age=300' } },
+		'/docs/admin/**': { ssr: false }
 	},
 	vite: {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		plugins: [tailwindcss() as any],
+		define: {
+			// the e2e build names the mismatching node in the console; production keeps the short message
+			__VUE_PROD_HYDRATION_MISMATCH_DETAILS__: process.env.NUXT_TEST_BUILD === '1'
+		},
 		optimizeDeps: {
 			include: [
 				'@vue/devtools-core',

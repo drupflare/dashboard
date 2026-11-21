@@ -343,7 +343,7 @@ export function defineApi<
 	R extends MaybeSchema = undefined
 >(
 	meta: ApiMeta<P, Q, B, R>,
-	handler: (ctx: ApiContext<P, Q, B>) => In<R> | Promise<In<R>>
+	handler: (ctx: ApiContext<P, Q, B>) => In<R> | Response | Promise<In<R> | Response>
 ): ApiHandler<ApiMeta<P, Q, B, R>> {
 	assertMeta(meta as AnyApiMeta);
 	const wrapped = defineEventHandler((event) =>
@@ -501,7 +501,21 @@ export function denial(decision: Extract<Decision, { allow: false }>): ApiError 
 	switch (decision.reason) {
 		case 'step_up_required':
 			return new ApiError('forbidden', 'Fresh authentication is required', {
-				requires: 'step-up'
+				requires: 'step-up',
+				...(decision.detail?.policyName
+					? {
+							policy: decision.detail.policy,
+							policyName: decision.detail.policyName,
+							rule: decision.detail.rule
+						}
+					: {})
+			});
+		case 'policy_denied':
+			return new ApiError('forbidden', 'A policy group blocks this action', {
+				requires: 'policy',
+				policy: decision.detail?.policy,
+				policyName: decision.detail?.policyName,
+				rule: decision.detail?.rule
 			});
 		case 'entitlement_required':
 			return new ApiError('forbidden', 'Your plan does not include this feature', {
@@ -630,7 +644,12 @@ async function pipeline(
 				scope: meta.scope,
 				action: meta.action,
 				params: rawParams,
-				access: meta.scope === 'admin' ? ((await deps.access?.(event)) ?? null) : null
+				access:
+					meta.scope === 'admin' ||
+					(principal.kind === 'user' &&
+						(meta.scope === 'organization' || meta.scope === 'site'))
+						? ((await deps.access?.(event)) ?? null)
+						: null
 			})
 		);
 		if (loaded === null) throw new ApiError('not_found', 'Not found');

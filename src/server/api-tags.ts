@@ -26,6 +26,8 @@ export const API_TAGS = [
 	{ name: 'transfers', description: 'Site transfers between organisations.' },
 	{ name: 'pilots', description: 'Pilot workspaces.' },
 	{ name: 'cost-centers', description: 'Cost centers.' },
+	{ name: 'access-reviews', description: 'Access reviews, stale credentials and evidence.' },
+	{ name: 'service-accounts', description: 'Service accounts that hold keys and no sign-in.' },
 	{ name: 'procurement', description: 'Procurement records.' },
 	{ name: 'trust', description: 'Trust center content.' },
 	{ name: 'demo', description: 'The read-only demo dashboard.' },

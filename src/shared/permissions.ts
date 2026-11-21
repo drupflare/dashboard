@@ -28,7 +28,7 @@ export const PLATFORM_ROLES = ['admin'] as const;
 export type PlatformRole = (typeof PLATFORM_ROLES)[number];
 
 export const PLATFORM_ROLE_PERMISSIONS: Record<PlatformRole, readonly PlatformPermission[]> = {
-	admin: ['read']
+	admin: ['read', 'support', 'infrastructure']
 };
 
 export function isPlatformRole(value: unknown): value is PlatformRole {
@@ -89,6 +89,7 @@ export const ACTION_DEFS = {
 	'account.read': { scope: 'account' },
 	'account.write': { scope: 'account', sessionOnly: true },
 	'account.security.manage': { scope: 'account', sessionOnly: true },
+	'invite.accept': { scope: 'account', sessionOnly: true },
 	// #endregion
 
 	// #region organisation
@@ -108,6 +109,7 @@ export const ACTION_DEFS = {
 	'policy.manage': { scope: 'org', org: ADM },
 	'review.read': { scope: 'org', org: ADM },
 	'review.manage': { scope: 'org', org: ADM },
+	'review.decide': { scope: 'department', org: ADM },
 	'key.read': { scope: 'org', org: DEV },
 	'key.create': { scope: 'org', org: DEV, sessionOnly: true, stepUp: true },
 	'key.revoke': { scope: 'org', org: DEV, sessionOnly: true },
@@ -117,6 +119,9 @@ export const ACTION_DEFS = {
 	'delegation.revoke': { scope: 'org', org: ADM },
 	'audit.read': { scope: 'org', org: ADM },
 	'audit.export': { scope: 'org', org: ADM },
+	'support-grant.read': { scope: 'org', org: ADM },
+	'support-grant.create': { scope: 'org', org: ADM, sessionOnly: true, stepUp: true },
+	'support-grant.revoke': { scope: 'org', org: ADM, sessionOnly: true },
 	'notification.read': { scope: 'org', org: ALL },
 	'notification.manage': { scope: 'org', org: ADM },
 	'integration.read': { scope: 'org', org: NOBILL },
@@ -171,8 +176,13 @@ export const ACTION_DEFS = {
 	'client.manage': { scope: 'org', org: ADM, entitlement: 'agency' },
 	'transfer.read': { scope: 'org', org: ADM },
 	'transfer.accept': { scope: 'org', org: OWN, stepUp: true },
+	'transfer.decline': { scope: 'org', org: OWN, sessionOnly: true },
 	'pilot.read': { scope: 'org', org: NOBILL, entitlement: 'pilots' },
 	'pilot.manage': { scope: 'org', org: ADM, entitlement: 'pilots' },
+	'contact.read': { scope: 'org', org: ADM },
+	'contact.manage': { scope: 'org', org: ADM },
+	'contact.test': { scope: 'org', org: ADM },
+	'contact.recovery.manage': { scope: 'org', org: OWN, sessionOnly: true, stepUp: true },
 	// #endregion
 
 	// #region site
@@ -187,7 +197,9 @@ export const ACTION_DEFS = {
 		budget: 'destructive-sites'
 	},
 	'site.transfer': { scope: 'site', org: ADM, stepUp: true },
+	'site.client.manage': { scope: 'site', org: ADM, entitlement: 'agency' },
 	'site.classification.set': { scope: 'site', org: ADM },
+	'site.budget.manage': { scope: 'site', org: OB },
 	'site.deploy': { scope: 'site', org: DEV, site: SM, budget: 'production-deploys' },
 	'site.rollback': { scope: 'site', org: DEV, site: SM },
 	'site.upgrade': { scope: 'site', org: DEV, site: SM },
@@ -250,8 +262,17 @@ export const ACTION_DEFS = {
 	'admin.ladder.read': { scope: 'admin', platform: 'read' },
 	'admin.ladder.manage': { scope: 'admin', platform: 'infrastructure' },
 	'admin.releases.manage': { scope: 'admin', platform: 'infrastructure', stepUp: true },
+	'admin.abuse.read': { scope: 'admin', platform: 'read' },
 	'admin.abuse.manage': { scope: 'admin', platform: 'support' },
+	'admin.flags.read': { scope: 'admin', platform: 'read' },
+	'admin.flags.manage': { scope: 'admin', platform: 'infrastructure', stepUp: true },
+	'admin.trust.read': { scope: 'admin', platform: 'read' },
+	'admin.trust.manage': { scope: 'admin', platform: 'infrastructure', stepUp: true },
 	'admin.break-glass.start': { scope: 'admin', platform: 'support', stepUp: true },
+	'admin.support-grants.read': { scope: 'admin', platform: 'read' },
+	'admin.site.unsuspend': { scope: 'admin', platform: 'support', stepUp: true },
+	'admin.db.read': { scope: 'admin', platform: 'infrastructure', stepUp: true },
+	'admin.db.saved.manage': { scope: 'admin', platform: 'infrastructure', stepUp: true },
 	'admin.billing.support': { scope: 'admin', platform: 'billing_support' },
 	'admin.infrastructure.manage': { scope: 'admin', platform: 'infrastructure' }
 	// #endregion
@@ -328,9 +349,15 @@ export const PUBLIC_ACTIONS = [
 	'auth.oauth.providers',
 	'auth.oauth.start',
 	'auth.oauth.callback',
+	'auth.sso.start',
+	'auth.sso.callback',
 	'auth.logout',
 	'node.claim',
-	'migrate.preflight'
+	'migrate.preflight',
+	'trust.documents.list',
+	'trust.documents.download',
+	'contact.confirm',
+	'notification.unsubscribe'
 ] as const;
 export type PublicAction = (typeof PUBLIC_ACTIONS)[number];
 

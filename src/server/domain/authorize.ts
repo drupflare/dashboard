@@ -14,6 +14,7 @@ import {
 	type PlatformPermission,
 	type SupportRole
 } from '../../shared/permissions';
+import { capByPolicy, type PolicyCapTarget } from './cap-by-policy';
 import {
 	coversSite,
 	delegatedActions,
@@ -21,6 +22,7 @@ import {
 	isActive,
 	type Delegation
 } from './delegation';
+import { chainOf, type DepartmentNode } from './departments';
 import { evaluatePolicy, grantProvides, type Grant, type PolicyGroup } from './policy';
 import { keyAllows, type ApiKeyFacts } from './scopes';
 
@@ -58,6 +60,8 @@ export interface Facts {
 	platform?: { admin: boolean; access: boolean; permissions: readonly PlatformPermission[] };
 	membership?: Membership;
 	grants: readonly Grant[];
+	// the organisation's department tree, so a grant on a parent reaches its children
+	departments?: readonly DepartmentNode[];
 	agencyMemberships: readonly Membership[];
 	delegations: readonly Delegation[];
 	supportGrant?: SupportGrant;
@@ -99,6 +103,7 @@ export type DenyReason =
 
 export interface DenyDetail {
 	policy?: string;
+	policyName?: string;
 	rule?: string;
 	feature?: string;
 	budget?: string;
@@ -154,16 +159,26 @@ function findSource(
 		return { via: 'organisation', audit: own };
 	}
 
-	for (const grant of facts.grants) {
-		if (grant.orgId !== orgId) continue;
-		if (grant.level === 'department') {
-			if (resource.departmentId === undefined || grant.targetId !== resource.departmentId)
-				continue;
-			if (grantProvides(grant, action)) return { via: 'department', audit: own };
-		} else if (grant.level === 'site') {
-			if (resource.siteId === undefined || grant.targetId !== resource.siteId) continue;
-			if (grantProvides(grant, action)) return { via: 'site', audit: own };
+	// a department grant covers the target's department and every department below it, so the walk
+	// goes from the target's department up through its parents; the site grant comes last
+	if (resource.departmentId !== undefined) {
+		for (const id of chainOf(facts.departments, resource.departmentId)) {
+			for (const grant of facts.grants) {
+				if (
+					grant.level !== 'department' ||
+					grant.orgId !== orgId ||
+					grant.targetId !== id
+				) {
+					continue;
+				}
+				if (grantProvides(grant, action)) return { via: 'department', audit: own };
+			}
 		}
+	}
+	for (const grant of facts.grants) {
+		if (grant.level !== 'site' || grant.orgId !== orgId) continue;
+		if (resource.siteId === undefined || grant.targetId !== resource.siteId) continue;
+		if (grantProvides(grant, action)) return { via: 'site', audit: own };
 	}
 
 	let blocked: DenyReason | undefined;
@@ -218,6 +233,19 @@ function findSource(
 
 	if (blocked) return { blocked };
 	return undefined;
+}
+
+function detailOf(facts: Facts, block: { policy: string; rule: string }): DenyDetail {
+	const name = facts.policy.find((g) => g.id === block.policy)?.name;
+	return { policy: block.policy, rule: block.rule, ...(name ? { policyName: name } : {}) };
+}
+
+function resourceTarget(resource: Resource): Omit<PolicyCapTarget, 'policy'> {
+	return {
+		...(resource.orgId === undefined ? {} : { orgId: resource.orgId }),
+		...(resource.departmentId === undefined ? {} : { departmentId: resource.departmentId }),
+		...(resource.siteId === undefined ? {} : { siteId: resource.siteId })
+	};
 }
 
 function hasRelation(resource: Resource, facts: Facts): boolean {
@@ -288,8 +316,16 @@ export function authorize(input: AuthorizeInput): Decision {
 
 	// policy groups, then the action's own step-up rule
 	const fresh = stepUpFresh(principal, facts);
+	const capped = capByPolicy(new Set<Action>([action]), {
+		...resourceTarget(resource),
+		policy: facts.policy
+	});
+	if (!capped.has(action)) {
+		const cause = evaluatePolicy(facts.policy, action, { stepUp: true });
+		return deny('policy_denied', cause ? detailOf(facts, cause) : undefined);
+	}
 	const block = evaluatePolicy(facts.policy, action, { stepUp: fresh });
-	if (block) return deny(block.reason, { policy: block.policy, rule: block.rule });
+	if (block) return deny(block.reason, detailOf(facts, block));
 	if (def.stepUp && !fresh)
 		return deny('step_up_required', { policy: 'built-in', rule: 'step-up' });
 

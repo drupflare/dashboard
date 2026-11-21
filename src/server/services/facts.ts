@@ -3,6 +3,12 @@ import { ApiError } from '../../shared/errors';
 import type { BudgetKey } from '../../shared/permissions';
 import { nowUtc } from '../../shared/utils/time';
 import { listActiveDelegations } from '../db/repos/delegations';
+import {
+	getDepartment,
+	getSiteDepartment,
+	listDepartments,
+	listUserDepartmentGrants
+} from '../db/repos/departments';
 import { listUserSiteGrants } from '../db/repos/grants';
 import { getMember, getOrganization } from '../db/repos/organization';
 import { findSiteHome } from '../db/repos/site-lookup';
@@ -15,6 +21,7 @@ import type {
 	SupportGrant
 } from '../domain/authorize';
 import { isActive, type Delegation } from '../domain/delegation';
+import type { DepartmentNode } from '../domain/departments';
 import type { Grant, PolicyGroup } from '../domain/policy';
 import type { ApiKeyFacts } from '../domain/scopes';
 import type { AccessIdentity } from '../utils/access';
@@ -31,6 +38,12 @@ export interface FactsStore {
 	member(orgId: string, userId: string): Promise<Membership | null>;
 	siteGrants(orgId: string, userId: string): Promise<readonly Grant[]>;
 	delegations(clientOrgId: string): Promise<readonly Delegation[]>;
+	// departments are optional so a store that predates them still loads; a route that names a
+	// department fails closed without `department`
+	department?(orgId: string, id: string): Promise<{ id: string } | null>;
+	departments?(orgId: string): Promise<readonly DepartmentNode[]>;
+	departmentGrants?(orgId: string, userId: string): Promise<readonly Grant[]>;
+	siteDepartment?(orgId: string, siteId: string): Promise<string | null>;
 }
 
 export interface SupportStanding {
@@ -50,9 +63,17 @@ export interface FactsDeps {
 	store: FactsStore;
 	entitlements?(orgId: string): Promise<readonly string[]>;
 	budgets?(orgId: string): Promise<readonly BudgetKey[]>;
-	policy?(input: { orgId: string; siteId?: string }): Promise<readonly PolicyGroup[]>;
+	policy?(input: {
+		orgId: string;
+		siteId?: string;
+		departmentId?: string;
+	}): Promise<readonly PolicyGroup[]>;
 	suspensions?(input: { orgIds: readonly string[]; userId: string }): Promise<Suspensions>;
-	support?(input: { userId: string; orgId: string }): Promise<SupportStanding | null>;
+	support?(input: {
+		userId: string;
+		orgId: string;
+		access: AccessIdentity | null;
+	}): Promise<SupportStanding | null>;
 	// the platform standing of a signed-in person: their role and whether Access vouched for them
 	platform?(input: {
 		userId: string;
@@ -83,6 +104,20 @@ export function collegeFactsStore(getDb: () => Promise<CollegeDBClient>): FactsS
 		},
 		async delegations(clientOrgId) {
 			return listActiveDelegations(await getDb(), clientOrgId);
+		},
+		async department(orgId, id) {
+			const row = await getDepartment(await getDb(), orgId, id);
+			return row ? { id: row.id } : null;
+		},
+		async departments(orgId) {
+			const rows = await listDepartments(await getDb(), orgId);
+			return rows.map((row) => ({ id: row.id, parentId: row.parentId, kind: row.kind }));
+		},
+		async departmentGrants(orgId, userId) {
+			return listUserDepartmentGrants(await getDb(), orgId, userId);
+		},
+		async siteDepartment(orgId, siteId) {
+			return (await getSiteDepartment(await getDb(), orgId, siteId))?.departmentId ?? null;
 		}
 	};
 }
@@ -135,7 +170,11 @@ async function locate(
 		const key = lookupKey(params.orgId);
 		if (key === '') return null;
 		const org = await store.organization(key);
-		return org ? { orgId: org.id } : null;
+		if (!org) return null;
+		if (params.deptId === undefined) return { orgId: org.id };
+		// the department is read inside this organisation, so another organisation's id finds nothing
+		const department = await store.department?.(org.id, lookupKey(params.deptId));
+		return department ? { orgId: org.id, departmentId: department.id } : null;
 	}
 	const key = lookupKey(params.id);
 	if (key === '') return null;
@@ -145,7 +184,13 @@ async function locate(
 	if (params.orgId !== undefined && lookupKey(params.orgId) !== lookupKey(site.orgId))
 		return null;
 	const org = await store.organization(site.orgId);
-	return org ? { orgId: org.id, siteId: site.id } : null;
+	if (!org) return null;
+	const departmentId = await store.siteDepartment?.(org.id, site.id);
+	return {
+		orgId: org.id,
+		siteId: site.id,
+		...(departmentId ? { departmentId } : {})
+	};
 }
 
 function supportReady(support: SupportStanding | null): support is SupportStanding {
@@ -185,15 +230,20 @@ export async function loadFacts(deps: FactsDeps, input: LoadInput): Promise<Load
 	// for a key, every subject fact describes the person who issued it
 	const userId = principal.kind === 'user' ? principal.userId : principal.issuerId;
 
-	const [found, grantRows, delegationRows, support] = await Promise.all([
-		store.member(orgId, userId),
-		store.siteGrants(orgId, userId),
-		store.delegations(orgId),
-		principal.kind === 'user' && deps.support
-			? deps.support({ userId, orgId })
-			: Promise.resolve(null)
-	]);
+	const [found, siteGrantRows, delegationRows, support, tree, departmentGrantRows] =
+		await Promise.all([
+			store.member(orgId, userId),
+			store.siteGrants(orgId, userId),
+			store.delegations(orgId),
+			principal.kind === 'user' && deps.support
+				? deps.support({ userId, orgId, access: input.access ?? null })
+				: Promise.resolve(null),
+			store.departments?.(orgId) ?? Promise.resolve([]),
+			store.departmentGrants?.(orgId, userId) ?? Promise.resolve([])
+		]);
 	const membership = found?.orgId === orgId ? found : null;
+	// a department role only counts while the person is still in the organisation
+	const grantRows = [...siteGrantRows, ...(membership ? departmentGrantRows : [])];
 	const grants = grantRows.filter((grant) => grant.orgId === orgId);
 	const delegations = delegationRows.filter(
 		(delegation) => delegation.clientOrgId === orgId && isActive(delegation, now)
@@ -222,7 +272,8 @@ export async function loadFacts(deps: FactsDeps, input: LoadInput): Promise<Load
 		deps.budgets?.(orgId) ?? [],
 		deps.policy?.({
 			orgId,
-			...(resource.siteId === undefined ? {} : { siteId: resource.siteId })
+			...(resource.siteId === undefined ? {} : { siteId: resource.siteId }),
+			...(resource.departmentId === undefined ? {} : { departmentId: resource.departmentId })
 		}) ?? []
 	]);
 
@@ -240,6 +291,7 @@ export async function loadFacts(deps: FactsDeps, input: LoadInput): Promise<Load
 		budgetExceeded
 	};
 	if (membership) facts.membership = membership;
+	if (tree.length > 0) facts.departments = tree;
 	const stepUpAt = stepUpAtOf(principal);
 	if (stepUpAt !== undefined) facts.stepUpAt = stepUpAt;
 	if (key) facts.key = key;
