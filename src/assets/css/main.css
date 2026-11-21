@@ -47,10 +47,11 @@
 :root {
 	--ui-radius: 0.375rem;
 	--ui-text-muted: var(--color-ink-600);
-	--ui-text-dimmed: var(--color-ink-500);
+	--ui-text-dimmed: var(--color-ink-600);
 	--ui-border: var(--color-ink-200);
-	--ui-border-accented: var(--color-ink-300);
+	--ui-border-accented: var(--color-ink-500);
 	--ui-focus: var(--color-brand-600);
+	--ui-error: var(--color-red-700);
 }
 
 .dark {
@@ -62,8 +63,9 @@
 	--ui-text-muted: var(--color-ink-400);
 	--ui-text-dimmed: var(--color-ink-500);
 	--ui-border: var(--color-ink-800);
-	--ui-border-accented: var(--color-ink-700);
+	--ui-border-accented: var(--color-ink-500);
 	--ui-focus: var(--color-brand-400);
+	--ui-error: var(--color-red-400);
 }
 
 @layer base {
