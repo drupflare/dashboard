@@ -45,6 +45,7 @@ export const WORKFLOW_NAMES = [
 	'site-delete',
 	'site-purge',
 	'site-cleanup',
+	'site-auth-state',
 	'site-adopt',
 	'site-repair',
 	'site-import',
@@ -69,7 +70,8 @@ export const WORKFLOW_NAMES = [
 	'node-site-create',
 	'site-rollback',
 	'release-ring',
-	'template-build'
+	'template-build',
+	'site-transfer'
 ] as const;
 export type WorkflowName = (typeof WORKFLOW_NAMES)[number];
 
@@ -123,7 +125,7 @@ function hmacKey(secret: string, usages: ('sign' | 'verify')[]) {
 const signedText = (context: string, timestamp: string, id: string, body: string) =>
 	`${context}\n${timestamp}\n${id}\n${body}`;
 
-async function sign(
+export async function signRequest(
 	context: string,
 	body: string,
 	options: { secret: string; now: number; id: string }
@@ -143,23 +145,24 @@ async function sign(
 }
 
 export const signStart = (body: string, options: { secret: string; now: number; id: string }) =>
-	sign(START_CONTEXT, body, options);
+	signRequest(START_CONTEXT, body, options);
 
 // an event has its own context, so a captured start cannot be replayed as an event
 export const signEvent = (body: string, options: { secret: string; now: number; id: string }) =>
-	sign(EVENT_CONTEXT, body, options);
+	signRequest(EVENT_CONTEXT, body, options);
 
 export type Started = { workflow: WorkflowName; id: string; params: Record<string, unknown> };
 export type StartVerdict = { ok: true; value: Started } | { ok: false; code: StartRefusal };
 
-type SignedVerdict = { ok: true; id: string; json: unknown } | { ok: false; code: StartRefusal };
+export type SignedVerdict =
+	{ ok: true; id: string; json: unknown } | { ok: false; code: StartRefusal };
 
 // checks the signature before it reads the body as anything but bytes
-async function verifySigned(
+export async function verifySigned(
 	context: string,
 	headers: { get(name: string): string | null },
 	body: string,
-	options: { secret: string; now: number }
+	options: { secret: string; now: number; windowMs?: number }
 ): Promise<SignedVerdict> {
 	const timestamp = headers.get(START_HEADERS.timestamp);
 	const id = headers.get(START_HEADERS.id);
@@ -180,7 +183,7 @@ async function verifySigned(
 		encoder.encode(signedText(context, timestamp, id, body))
 	);
 	if (!valid) return { ok: false, code: 'bad_signature' };
-	if (Math.abs(options.now - Number(timestamp)) > START_WINDOW_MS) {
+	if (Math.abs(options.now - Number(timestamp)) > (options.windowMs ?? START_WINDOW_MS)) {
 		return { ok: false, code: 'stale' };
 	}
 	let json: unknown;

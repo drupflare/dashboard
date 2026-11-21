@@ -1,7 +1,7 @@
 {
 	"$schema": "https://json-schema.org/draft/2020-12/schema",
 	"contract": "site-auth",
-	"version": "1.0",
+	"version": "1.1",
 	"schemas": {
 		"authorityState": {
 			"type": "object",
@@ -11,7 +11,7 @@
 				"generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
 				"state": {
 					"type": "string",
-					"enum": ["active", "plan-grace", "suspended", "revoked"]
+					"enum": ["active", "plan-grace", "suspended", "revoked", "over-budget"]
 				},
 				"risk": {
 					"type": "string",
@@ -49,7 +49,7 @@
 				"generation": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
 				"state": {
 					"type": "string",
-					"enum": ["active", "plan-grace", "suspended", "revoked"]
+					"enum": ["active", "plan-grace", "suspended", "revoked", "over-budget"]
 				},
 				"mode": { "type": "string", "enum": ["lease", "strict"] },
 				"limits": {
@@ -116,7 +116,13 @@
 								},
 								"state": {
 									"type": "string",
-									"enum": ["active", "plan-grace", "suspended", "revoked"]
+									"enum": [
+										"active",
+										"plan-grace",
+										"suspended",
+										"revoked",
+										"over-budget"
+									]
 								},
 								"mode": { "type": "string", "enum": ["lease", "strict"] },
 								"limits": {

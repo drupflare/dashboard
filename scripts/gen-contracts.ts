@@ -769,6 +769,25 @@ async function siteAuthVectors(keys: Record<KeyLabel, SigningKey & { seed: strin
 		context: ctx,
 		expectServing: 'lease'
 	});
+	const overBudget = await issue({ state: 'over-budget', limits: { blockAtViews: 120000 } });
+	positive(cases, {
+		name: 'over-budget-state',
+		kind: 'lease',
+		description:
+			'An over-budget lease is an availability state: it verifies, and the verifier decides whether visitors are served.',
+		input: overBudget,
+		context: ctx,
+		expectServing: 'lease'
+	});
+	positive(cases, {
+		name: 'over-budget-availability-grace',
+		kind: 'lease',
+		description:
+			'An over-budget lease rides the availability grace like any other non-security state.',
+		input: overBudget,
+		context: { ...ctx, now: overBudget.exp + 60_000, renewalFailed: true },
+		expectServing: 'availability-grace'
+	});
 	positive(cases, {
 		name: 'availability-grace',
 		kind: 'lease',
@@ -787,6 +806,22 @@ async function siteAuthVectors(keys: Record<KeyLabel, SigningKey & { seed: strin
 		expectServing: 'lease'
 	});
 
+	negative(cases, {
+		name: 'tampered-over-budget-state',
+		kind: 'lease',
+		description: 'An over-budget lease edited to say active.',
+		input: { ...clone(overBudget), state: 'active' },
+		context: ctx,
+		expect: 'bad_signature'
+	});
+	negative(cases, {
+		name: 'tampered-block-at-views',
+		kind: 'lease',
+		description: 'An over-budget lease with its block threshold raised.',
+		input: { ...clone(overBudget), limits: { ...overBudget.limits, blockAtViews: 9999999 } },
+		context: ctx,
+		expect: 'bad_signature'
+	});
 	const tampered = { ...clone(suspended), state: 'active' };
 	negative(cases, {
 		name: 'tampered-state',

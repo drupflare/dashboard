@@ -10,7 +10,7 @@ import {
 	type Verified
 } from './common';
 
-export const SITE_AUTH_VERSION = { major: 1, minor: 0 } as const;
+export const SITE_AUTH_VERSION = { major: 1, minor: 1 } as const;
 export const SITE_AUTH_CONTRACT = 'site-auth';
 
 export const LEASE_CONTEXT = 'drupflare.site-auth.lease.v1';
@@ -22,7 +22,15 @@ export const DEFAULT_STALE_GRACE_MS = 300_000;
 export const DEFAULT_CLOCK_SKEW_MS = 5_000;
 export const RENEW_WHEN_REMAINING = 1 / 3;
 
-export const LEASE_STATES = ['active', 'plan-grace', 'suspended', 'revoked'] as const;
+// over-budget is an availability state: visitors are refused, the owner's routes still pass, and
+// the availability grace applies, so it is never a security state
+export const LEASE_STATES = [
+	'active',
+	'plan-grace',
+	'suspended',
+	'revoked',
+	'over-budget'
+] as const;
 export const SECURITY_STATES = ['suspended', 'revoked'] as const;
 export const RISK_CLASSES = ['established', 'new-free', 'abuse-watch', 'escalated'] as const;
 export const LEASE_MODES = ['lease', 'strict'] as const;
@@ -36,6 +44,14 @@ export type RiskClass = z.infer<typeof riskClass>;
 export type LeaseMode = z.infer<typeof leaseMode>;
 
 export const limitsSchema = z.record(z.string(), z.number().nonnegative());
+
+// a lower bound on this month's views at which a visitor is refused; absent means no local block
+export const BLOCK_AT_VIEWS = 'blockAtViews';
+
+export function blockAtViewsOf(limits: Record<string, number>): number | null {
+	const value = limits[BLOCK_AT_VIEWS];
+	return typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : null;
+}
 
 // environment name to the digest a visitor's assertion must carry; an environment not listed is public
 export const gatesSchema = z.record(z.string().min(1).max(64), digestSchema);

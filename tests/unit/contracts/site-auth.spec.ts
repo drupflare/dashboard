@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateSigningKey, newId, sha256Digest } from '../../../contracts/src/common';
 import {
+	BLOCK_AT_VIEWS,
 	DEFAULT_CLOCK_SKEW_MS,
 	DEFAULT_LEASE_MS,
 	DEFAULT_STALE_GRACE_MS,
@@ -8,8 +9,10 @@ import {
 	LEASE_STATES,
 	RISK_CLASSES,
 	SECURITY_STATES,
+	SITE_AUTH_VERSION,
 	STRICT_LEASE_MS,
 	authorityStateSchema,
+	blockAtViewsOf,
 	checkLease,
 	decideRenewal,
 	isReusable,
@@ -165,7 +168,7 @@ describe('checkLease', () => {
 
 	it('rides the stale grace for non-security states only after a renewal failure', async () => {
 		const key = await generateSigningKey();
-		for (const state of ['active', 'plan-grace'] as const) {
+		for (const state of ['active', 'plan-grace', 'over-budget'] as const) {
 			const lease = await issueLease(await authority({ state }), 0, key.privateKey);
 			const now = lease.exp + DEFAULT_CLOCK_SKEW_MS + 1000;
 			const noFailure = await checkLease(lease, base(key.publicKey, now));
@@ -318,6 +321,54 @@ describe('access gates on the lease', () => {
 			epoch: lease.epoch
 		});
 		expect(checked).toEqual({ ok: false, code: 'bad_signature' });
+	});
+
+	it('signs the over-budget state and the block threshold, so neither can be edited in transit', async () => {
+		const key = await generateSigningKey();
+		const lease = await issueLease(
+			await authority({
+				state: 'over-budget',
+				limits: { viewsPerMonth: 1000, blockAtViews: 1500 }
+			}),
+			1000,
+			key.privateKey
+		);
+		const ctx = {
+			publicKey: key.publicKey,
+			now: 1500,
+			siteId: lease.siteId,
+			epoch: lease.epoch
+		};
+		const checked = await checkLease(lease, ctx);
+		expect(checked.ok && checked.value.lease.state).toBe('over-budget');
+		expect(blockAtViewsOf(lease.limits)).toBe(1500);
+		expect(await checkLease({ ...lease, state: 'active' }, ctx)).toEqual({
+			ok: false,
+			code: 'bad_signature'
+		});
+		const raised = { ...lease, limits: { ...lease.limits, [BLOCK_AT_VIEWS]: 9_999_999 } };
+		expect(await checkLease(raised, ctx)).toEqual({ ok: false, code: 'bad_signature' });
+	});
+
+	it('keeps over-budget out of the security states and still renews it', async () => {
+		expect(LEASE_STATES).toContain('over-budget');
+		expect(SECURITY_STATES).not.toContain('over-budget');
+		expect(isSecurityState('over-budget')).toBe(false);
+		const state = await authority({ state: 'over-budget' });
+		expect(decideRenewal({ siteId: site, epoch: 2 }, state)).toEqual({ ok: true });
+		expect(authorityStateSchema.parse(state).state).toBe('over-budget');
+	});
+
+	it('reads the block threshold as a whole number, and absent or odd values as none', () => {
+		expect(blockAtViewsOf({})).toBeNull();
+		expect(blockAtViewsOf({ viewsPerMonth: 5 })).toBeNull();
+		expect(blockAtViewsOf({ [BLOCK_AT_VIEWS]: 0 })).toBe(0);
+		expect(blockAtViewsOf({ [BLOCK_AT_VIEWS]: 99.9 })).toBe(99);
+		expect(blockAtViewsOf({ [BLOCK_AT_VIEWS]: Number.POSITIVE_INFINITY })).toBeNull();
+	});
+
+	it('is contract version 1.1, an additive minor bump that keeps the wire major at 1', () => {
+		expect(SITE_AUTH_VERSION).toEqual({ major: 1, minor: 1 });
 	});
 
 	it('leaves a lease without gates byte for byte as it was', async () => {
