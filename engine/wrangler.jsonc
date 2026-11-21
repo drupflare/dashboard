@@ -273,6 +273,7 @@
 				{ "tag": "v4", "new_sqlite_classes": ["ApiBudget"] }
 			],
 			"vars": {
+				"PRIME_MODE": "1",
 				"DISPATCH_NAMESPACE": "drupflare-stage",
 				"RELEASES_URL": "https://cdn.drupflare.com/payloads/managed/",
 				"LEASE_TTL_MS": "600000",

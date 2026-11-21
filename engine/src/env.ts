@@ -171,6 +171,8 @@ export interface EngineEnv {
 	// an unset one falls back to START_SECRET
 	BUDGET_SECRET?: string;
 	COUNTS_SECRET?: string;
+	// '1' in the stage environment only: the cron applies the count writes queued under `prime:` in KV
+	PRIME_MODE?: string;
 	FLEET_SEED: string;
 	DISPATCH_NAMESPACE: string;
 	LEASE_TTL_MS: string | number;

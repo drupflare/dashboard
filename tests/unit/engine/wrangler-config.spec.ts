@@ -71,7 +71,7 @@ const DISPATCH_SET_AT_DEPLOY = [
 	'CONTROL_HOST',
 	'SPIKE_MODE'
 ];
-const STAGE_ONLY = new Set(['SPIKE_MODE', 'JOB_RUNNER']);
+const STAGE_ONLY = new Set(['SPIKE_MODE', 'JOB_RUNNER', 'PRIME_MODE']);
 const STAGE_ONLY_CLASSES = new Set(['JobRunner']);
 
 function boundIn(config: Config): Set<string> {
@@ -258,6 +258,15 @@ describe('the engine and the dispatch unit agree', () => {
 		];
 		expect(prod.vars?.SPIKE_MODE).toBeUndefined();
 		expect(stage.vars?.SPIKE_MODE).toBe('1');
+	});
+
+	it('sets the engine prime switch in stage and nowhere else', () => {
+		const [prod, stage] = environments('engine').map(([, config]) => config) as [
+			Config,
+			Config
+		];
+		expect(prod.vars?.PRIME_MODE).toBeUndefined();
+		expect(stage.vars?.PRIME_MODE).toBe('1');
 	});
 
 	it('keeps stage and prod to the same bindings, with names that cannot collide', () => {

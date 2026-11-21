@@ -1,9 +1,11 @@
+import { counterFor } from '../../dispatch/src/usage';
 import { handleBatch, isBatchPath } from './batch';
 import { buildBatchDeps } from './batch-env';
 import { isBoxArchivePath, serveBoxArchive } from './box-archive';
 import { buildDeps, type EngineEnv } from './env';
 import { handleLink, linkNodeId } from './node-link';
 import { D1NodeStore } from './node-store';
+import { primeStage } from './prime';
 import { handleStart } from './start';
 import { sweepAndLog } from './sweep';
 
@@ -100,6 +102,19 @@ export default {
 				});
 	},
 	scheduled: (_controller, env, ctx) => {
+		ctx.waitUntil(
+			primeStage({
+				mode: env.PRIME_MODE,
+				store: env.KV,
+				counter: (siteId) => counterFor(env.USAGE_COUNTER, siteId),
+				now: Date.now
+			}).then(
+				(outcomes) => {
+					for (const outcome of outcomes) console.log('stage prime', outcome);
+				},
+				(error) => console.error('stage prime failed', String(error))
+			)
+		);
 		ctx.waitUntil(
 			buildDeps(env).then((deps) => sweepAndLog(deps, { accountId: env.CF_ACCOUNT_ID }))
 		);

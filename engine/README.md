@@ -6,22 +6,23 @@ It exports the `SiteLease` Durable Object and the `SiteCreate`, `SiteDelete`, `S
 
 ## Modules
 
-| File                              | Decides                                                                             |
-| --------------------------------- | ----------------------------------------------------------------------------------- |
-| `src/descriptor.ts`               | The upload metadata for one site, from the managed or the canonical config          |
-| `src/config-choice.ts`            | Which config an account gets, and the ordered steps to move a site between the two  |
-| `src/provision-plan.ts`           | The per-site KV namespaces, bucket and database, their rollback order and a dry run |
-| `src/operations/state.ts`         | Operation statuses, step moves, plan digest, blast radius and change budgets        |
-| `src/operations/store.ts`         | The D1 store for operations, steps and site resources, with compare-and-swap writes |
-| `src/lease.ts`                    | One writer per site: acquire, heartbeat, release and the fencing epoch              |
-| `src/bundle.ts`                   | The release bundle manifest, its size and count gates, and asset chunking           |
-| `src/ports.ts`                    | The interfaces the workflows call: Cloudflare, authority, names, site, releases     |
-| `src/workflows/site-create.ts`    | Create steps and the rollback that undoes them                                      |
-| `src/workflows/site-delete.ts`    | Delete (tombstone) and purge, which needs a second explicit confirmation            |
-| `src/workflows/site-cleanup.ts`   | Removes what an unfinished create left behind; a retried create runs it first       |
-| `src/backup-parts.ts`             | Backup ids, the part manifest with its sha256 digests, and the restore ceiling      |
-| `src/workflows/backup-create.ts`  | Pages a site export into R2 parts and writes the manifest                           |
-| `src/workflows/backup-restore.ts` | Checks the parts, restores them into a target site and waits for the replay         |
+| File                              | Decides                                                                              |
+| --------------------------------- | ------------------------------------------------------------------------------------ |
+| `src/descriptor.ts`               | The upload metadata for one site, from the managed or the canonical config           |
+| `src/config-choice.ts`            | Which config an account gets, and the ordered steps to move a site between the two   |
+| `src/provision-plan.ts`           | The per-site KV namespaces, bucket and database, their rollback order and a dry run  |
+| `src/operations/state.ts`         | Operation statuses, step moves, plan digest, blast radius and change budgets         |
+| `src/operations/store.ts`         | The D1 store for operations, steps and site resources, with compare-and-swap writes  |
+| `src/lease.ts`                    | One writer per site: acquire, heartbeat, release and the fencing epoch               |
+| `src/bundle.ts`                   | The release bundle manifest, its size and count gates, and asset chunking            |
+| `src/ports.ts`                    | The interfaces the workflows call: Cloudflare, authority, names, site, releases      |
+| `src/workflows/site-create.ts`    | Create steps and the rollback that undoes them                                       |
+| `src/workflows/site-delete.ts`    | Delete (tombstone) and purge, which needs a second explicit confirmation             |
+| `src/workflows/site-cleanup.ts`   | Removes what an unfinished create left behind; a retried create runs it first        |
+| `src/backup-parts.ts`             | Backup ids, the part manifest with its sha256 digests, and the restore ceiling       |
+| `src/workflows/backup-create.ts`  | Pages a site export into R2 parts and writes the manifest                            |
+| `src/workflows/backup-restore.ts` | Checks the parts, restores them into a target site and waits for the replay          |
+| `src/prime.ts`                    | Stage only: the cron writes the view counts queued under `prime:` in KV to a counter |
 
 `scripts/build-bundle.ts` turns a `wrangler deploy --dry-run --outdir` directory into the bundle layout the release store reads. It does not run wrangler or upload.
 
