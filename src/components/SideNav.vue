@@ -1,48 +1,112 @@
 <script setup lang="ts">
+import { ORG_NAV_GROUPS, orgRoleHolds, WORKSPACE_NAV } from '~/shared/navigation';
+import { isOrgRole } from '~/shared/permissions';
+
 const session = useSessionStore();
-const route = useRoute();
+const org = useOrgStore();
 
 const ACTIVE = 'border-brand-600 bg-elevated !text-highlighted dark:border-brand-400';
+const LINK =
+	'inline-flex items-center gap-2 rounded-md border-l-2 border-transparent px-3 py-2 text-sm font-medium text-muted hover:bg-elevated hover:text-highlighted';
 
-// the access login needs a full page load, so /admin is never a client route
-const items = computed(() => [
-	{ to: '/sites', label: 'Sites', icon: 'i-lucide-globe', external: false },
-	{ to: '/repos', label: 'Repositories', icon: 'i-lucide-git-branch', external: false },
-	{ to: '/planes', label: 'Planes', icon: 'i-lucide-server', external: false },
-	{
-		to: '/org/integrations',
-		label: 'Integrations',
-		icon: 'i-lucide-git-branch',
-		external: false
-	},
-	{ to: '/org/billing', label: 'Billing', icon: 'i-lucide-credit-card', external: false },
-	{ to: '/account', label: 'Account', icon: 'i-lucide-user-round', external: false },
-	...(session.me?.platformRole === 'admin'
-		? [{ to: '/admin', label: 'Admin', icon: 'i-lucide-shield', external: true }]
-		: [])
-]);
+// an org page shows to a role only when the catalogue gives that role its read action
+const role = computed(() => (isOrgRole(org.current?.role) ? org.current.role : null));
+const workspace = computed(() =>
+	WORKSPACE_NAV.filter((item) => orgRoleHolds(role.value, item.action))
+);
+const groups = computed(() =>
+	ORG_NAV_GROUPS.map((group) => ({
+		...group,
+		items: group.items.filter((item) => orgRoleHolds(role.value, item.action))
+	})).filter((group) => group.items.length > 0)
+);
 </script>
 
 <template>
 	<nav
 		aria-label="Main"
-		class="flex gap-1 overflow-x-auto md:w-48 md:flex-col md:overflow-visible"
+		class="flex gap-1 overflow-x-auto md:w-56 md:flex-col md:overflow-visible"
 	>
 		<NuxtLink
-			v-for="item in items"
-			:key="item.to"
-			:to="item.to"
-			:external="item.external"
-			class="inline-flex items-center gap-2 rounded-md border-l-2 border-transparent px-3 py-2 text-sm font-medium text-muted hover:bg-elevated hover:text-highlighted"
-			:class="item.external && route.path === item.to ? ACTIVE : ''"
+			to="/sites"
+			:class="LINK"
 			:active-class="ACTIVE"
+			:external="false"
 		>
 			<UIcon
-				:name="item.icon"
+				name="i-lucide-globe"
 				class="size-4"
 				aria-hidden="true"
 			/>
-			{{ item.label }}
+			Sites
 		</NuxtLink>
+		<ClientOnly>
+			<NuxtLink
+				v-for="item in workspace"
+				:key="item.to"
+				:to="item.to"
+				:class="LINK"
+				:active-class="ACTIVE"
+				:external="false"
+			>
+				<UIcon
+					:name="item.icon"
+					class="size-4"
+					aria-hidden="true"
+				/>
+				{{ item.label }}
+			</NuxtLink>
+			<template
+				v-for="group in groups"
+				:key="group.id"
+			>
+				<p class="hidden px-3 pt-4 text-xs font-medium text-muted md:block">
+					{{ group.label }}
+				</p>
+				<NuxtLink
+					v-for="item in group.items"
+					:key="item.to"
+					:to="item.to"
+					:class="LINK"
+					:active-class="ACTIVE"
+					:external="false"
+				>
+					<UIcon
+						:name="item.icon"
+						class="size-4"
+						aria-hidden="true"
+					/>
+					{{ item.label }}
+				</NuxtLink>
+			</template>
+		</ClientOnly>
+		<NuxtLink
+			to="/account"
+			:class="LINK"
+			:active-class="ACTIVE"
+			:external="false"
+		>
+			<UIcon
+				name="i-lucide-user-round"
+				class="size-4"
+				aria-hidden="true"
+			/>
+			Account
+		</NuxtLink>
+		<ClientOnly>
+			<NuxtLink
+				v-if="session.me?.platformRole === 'admin'"
+				to="/admin"
+				external
+				:class="LINK"
+			>
+				<UIcon
+					name="i-lucide-shield"
+					class="size-4"
+					aria-hidden="true"
+				/>
+				Admin
+			</NuxtLink>
+		</ClientOnly>
 	</nav>
 </template>

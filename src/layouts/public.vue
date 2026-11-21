@@ -2,7 +2,7 @@
 	<div class="flex min-h-dvh flex-col bg-default text-default">
 		<a
 			href="#main"
-			class="sr-only rounded-md bg-default px-3 py-2 focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-10"
+			class="sr-only rounded-md bg-default px-3 py-2 focus:not-sr-only focus:block focus:px-3 focus:py-2"
 		>
 			Skip to Content
 		</a>

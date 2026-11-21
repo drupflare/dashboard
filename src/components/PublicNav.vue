@@ -19,7 +19,7 @@ async function signOut() {
 		<div class="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
 			<NuxtLink
 				to="/"
-				class="rounded-md"
+				class="inline-flex rounded-md"
 				aria-label="Drupflare Home"
 			>
 				<Logo />
