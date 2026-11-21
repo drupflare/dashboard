@@ -132,7 +132,7 @@ export async function unsubscribeUrlFor(
 
 // #region preferences
 
-// what the senders read; a category with no stored row is off
+// what the senders read; a category with no stored row takes its default
 export async function prefsOf(db: CollegeDBClient, userId: string): Promise<NotificationPrefs> {
 	return listPreferences(db, userId);
 }

@@ -46,7 +46,7 @@ export async function collegeReviewers(db: CollegeDBClient, orgId: string): Prom
 	return out;
 }
 
-// "ops" is an optional class, so only a reviewer who opted in is mailed; the rest are counted
+// "ops" is an optional class, so a reviewer who switched it off is not mailed; they are counted
 export function reviewMailer(deps: ReviewMailDeps) {
 	return async (orgId: string, input: ReviewMailInput) => {
 		let sent = 0;

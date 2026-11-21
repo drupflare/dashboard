@@ -18,7 +18,7 @@ export interface GovernanceServices {
 	newId: () => string;
 	// the standing of one member of the organisation, as the facts loader reads it
 	ownerFacts: (orgId: string, userId: string) => Promise<Facts | null>;
-	// the optional "ops" mail to reviewers; people without a stored opt-in are skipped
+	// the optional "ops" mail to reviewers; people who switched it off are skipped
 	reviewMail: (
 		orgId: string,
 		input: ReviewMailInput

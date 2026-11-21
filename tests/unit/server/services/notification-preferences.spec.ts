@@ -102,13 +102,13 @@ async function refused(promise: Promise<unknown>): Promise<ApiError> {
 const tokenOf = (url: string) => new URL(url).searchParams.get('token') ?? '';
 
 describe('preferences', () => {
-	it('shows every optional switch off until it is turned on, and lists the mail that always sends', async () => {
+	it('shows the optional switches on until they are turned off, the digest off, and lists the mail that always sends', async () => {
 		const w = world();
 		const view = await getPreferencesView(w.deps, 'u1');
 		expect(view.switches.map((item) => [item.category, item.enabled])).toEqual([
-			['ops', false],
-			['billing-info', false],
-			['reports', false],
+			['ops', true],
+			['billing-info', true],
+			['reports', true],
 			['digest', false]
 		]);
 		expect(view.essential.map((item) => item.label)).toContain(
@@ -120,27 +120,34 @@ describe('preferences', () => {
 	it('stores a choice, audits each change once, and skips an unchanged value', async () => {
 		const w = world();
 		await setPreferences(w.deps, 'u1', { ops: true });
-		await setPreferences(w.deps, 'u1', { ops: true });
+		expect(w.audits).toEqual([]);
+		await setPreferences(w.deps, 'u1', { ops: false });
+		await setPreferences(w.deps, 'u1', { ops: false });
 		expect(w.audits).toEqual([
 			{
 				orgId: 'org_u1',
 				action: 'account.notifications.update',
 				target: 'ops',
-				detail: { enabled: true, via: 'settings' }
+				detail: { enabled: false, via: 'settings' }
 			}
 		]);
-		const view = await setPreferences(w.deps, 'u1', { ops: false, 'billing-info': true });
+		const view = await setPreferences(w.deps, 'u1', { ops: true, 'billing-info': false });
 		expect(view.switches.filter((item) => item.enabled).map((item) => item.category)).toEqual([
-			'billing-info'
+			'ops',
+			'reports'
 		]);
 		expect(w.audits).toHaveLength(3);
 	});
 
 	it('keeps one account apart from another', async () => {
 		const w = world();
-		await setPreferences(w.deps, 'u1', { ops: true });
+		await setPreferences(w.deps, 'u1', { ops: false });
 		const other = await getPreferencesView(w.deps, 'u2');
-		expect(other.switches.every((item) => !item.enabled)).toBe(true);
+		expect(other.switches.filter((item) => item.enabled).map((item) => item.category)).toEqual([
+			'ops',
+			'billing-info',
+			'reports'
+		]);
 	});
 
 	it('refuses an essential category, the unavailable digest and an unknown name, storing nothing', async () => {
@@ -182,7 +189,6 @@ describe('the unsubscribe key', () => {
 describe('unsubscribe', () => {
 	it('switches off only the category in the link', async () => {
 		const w = world();
-		await setPreferences(w.deps, 'u1', { ops: true, 'billing-info': true });
 		const url = await unsubscribeUrlFor(w.deps, { userId: 'u1' }, 'ops');
 		expect(url.startsWith(`${BASE}/api/v1/unsubscribe?token=`)).toBe(true);
 		expect(await unsubscribe(w.deps, tokenOf(url))).toEqual({
@@ -191,7 +197,8 @@ describe('unsubscribe', () => {
 		});
 		const view = await getPreferencesView(w.deps, 'u1');
 		expect(view.switches.filter((item) => item.enabled).map((item) => item.category)).toEqual([
-			'billing-info'
+			'billing-info',
+			'reports'
 		]);
 		expect(w.audits.at(-1)).toMatchObject({
 			target: 'ops',
@@ -261,11 +268,11 @@ describe('unsubscribe', () => {
 });
 
 describe('senders honour the stored choice', () => {
-	it('mails a reviewer who opted in, skips one who did not, with a working unsubscribe link', async () => {
+	it('mails a reviewer by default, skips one who switched it off, with a working unsubscribe link', async () => {
 		const w = world();
 		w.addUser('u1', 'owner');
 		w.addUser('u2', 'admin');
-		await setPreferences(w.deps, 'u1', { ops: true });
+		await setPreferences(w.deps, 'u2', { ops: false });
 		const sent: { to: string; url: string }[] = [];
 		const recorded: string[] = [];
 		const mailer = reviewMailer({
@@ -299,7 +306,7 @@ describe('senders honour the stored choice', () => {
 		const w = world();
 		w.addUser('u1', 'owner');
 		w.addUser('u2', 'billing');
-		await setPreferences(w.deps, 'u1', { 'billing-info': true });
+		await setPreferences(w.deps, 'u2', { 'billing-info': false });
 		const claims = new Set<string>();
 		const sent: { to: string; category: string; unsubscribe: boolean }[] = [];
 		const logs: string[] = [];

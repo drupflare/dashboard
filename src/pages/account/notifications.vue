@@ -32,7 +32,7 @@ async function toggle(category: OptionalCategory, enabled: boolean) {
 		>
 			<UiPageHeader
 				title="Notifications"
-				text="Choose which optional emails you get. Each one is off until you turn it on."
+				text="Choose which optional emails you get. They start on, and each one has its own switch."
 			/>
 
 			<UiErrorState

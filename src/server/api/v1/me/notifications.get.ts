@@ -11,7 +11,7 @@ export default defineApi(
 		tags: ['me'],
 		summary: 'Read mail preferences',
 		description:
-			'Lists the optional mail you can switch on or off, with each switch off until you turn it on, and the mail that always sends. Essential mail has no switch.',
+			'Lists the optional mail you can switch on or off, with each switch on until you turn it off, and the mail that always sends. Essential mail has no switch.',
 		response: preferencesResponse
 	},
 	async ({ principal }) => {

@@ -8,7 +8,7 @@ draft: true
 
 This page lists the email Drupflare sends and how each category works. It is for every account holder.
 
-Drupflare sends transactional email only. Each message belongs to one category. Essential mail always sends and carries no unsubscribe link. Optional mail sends only to people who opted in, and each optional message has an unsubscribe link for its own category.
+Drupflare sends transactional email only. Each message belongs to one category. Essential mail always sends and carries no unsubscribe link. Optional mail starts on and follows each person's switches, and each optional message has an unsubscribe link for its own category.
 
 | Message                                                            | Category           | Essential or optional |
 | ------------------------------------------------------------------ | ------------------ | --------------------- |

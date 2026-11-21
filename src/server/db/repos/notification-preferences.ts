@@ -1,5 +1,5 @@
 import type { CollegeDBClient } from '@earth-app/collegedb';
-import type { OptionalCategory } from '../../../shared/notifications';
+import { DEFAULT_ON_CATEGORIES, type OptionalCategory } from '../../../shared/notifications';
 import { DIRECTORY_KEY } from '../collegedb';
 
 interface Row {
@@ -7,7 +7,7 @@ interface Row {
 	enabled: number;
 }
 
-// only stored choices appear; a category with no row is off
+// a stored choice wins; a category with no row takes its default
 export async function listPreferences(
 	db: CollegeDBClient,
 	userId: string
@@ -18,6 +18,7 @@ export async function listPreferences(
 		[userId]
 	);
 	const out: Partial<Record<OptionalCategory, boolean>> = {};
+	for (const category of DEFAULT_ON_CATEGORIES) out[category] = true;
 	for (const row of results) out[row.category] = row.enabled === 1;
 	return out;
 }

@@ -103,7 +103,7 @@ onMounted(() => void load());
 					Today (UTC): {{ data.today.sent }} of {{ data.dailyCap }} sent,
 					{{ data.today.failed }} failed, {{ data.today.skippedPaused }} held while
 					optional mail was paused, {{ data.today.skippedPreference }} skipped because the
-					person had not opted in.
+					person had switched that mail off.
 				</p>
 			</section>
 		</template>

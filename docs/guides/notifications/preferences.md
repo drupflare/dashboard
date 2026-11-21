@@ -6,7 +6,7 @@ type: written
 draft: true
 ---
 
-You choose which optional emails you get. Open Notifications in your account settings to see the list. Every optional email is off until you turn it on.
+You choose which optional emails you get. Open Notifications in your account settings to see the list. Optional emails start on, so you get them until you switch them off.
 
 ## What you can switch
 

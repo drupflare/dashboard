@@ -75,21 +75,21 @@ afterEach(() => {
 });
 
 describe('reading and changing preferences', () => {
-	it('lists every optional switch off and the mail that always sends', async () => {
+	it('lists the optional switches on, the daily summary off, and the mail that always sends', async () => {
 		const reply = await readPreferences();
 		expect(reply.status).toBe(200);
 		const body = reply.json as {
 			switches: { category: string; enabled: boolean }[];
 			essential: { label: string }[];
 		};
-		expect(body.switches.map((item) => item.enabled)).toEqual([false, false, false, false]);
+		expect(body.switches.map((item) => item.enabled)).toEqual([true, true, true, false]);
 		expect(body.essential.length).toBeGreaterThan(0);
 	});
 
-	it('switches a category on for the signed-in account', async () => {
-		const reply = await putPreferences({ preferences: { ops: true } });
+	it('switches a category off for the signed-in account', async () => {
+		const reply = await putPreferences({ preferences: { ops: false } });
 		expect(reply.status).toBe(200);
-		expect(stored(current.sql)).toEqual([{ user_id: 'user-1', category: 'ops', enabled: 1 }]);
+		expect(stored(current.sql)).toEqual([{ user_id: 'user-1', category: 'ops', enabled: 0 }]);
 		expect(current.audits).toEqual([
 			{ orgId: 'org_user1', action: 'account.notifications.update', target: 'ops' }
 		]);
@@ -99,10 +99,10 @@ describe('reading and changing preferences', () => {
 		const reply = await putPreferences({
 			userId: 'user-2',
 			user_id: 'user-2',
-			preferences: { ops: true }
+			preferences: { ops: false }
 		});
 		expect(reply.status).toBe(200);
-		expect(stored(current.sql)).toEqual([{ user_id: 'user-1', category: 'ops', enabled: 1 }]);
+		expect(stored(current.sql)).toEqual([{ user_id: 'user-1', category: 'ops', enabled: 0 }]);
 	});
 
 	it('refuses an essential category and stores nothing', async () => {
@@ -132,7 +132,6 @@ describe('the unsubscribe routes', () => {
 		new URL(await unsubscribeUrlFor(current.deps, { userId: 'user-1' }, category));
 
 	it('posts the one-click form to the link in the mail header and ignores the body', async () => {
-		await putPreferences({ preferences: { ops: true, 'billing-info': true } });
 		const link = await linkFor();
 		const reply = await send(unsubscribePost, '/api/v1/unsubscribe', {
 			method: 'POST',
@@ -142,10 +141,7 @@ describe('the unsubscribe routes', () => {
 		});
 		expect(reply.status).toBe(200);
 		expect(reply.json).toEqual({ unsubscribed: true, category: 'ops' });
-		expect(stored(current.sql)).toEqual([
-			{ user_id: 'user-1', category: 'ops', enabled: 0 },
-			{ user_id: 'user-1', category: 'billing-info', enabled: 1 }
-		]);
+		expect(stored(current.sql)).toEqual([{ user_id: 'user-1', category: 'ops', enabled: 0 }]);
 	});
 
 	it('answers a replay the same way', async () => {
@@ -181,7 +177,6 @@ describe('the unsubscribe routes', () => {
 	});
 
 	it('redirects a browser to the page and changes nothing on a read', async () => {
-		await putPreferences({ preferences: { ops: true } });
 		const link = await linkFor();
 		const reply = await send(unsubscribeGet, '/api/v1/unsubscribe', {
 			path: `${link.pathname}${link.search}`
@@ -190,6 +185,6 @@ describe('the unsubscribe routes', () => {
 		expect(reply.headers.get('location')).toBe(
 			`/unsubscribe/${encodeURIComponent(link.searchParams.get('token') ?? '')}`
 		);
-		expect(stored(current.sql)).toEqual([{ user_id: 'user-1', category: 'ops', enabled: 1 }]);
+		expect(stored(current.sql)).toEqual([]);
 	});
 });

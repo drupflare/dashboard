@@ -12,4 +12,4 @@ Digests are not sent yet. The code can group optional items from one time window
 
 When digests are live, a digest will hold optional mail only: operations findings, billing information and reports. Essential mail never waits for a digest, and it is never folded into one.
 
-Until then, optional mail that can send at all goes out as it happens, and only to people who have opted in. See [preferences](/docs/guides/notifications/preferences) for who that is.
+Until then, optional mail that can send at all goes out as it happens, unless the person switched that kind off. See [preferences](/docs/guides/notifications/preferences) for the switches.

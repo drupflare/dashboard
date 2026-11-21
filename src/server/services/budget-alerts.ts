@@ -175,7 +175,7 @@ export function budgetAlertSink(deps: BudgetAlertDeps): AlertSink {
 }
 
 // owners and billing members, plus the billing contact once its address is verified. A member's
-// stored choices are their opt-in; a contact's notify switch is its own
+// switches decide their mail; a contact's notify switch is its own
 export async function collegeRecipients(
 	db: CollegeDBClient,
 	orgId: string

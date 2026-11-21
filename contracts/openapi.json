@@ -6198,7 +6198,7 @@
 			"get": {
 				"operationId": "getApiV1MeNotifications",
 				"summary": "Read mail preferences",
-				"description": "Lists the optional mail you can switch on or off, with each switch off until you turn it on, and the mail that always sends. Essential mail has no switch.",
+				"description": "Lists the optional mail you can switch on or off, with each switch on until you turn it off, and the mail that always sends. Essential mail has no switch.",
 				"tags": ["me"],
 				"x-action": "account.read",
 				"x-rate-class": "read",

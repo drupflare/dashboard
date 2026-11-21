@@ -20,8 +20,12 @@ afterAll(() => open.close());
 const user = () => `usr_${crypto.randomUUID()}`;
 
 describe('notification preferences', () => {
-	it('has no row for a user who never chose, so every category reads as off', async () => {
-		expect(await listPreferences(db, user())).toEqual({});
+	it('has no row for a user who never chose, so the sending categories read as on', async () => {
+		expect(await listPreferences(db, user())).toEqual({
+			ops: true,
+			'billing-info': true,
+			reports: true
+		});
 	});
 
 	it('stores a choice, replaces it on the same category, and keeps users apart', async () => {
@@ -30,8 +34,16 @@ describe('notification preferences', () => {
 		await setPreference(db, { userId: a, category: 'ops', enabled: true, at: 1 });
 		await setPreference(db, { userId: a, category: 'billing-info', enabled: true, at: 2 });
 		await setPreference(db, { userId: a, category: 'ops', enabled: false, at: 3 });
-		expect(await listPreferences(db, a)).toEqual({ ops: false, 'billing-info': true });
-		expect(await listPreferences(db, b)).toEqual({});
+		expect(await listPreferences(db, a)).toEqual({
+			ops: false,
+			'billing-info': true,
+			reports: true
+		});
+		expect(await listPreferences(db, b)).toEqual({
+			ops: true,
+			'billing-info': true,
+			reports: true
+		});
 	});
 
 	it('refuses a category outside the optional set at the table', async () => {
