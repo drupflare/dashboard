@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parse } from 'yaml';
 import { z } from 'zod';
+import { DOC_MIRRORS } from '../../../src/shared/doc-mirrors';
 
 const docsDir = fileURLToPath(new URL('../../../docs/', import.meta.url));
 
@@ -130,6 +131,7 @@ const TREE: Record<string, string[]> = {
 	],
 	'guides/billing': [
 		'plans',
+		'budgets',
 		'subscribe-and-invoices',
 		'usage-and-limits',
 		'overage',
@@ -232,7 +234,11 @@ const TREE: Record<string, string[]> = {
 		'support-grants',
 		'break-glass',
 		'measurements',
-		'on-call'
+		'on-call',
+		'spool-kill-path',
+		'database-console',
+		'platform-switches',
+		'budget-enforcement'
 	]
 };
 
@@ -273,7 +279,10 @@ describe('docs map', () => {
 
 	it('links in index.md resolve to files', async () => {
 		const text = await readFile(fileOf('index'), 'utf8');
-		const links = [...text.matchAll(/\]\((\/docs\/[^)\s#]+)\)/g)].map((m) => m[1]!);
+		const mirrors: string[] = DOC_MIRRORS.map((m) => m.routePrefix);
+		const links = [...text.matchAll(/\]\((\/docs\/[^)\s#]+)\)/g)]
+			.map((m) => m[1]!)
+			.filter((link) => !mirrors.includes(link));
 		expect(links.length).toBeGreaterThan(0);
 		for (const link of links) {
 			const page = link.slice('/docs/'.length);
