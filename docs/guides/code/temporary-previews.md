@@ -6,6 +6,8 @@ type: written
 draft: false
 ---
 
+This page shows you how to make a preview that deletes itself, so you can test a change safely. It is for site owners and developers.
+
 A preview is a copy of your site that deletes itself. Use one to try a change, or to show someone a version, without touching the live site.
 
 ## Make a preview
@@ -22,4 +24,4 @@ The preview has its own database, files and owner token. Settings and secrets st
 
 ## When it goes
 
-The preview shows when it will be deleted. It is deleted within about 15 minutes of that time. To remove one sooner, choose Delete on its row. Deleting a preview never changes the live site.
+The preview shows when it will be deleted. A check runs every 15 minutes. It starts the deletion of any preview past its time, so a preview can stay up for about 15 minutes past its time, plus the time the delete takes. To remove one sooner, choose Delete on its row. Deleting a preview never changes the live site.
