@@ -6,21 +6,23 @@ type: written
 draft: true
 ---
 
+This page explains the switch to a migrated site and how to roll it back. It is for owners planning a move.
+
 A cutover points your address at the migrated site. Drupflare never deletes the old site, at any step and after any choice. If something goes wrong, the old site is still there with its data.
 
 ## Status
 
-The plan, the rules, the approval, the timeline, the connection to your old server and the connection to the new site are built and tested. Your address lives in your own DNS, so you change it by hand and Drupflare waits to see it move. The new site must run a worker release that can count the changes it accepts. A site on an older release fails the check before approval, and the page says the site needs an update.
+Moves are not available yet. The site's move page shows Moves Are Not Available Yet, and the move route answers 501 until moves are available, so no cutover can start today. The steps below describe the design. No move has run. Your address lives in your own DNS, so you change it by hand and Drupflare waits to see it move. The new site must run a worker release that can count the changes it accepts. A site on an older release fails the check before approval, and the page says the site needs an update.
 
 ## Choose what happens to the old site
 
 You pick one write policy before the move starts. Each one trades a longer window against lost changes.
 
-- **Freeze.** The old site stops taking changes. Visitors can read it, but nobody can log in, post or submit a form until the new site is live.
-- **Read only.** Visitors can read the old site, and editors cannot save. Form submissions are refused.
-- **Copy the changes.** The old site keeps taking changes while the new site is built. Just before the switch, Drupflare copies what changed since the snapshot. If the same record changed on both sides, the move stops and nothing is switched.
+- **Freeze.** The old site shows a maintenance page while the move runs.
+- **Read only.** The old site keeps serving and refuses writes.
+- **Delta.** The old site is frozen for a short time, so Drupflare can copy the last changes. If the same record changed on both sides, the move stops and nothing is switched.
 
-The page shows the expected window for the policy you pick. Freeze and read only count the time it takes the DNS cache to expire. Copy the changes does not, so its window is shorter.
+The page shows the expected window for the policy you pick. Freeze and read only count the time it takes the DNS cache to expire. Delta does not, so its window is shorter.
 
 ## The steps
 
@@ -68,7 +70,7 @@ A failed read never counts as zero. If the new site cannot answer, or has lost i
 
 ### What the export carries
 
-The file is plain SQL for a MySQL or MariaDB database. It holds one `REPLACE INTO` for each row the new site added or changed, one `DELETE FROM` for each row it removed, and a last statement that re-seeds the id counter. Run it against your old site's database with the `mysql` client, after you take a backup of that database. A `REPLACE` writes the whole row, so it overwrites a row that changed on the old site too.
+The file is plain SQL for a MySQL or MariaDB database. It holds one `REPLACE INTO` for each row the new site added or changed. It holds one `DELETE FROM` for each row it removed. The last statement resets the id counter. Run it against your old site's database with the `mysql` client, after you take a backup of that database. A `REPLACE` writes the whole row, so it overwrites a row that changed on the old site too.
 
 The file does not carry:
 
@@ -79,7 +81,7 @@ The file does not carry:
 - changes in a table that has no key to identify a row
 - changes that reach the new site after the second read, described below
 
-The file is read twice. The first read happens when you choose the export, and the address moves back right after it. Visitors who still hold the new address in a cache can keep writing for as long as the address's cache time, so Drupflare waits that long after the address is back and reads the new site a second time, from where the first read stopped. The second read goes into the same file, which you download once. The page then says "Final changes ready" and how many changes it added, or "No changes after the first file". If the second read fails, the page says so, and the file holds what the first read saw. Download the file after the page shows one of these three, not before.
+The file is read twice. The first read happens when you choose the export, and the address moves back right after it. Visitors who still hold the new address in a cache can keep writing for as long as the address's cache time. So Drupflare waits that long after the address is back, then reads the new site a second time, from where the first read stopped. The second read goes into the same file, which you download once. The page then says "Final changes ready" and how many changes it added, or "No changes after the first file". If the second read fails, the page says so, and the file holds what the first read saw. Download the file after the page shows one of these three, not before.
 
 If the new site stopped recording changes before the move ended, the page says some changes could not be recorded and the file is not a full account. The count in that case is still a valid count for the question of whether going back is a reversal.
 

@@ -6,6 +6,8 @@ type: written
 draft: true
 ---
 
+This page shows you how to connect your Cloudflare account to the dashboard. It is for site owners who run sites in their own account.
+
 Connecting takes two steps. The first checks a Cloudflare API token and stores nothing. The second connects the account and stores a sealed token the dashboard uses later to create, update, roll back and remove sites in that account.
 
 ## Check the token
@@ -22,7 +24,7 @@ The report covers three things.
 
 - **Token status.** Whether Cloudflare accepts the token, and whether it is active, expired or turned off. A token that Cloudflare accepts for user requests is a user token. A token with the `cfat_` prefix is an account token. A token without the prefix that Cloudflare refuses on the user check is also reported as an account token.
 - **Accounts.** The accounts the token can list. The check uses the first account unless you pick another.
-- **Capabilities.** For the chosen account, one read per capability. A read that succeeds means the token has that capability at the time of the check. A read that Cloudflare refuses with a 403 means the permission is missing. Any other answer, such as a timeout, a server error or a rate limit, is reported as not checked, and you can run the check again.
+- **Capabilities.** For the chosen account, one read per capability. A read that succeeds means the token has that capability at the time of the check. A read that Cloudflare refuses with a 403 is reported as a missing permission. Any other answer, such as a timeout, a server error or a rate limit, is reported as not checked, and you can run the check again.
 
 The check doesn't prove that a later request will succeed. Permissions can change after the check, and a read doesn't exercise every write a site needs.
 
@@ -69,13 +71,12 @@ What happens to the token in Cloudflare:
 
 ## What Drupflare changes in your account
 
-Drupflare writes to your account only for a site it created there, and only the things it recorded for that site. Before each write or delete it checks the site's own record of what it made. A script, namespace, bucket or database that has no record for the site is refused, even when its name looks like one of ours. Drupflare never lists your other resources to change them.
+Drupflare writes to your account only for a site it created there, and only the things it recorded for that site. Before each write or delete it checks the site's own record of what it made. A script, key-value namespace, bucket or database that has no record for the site is refused, even when its name looks like one of ours. Drupflare never lists your other resources to change them.
 
 ## What the check does not do
 
-- It doesn't store the token. Only **Connect This Account** does.
-- It doesn't create, change or delete anything in your account.
-- It doesn't send the token anywhere except the Cloudflare API.
+- It stores the token only when you select **Connect This Account**.
+- It sends the token nowhere except the Cloudflare API.
 
 ## Limits
 

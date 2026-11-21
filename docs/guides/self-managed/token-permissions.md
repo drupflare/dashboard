@@ -6,6 +6,8 @@ type: written
 draft: true
 ---
 
+This page lists the permissions a Cloudflare API token needs for a self-managed site. It is for owners who create a token for their account.
+
 A self-managed site needs a Cloudflare API token that can reach six capabilities on one account. The connect check reads each capability and reports the permission to add when one is missing.
 
 ## Permissions
@@ -30,29 +32,29 @@ When the token you give has the token management permission, Drupflare makes a n
 The check reads one endpoint per capability, using the first account the token can list:
 
 - Site scripts: the account's script list.
-- Key-value storage: the account's namespace list.
+- Key-value storage: the account's list of key-value namespaces (named stores for key-value data).
 - Object storage: the account's bucket list.
 - Databases: the account's database list.
 - Domains and routes: the account's custom domain list.
 - Token management: the permission groups for account tokens, or for user tokens.
 
-A read shows whether the token can make that read. The check sends the read with the permission named above, so a read that Cloudflare refuses with 403 means that permission is missing. A read that succeeds shows the token can make the read, but the site also needs the edit permission. The check reports the edit permission name because the site writes to each capability.
+A read shows whether the token can make that read. The check sends the read with the permission named above, so the check reports a read that Cloudflare refuses with 403 as that permission missing. Cloudflare's documentation pages read for this guide do not state that a 403 always means a missing permission. A read that succeeds shows the token can make the read, but the site also needs the edit permission. The check reports the edit permission name because the site writes to each capability.
 
-## Accounts without a payment card
+## Object storage not turned on
 
-Cloudflare turns on object storage only for an account with a payment card, even when usage stays inside the free allowance. On an account without one, the bucket list fails with error code 10042 and the check shows Object storage as "Not turned on" instead of "Missing". The token is fine in that case, and adding permissions will not change the result.
+When the bucket list fails with error code 10042, the check shows Object storage as "Not turned on" instead of "Missing". Drupflare reads that code as object storage not being turned on for the account. Cloudflare's R2 "Troubleshooting" and "Pricing" pages, read on 2026-11-21, do not say what causes the code or whether a payment card is needed. Confirm it in your Cloudflare account. The token is fine in that case, and adding permissions will not change the result.
 
-Until you add a card and turn on R2 in the Cloudflare dashboard, the site runs without object storage. The file mirror and Strata backups to R2 stay off, and every other capability works. Check again after you turn R2 on.
+Until object storage is turned on for the account, the site runs without it. The file mirror and Strata backups to R2 (Cloudflare's object storage) stay off, and every other capability works. Check again after object storage is on.
 
 ## Endpoints not confirmed
 
 The check relies on a few endpoints that Cloudflare's reference did not confirm during the build:
 
 - The HTTP status Cloudflare uses with code 10042. The check reads the code and accepts status 400 or 403.
-- The account verify endpoint for account tokens. The check does not call it. It recognises an account token by the `cfat_` prefix, or by a refused user check.
+- The account verify endpoint for account tokens. The check does not call it. It recognises an account token by the `cfat_` prefix, or by a refused user check. Cloudflare's "Account API tokens" page (read on 2026-11-21) states that account API tokens use the `cfat_` prefix.
 - The account list endpoint, the object storage bucket list, the database list and the custom domain list. Each follows the path shape of a confirmed endpoint on the same account, but the list call itself is not confirmed.
 - The database permission name `D1:Edit` comes from a reference page that names it in that form.
-- The permission group names the connect step looks up when it makes the narrower token: Workers Scripts Write, Workers KV Storage Write, Workers R2 Storage Write, D1 Write and Workers Routes Write, with the matching Edit names tried second. A name the account doesn't list stops the connect, and Drupflare stores nothing.
+- The connect step looks up these permission groups for the narrower token: Workers Scripts Write, Workers KV Storage Write, Workers R2 Storage Write, D1 Write and Workers Routes Write. It tries the matching Edit names second. A name the account doesn't list stops the connect, and Drupflare stores nothing.
 - The account subdomain read the connect step makes to find your workers.dev address. It reads `result.subdomain` from the account's Workers subdomain endpoint.
 - The call that turns on a script's workers.dev address.
 

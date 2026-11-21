@@ -6,11 +6,13 @@ type: written
 draft: true
 ---
 
+This page shows you how to point your own domain at a Drupflare site. It is for site owners and admins.
+
 A managed site always answers at its own address under `drupflare.app`. Attaching a custom domain adds a second address that you own, such as `www.example.edu`. The site keeps its Drupflare address while you set the new one up.
 
 ## Status
 
-The page, the DNS checks and the stages are built and tested against stand-ins for DNS and for the certificate service. A real attach needs two things Drupflare has not turned on yet: Cloudflare for SaaS on the Drupflare account, and a target name for custom domains. Until then you can still prove you own the domain. The attach then stops in a waiting state and keeps your proof, so nothing is lost when custom domains go live.
+Custom domains are not switched on for Drupflare yet, so a real attach cannot finish. You can still prove you own the domain. The attach then waits in a waiting state and keeps your proof, so nothing is lost when custom domains go live.
 
 ## What you can attach
 
@@ -21,16 +23,16 @@ Any domain you control, with a name such as `www.example.edu`. Drupflare refuses
 - An address that is not a domain name, such as an IP address.
 - A domain another site on Drupflare already holds. If that site is deleted, the domain becomes free.
 
-Only a live managed site can take a domain. Starting an attach needs a signed-in session with a recent step-up, so an API key cannot start one. Only organization owners and admins, and site admins, can start it. The record check needs a signed-in session too, but no step-up, because it changes nothing.
+Only a live managed site can take a domain. Starting an attach needs a signed-in session with a recent step-up (a fresh check of your sign-in), so an API key cannot start one. Only organization owners and admins, and site admins, can start it. The record check needs a signed-in session too, but no step-up, because it changes nothing.
 
 ## See the records first
 
-Type the domain and press Show Records. The page lists every record to add, each with its type, name and value, and reads your DNS live to mark each one as found, not found yet, found with a different value, or could not be checked right now. A lookup that fails is never reported as a missing record. The page checks again every 20 seconds while you keep it open, so you can add a record and watch it turn green.
+Type the domain and press Show Records. The page lists every record to add, with its type, name and value. It reads your DNS live and marks each record as found, not found yet, found with a different value, or could not be checked right now. A lookup that fails is never reported as a missing record. The page checks again every 20 seconds while you keep it open, so you can add a record and watch it turn green.
 
 You add two records yourself:
 
-- **Ownership.** A TXT record at `_drupflare-challenge.` followed by your domain, with a value that starts with `drupflare-verify=`. The value is specific to your site, your domain and this attempt. A copy of it on another site, another domain or a later attempt does not count.
-- **Address.** A CNAME record that points your domain at the Drupflare target name.
+- **Ownership.** A TXT record (a DNS entry that holds text) at `_drupflare-challenge.` followed by your domain, with a value that starts with `drupflare-verify=`. The value is specific to your site, your domain and this attempt. A copy of it on another site, another domain or a later attempt does not count.
+- **Address.** A CNAME record (a DNS entry that points one name at another) that points your domain at the Drupflare target name.
 
 Drupflare does not offer A or AAAA records, because no fixed address list is set up for the target.
 
@@ -38,9 +40,9 @@ Once the certificate service has been asked, two more records appear: one that c
 
 The check also warns about things that block a setup before they do:
 
-- A CNAME record on a bare domain such as `example.edu`. DNS does not allow it beside the records every bare domain has. Ask your provider for an ALIAS or ANAME record with the same target.
+- A CNAME record on a bare domain such as `example.edu`. DNS does not allow it beside the records every bare domain has. Ask your DNS provider for an ALIAS or ANAME record with the same target.
 - Other A, AAAA or CNAME records on the name that send visitors somewhere else.
-- A CAA record that does not allow `letsencrypt.org`, `pki.goog` or `ssl.com`. Those are the authorities the certificate service issues from.
+- A CAA record (a DNS rule that names the certificate authorities allowed to issue certificates) that does not allow `letsencrypt.org`, `pki.goog` or `ssl.com`. Drupflare checks for these three authorities. Cloudflare says its own list is not exhaustive and can change (its "Add CAA records" page, read on 2026-11-21). If a certificate fails, compare your CAA records with Cloudflare's current list.
 - An old ownership value left at the name next to the current one. The current one still counts, but remove the old one.
 
 If another site holds the domain and has proven it, the page says so and lists no records. If another site asked for the domain but never proved it, the page lists your records as usual. Publish the ownership record first and check that it is found, because pressing Attach Domain takes the name only when your record is already in DNS at that moment.
@@ -58,11 +60,11 @@ You can add every record at once.
 
 ## While it waits
 
-Drupflare checks every 30 seconds for the first five minutes, then every five minutes for about two and a half hours, then every half hour. It waits up to 72 hours for each stage. If a record has not appeared by then, the attach stops with a plain reason and takes back what it made: the claim on the domain, the route, and the entry at the certificate service. Attach the domain again once the records are in place.
+Drupflare checks every 30 seconds for the first five minutes, then every five minutes for about two and a half hours, then every half hour. It waits up to 72 hours for each stage. If a record has not appeared by then, the attach stops with a plain reason. It takes back what it made: the claim on the domain, the route, and the entry at the certificate service. Attach the domain again once the records are in place.
 
 While the attach waits for the ownership record, the page says Waiting for Your DNS Record and shows the date Drupflare stops waiting. A site allows one open change at a time, so an update or a backup waits while an attach is open, for as long as 72 hours. The attach holds the site's lock while it works and lets go while it waits for your DNS.
 
-Press Cancel This Attach if you typed the wrong name or no longer want it. The name is free for any site to claim, and the site accepts other changes again once the attach reads its claim at the next check, which is within 30 seconds in the first five minutes and within half an hour at the latest. Cancel works until the certificate service has been asked for the domain. After that, the domain is set up and Cancel is refused. A verified name that is parked while custom domains are off can be cancelled the same way.
+Press Cancel This Attach if you typed the wrong name or no longer want it. The name is free for any site to claim. The site accepts other changes again once the attach reads its claim at the next check. That check comes within 30 seconds in the first five minutes, and within half an hour at the latest. Cancel works until the certificate service has been asked for the domain. After that, the domain is set up and Cancel is refused. A verified name that is parked while custom domains are off can be cancelled the same way.
 
 ## When custom domains are off
 

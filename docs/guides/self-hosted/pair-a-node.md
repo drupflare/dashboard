@@ -6,6 +6,8 @@ type: written
 draft: true
 ---
 
+This page shows you how to pair a Bastion node with the dashboard. It is for owners who run a node.
+
 ## Sites Found on Your Box
 
 Once a node is paired, its box reports the sites it runs. The dashboard adds each site it does not know to your organization's list, marked Found on Your Box. The row is named from the site's host. If the box shares only hashed names, the row gets a placeholder such as "Site 1 on your-box", and you can rename it from the site page.

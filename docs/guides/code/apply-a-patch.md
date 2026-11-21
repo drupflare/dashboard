@@ -6,6 +6,8 @@ type: written
 draft: true
 ---
 
+This page shows you how to apply a patch to a module, theme or profile through the dashboard. It is for developers.
+
 The dashboard sends files, not a diff. Apply the patch to your own copy of the module, theme or profile first, then send the result from Code History with Deliver an Edit. It works the same on a managed site and on a self-managed site that Drupflare holds access to.
 
 ## Send an edit

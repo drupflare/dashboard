@@ -6,7 +6,9 @@ type: written
 draft: true
 ---
 
-A backup of a managed site restores onto a site that runs on your own server under bastion. Nothing in this path calls Drupflare. Once the restore finishes, the server answers visitors with the dashboard switched off or unreachable.
+This page shows you how to restore a managed site's backup onto a Bastion you run. It is for owners leaving the platform.
+
+A backup of a managed site restores onto a site that runs on your own server under Bastion (the software a node runs). Nothing in this path calls Drupflare. Once the restore finishes, the server answers visitors with the dashboard switched off or unreachable.
 
 ## What you need
 
@@ -42,7 +44,7 @@ The backup carries the database: content, users, configuration and the site sett
 
 ## What a visitor sees during a restore
 
-The site answers 503 while it replays. When the last chunk applies, the site clears its stored pages, moves its page generation forward and resets its running PHP, so the next request renders from the restored database. On a local box with a site restored from a stage backup, the first request after `applied` showed the restored site name, and six more pages matched. The first request cold-boots PHP and took 2.0 to 2.3 seconds. Other locations can keep answering with pre-restore pages for about 10 seconds after the last chunk. A box that runs an older worker build does not do this reset: there, send a `POST` to `/bump` with the owner token and restart the site before anyone loads a page, or it keeps serving the name and settings it had before the restore.
+The site answers 503 while it replays. When the last chunk applies, the site clears its stored pages, moves its page generation forward and resets its running PHP, so the next request renders from the restored database. On a local box with a site restored from a stage backup, the first request after `applied` showed the restored site name, and six more pages matched. The first request cold-boots PHP and took 2.0 to 2.3 seconds. Other locations can keep answering with pre-restore pages for about 10 seconds after the last chunk. A box that runs an older worker build does not do this reset. On that build, send a `POST` to `/bump` with the owner token and restart the site before anyone loads a page. Otherwise it keeps serving the name and settings it had before the restore.
 
 ## Related
 

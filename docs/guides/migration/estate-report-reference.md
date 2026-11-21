@@ -6,6 +6,8 @@ type: written
 draft: true
 ---
 
+This page is a reference for reading an estate assessment report. It is for owners who have run an assessment.
+
 This page lists every column, class and state in an estate assessment, and what each one means. For the steps to run an assessment, see [Assess an estate](/docs/guides/migration/assess-an-estate).
 
 ## Inventory columns

@@ -6,6 +6,8 @@ type: written
 draft: true
 ---
 
+This page shows you how to create and delete a site in your own Cloudflare account. It is for site owners who have connected an account.
+
 A site in your own Cloudflare account uses the same screens as a managed site. Drupflare runs it in your account with the token you connected, so connect the account first. See [connect Cloudflare](./connect-cloudflare.md).
 
 ## Create a site
@@ -26,7 +28,7 @@ The create runs as an operation, and the progress page shows each step.
 
 ### Storage
 
-If the account has object storage on, the site runs the standard setup. If it doesn't, the site runs a simpler setup without file mirroring and without Strata off-site backups. The form says so before you create. Turning on object storage needs a payment card on the Cloudflare account. See [token permissions](./token-permissions.md).
+If the account has object storage on, the site runs the standard setup. If it doesn't, the site runs a simpler setup without file mirroring and without Strata off-site backups. The form says so before you create. See [token permissions](./token-permissions.md) for how the connect check reports object storage.
 
 ### Steps a self-managed create skips
 

@@ -6,6 +6,8 @@ type: written
 draft: false
 ---
 
+This page shows you how to upload a built Worker and create a managed site that serves it. It is for developers.
+
 You upload a built Worker as a `.tar.gz`. The platform reads it, tells you what it found, and creates a managed site that serves it. The bundle is read and never run during upload.
 
 Your organization needs a plan that includes custom code. On the Free plan the upload is refused with a 403 and the answer names the plan that has it. Nothing is stored.
@@ -24,7 +26,7 @@ The archive can be up to 16 MiB, unpack to 40 MiB, and hold 20,000 entries. Abso
 
 ## What the platform supports
 
-Key-value namespaces, R2 buckets, D1 databases, email sending, stateful classes (with a `migrations` step that creates each one), plain-text `vars`, static assets, and compatibility flags carry over.
+Key-value namespaces, R2 buckets (Cloudflare's object storage), D1 databases, email sending, stateful classes (with a `migrations` step that creates each one), plain-text `vars`, static assets, and compatibility flags carry over.
 
 These are refused because the platform cannot verify them yet: `ai`, `containers`, `browser`, `hyperdrive`, `vectorize`, `tail_consumers`, queue consumers, service bindings, and any key it does not know. A stateful class with `script_name` or `environment` is refused because it would reach another script's data.
 

@@ -31,3 +31,5 @@ If you are central IT or manage a large university estate, read the [institution
 If you review security or buy the service, read the [security overview](/docs/security/overview) and the [security review packet](/docs/institutions/security-review-packet).
 
 If you run your own server, read [self-hosted guides](/docs/guides/self-hosted/install-bastion) and [leaving Cloudflare](/docs/exit/leave-cloudflare).
+
+The technical documents for the Drupflare worker and for Spool are mirrored from their repositories at [Worker](/docs/worker) and [Spool](/docs/spool).

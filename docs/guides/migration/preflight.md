@@ -6,6 +6,8 @@ type: written
 draft: true
 ---
 
+This page shows you how to run the address check on a site before a move. It is for anyone planning a move.
+
 The address check at `/migrate/preflight` needs no account. You enter a site address and it reports what the site shows to any visitor. It is a first look before you connect a server.
 
 ## What it reads
@@ -32,10 +34,10 @@ The result gives the system, the version, the host and the signals behind each, 
 
 The verdict is one of four:
 
-- Worth a server survey: a page printed Drupal 11, and nothing contradicts it.
-- Needs an upgrade first: a page printed Drupal 7 through 10. The result says which version, because the import accepts Drupal 11 today.
-- Not yet supported: the site looks like WordPress or Joomla.
-- Cannot tell from outside: the site discloses nothing, discloses two systems that disagree, or refused the request.
+- **Worth a Server Survey:** a page printed Drupal 11, and nothing contradicts it.
+- **Needs an Upgrade First:** a page printed Drupal 7 through 10. The result says which version, because the import accepts Drupal 11 today.
+- **Not Yet Supported:** the site looks like WordPress or Joomla.
+- **Cannot Tell From Outside:** the site discloses nothing, discloses two systems that disagree, or refused the request.
 
 ## What it cannot tell
 

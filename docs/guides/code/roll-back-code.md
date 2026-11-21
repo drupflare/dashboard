@@ -6,6 +6,8 @@ type: written
 draft: true
 ---
 
+This page shows you how to roll a site back to an earlier release. It is for site owners and admins.
+
 Code History lists every release a site has run, newest first. Open it from the Code History button on the site page.
 
 ## Roll back

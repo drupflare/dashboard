@@ -6,7 +6,9 @@ type: written
 draft: true
 ---
 
-An estate assessment reads a list of sites and places each one in a migration class. It answers one question for each site: is this site ready to move, does it need an upgrade or a decision first, or is it outside what the dashboard can move today.
+This page shows you how to assess a list of sites before you move them. It is for owners planning several moves.
+
+An estate assessment reads a list of sites and places each one in a migration class. It answers one question for each site. Is the site ready to move, does it need an upgrade or a decision first, or is it outside what the dashboard can move today?
 
 The assessment changes nothing on any site. It reads each site from the outside, and it does not write to the server, the database or the files.
 
@@ -51,7 +53,7 @@ The report does not estimate effort, time or cost. Every report and every row sa
 
 The check reads each site from the outside, with the same public check the preflight uses. It reads the site's response, not its files or database.
 
-The page checks each site this way only. A server survey over SSH is not available from this page yet, so no row reads the server, and the report marks each row as identified from its hostname unless the inventory names a site uuid, a server, or a database.
+The page checks each site this way only. A server survey over SSH is not available from this page yet, so no row reads the server. The report marks each row as identified from its hostname, unless the inventory names a site uuid, a server, or a database.
 
 Ownership of a domain is not proven from this page. The check reads up to five sites on a domain whose ownership is not proven in one assessment. The other sites on that domain stop at **Needs Proof**.
 

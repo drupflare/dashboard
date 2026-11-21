@@ -6,6 +6,8 @@ type: written
 draft: true
 ---
 
+This page shows you how to make a managed copy of a self-managed site. It is for owners moving a site to Drupflare.
+
 Adopting a self-managed site makes a managed copy of it on a Drupflare address. The original site is never changed or deleted. The copy is one-way: after it finishes, the two sites are independent and changes to one do not reach the other.
 
 ## What it does
@@ -48,5 +50,4 @@ Not built:
 
 - A live run of the paged restore or of the file copy. Both are covered by tests with fakes.
 - Attaching your own hostname to the copy, and the DNS instructions for it. The copy answers on its Drupflare address only.
-- The first-month credit.
-- A live run against a real Cloudflare account. The workflow is covered by tests with fakes.
+- A live run against a real Cloudflare account. The migration steps are covered by tests with fakes.
