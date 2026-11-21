@@ -20,6 +20,7 @@ import {
 	type CountWrite,
 	type MechanismName
 } from './counting';
+import { createFlusher } from './flush';
 
 export const SPIKE_PREFIX = '/__spike/';
 export const SPIKE_CONTEXT = 'drupflare.dispatch.spike.v1';
@@ -126,7 +127,12 @@ export type Spike = {
 	controlKey: string;
 	bind(waitUntil: (promise: Promise<unknown>) => void): void;
 	mechanismFor(siteId: string): Promise<MechanismName | null>;
-	count(name: MechanismName, view: SpikeView): Promise<void>;
+	// `waitUntil` is the counting request's own; without it the last bound one is used
+	count(
+		name: MechanismName,
+		view: SpikeView,
+		waitUntil?: (promise: Promise<unknown>) => void
+	): Promise<void>;
 	counts(
 		siteId: string,
 		hours: number[]
@@ -142,7 +148,6 @@ export function createSpike(deps: SpikeDeps): Spike {
 	const known = new Map<string, MechanismName | null>();
 	const accountings = new Map<MechanismName, Accounting>();
 	let waitUntil: (promise: Promise<unknown>) => void = () => undefined;
-	let ticking = false;
 
 	const accounting = (name: MechanismName): Accounting => {
 		let made = accountings.get(name);
@@ -160,25 +165,16 @@ export function createSpike(deps: SpikeDeps): Spike {
 		return made;
 	};
 
-	const pending = () =>
-		[...accountings.values()].some((a) =>
-			[...a.state().entries.values()].some((e) => e.dueAt !== null)
-		);
-
-	// a Worker has no timer between requests, so one request keeps itself alive to flush the tail
-	async function drain(until: (promise: Promise<unknown>) => void): Promise<void> {
-		try {
-			for (;;) {
-				await deps.sleep(flushMs);
-				waitUntil = until;
-				const busy = pending();
-				for (const a of accountings.values()) a.tick();
-				if (!busy) return;
-			}
-		} finally {
-			ticking = false;
-		}
-	}
+	const flusher = createFlusher({
+		sleep: deps.sleep,
+		flushMs,
+		maxCycles: (deps.options?.maxAttempts ?? DEFAULT_OPTIONS.maxAttempts) + 1,
+		flush: async (retry) => {
+			const sent = await Promise.all([...accountings.values()].map((a) => a.flush(retry)));
+			return sent.some(Boolean);
+		},
+		pending: () => [...accountings.values()].some((a) => a.pending())
+	});
 
 	return {
 		controlKey: deps.controlKey,
@@ -198,13 +194,11 @@ export function createSpike(deps: SpikeDeps): Spike {
 			known.set(siteId, chosen);
 			return chosen;
 		},
-		async count(name, view) {
+		async count(name, view, until) {
+			const held = until ?? waitUntil;
 			try {
-				const done = accounting(name).count(view);
-				if (!ticking) {
-					ticking = true;
-					waitUntil(drain(waitUntil));
-				}
+				const done = accounting(name).count(view, held);
+				flusher.arm(held);
 				await done;
 			} catch {
 				// a counting failure never fails a response

@@ -127,7 +127,8 @@ export type CountEvent =
 	  }
 	| { kind: 'ack'; siteId: string; hour: number; ranges: Range[]; total: number }
 	| { kind: 'fail'; siteId: string; hour: number; ranges: Range[]; at: number }
-	| { kind: 'tick'; at: number };
+	| { kind: 'tick'; at: number }
+	| { kind: 'flush'; retry: boolean };
 
 export type CountStep = { state: CountingState; writes: CountWrite[] };
 
@@ -140,6 +141,10 @@ export type Counting = {
 const keyOf = (siteId: string, hour: number) => `${siteId}:${hour}`;
 
 const hasWork = (e: HourEntry) => e.issued > e.sentTo || e.retry.length > 0 || e.reportDue;
+
+// views counted, or ranges waiting for a retry, that no write carries
+export const hasUnsent = (state: CountingState): boolean =>
+	[...state.entries.values()].some(hasWork);
 
 function flush(origin: string, e: HourEntry, sync: boolean): [HourEntry, CountWrite] {
 	const ranges =
@@ -203,6 +208,19 @@ export function mechanism(name: MechanismName, options: Partial<CountingOptions>
 
 		if (event.kind === 'tick') {
 			flushDue(event.at);
+			return next();
+		}
+
+		// no clock: a retry-only entry waits for the call that saw it fail, so retries stay spaced
+		if (event.kind === 'flush') {
+			for (const [key, e] of entries) {
+				const fresh = e.issued > e.sentTo || e.reportDue;
+				if (fresh || (event.retry && e.retry.length > 0)) {
+					const [after, write] = flush(state.origin, e, false);
+					entries.set(key, after);
+					writes.push(write);
+				}
+			}
 			return next();
 		}
 
@@ -388,6 +406,13 @@ export function applyIn(
 	return { ok: true, applied, duplicate, total: month + applied };
 }
 
+// views the counter has acknowledged in a month such as 2026-11; a lower bound on what was served
+export function readMonthIn(kv: SyncKv, month: string): number {
+	return kv.get<number>(`m:${month}`) ?? 0;
+}
+
+export const monthOf = (at: number): string => new Date(at).toISOString().slice(0, 7);
+
 export function readHourIn(kv: SyncKv, siteId: string, hour: number): CountedHour | null {
 	const record = kv.get<HourRecord>(hourKey(hour));
 	if (!record) return null;
@@ -453,13 +478,20 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 }
 
 export type Accounting = {
-	count(view: {
-		siteId: string;
-		status: number;
-		contentType: string | null;
-		limit?: number | null;
-	}): Promise<void>;
+	// a write that does not block the response is held by `waitUntil`, else by the deps' own
+	count(
+		view: {
+			siteId: string;
+			status: number;
+			contentType: string | null;
+			limit?: number | null;
+		},
+		waitUntil?: (promise: Promise<unknown>) => void
+	): Promise<void>;
 	tick(): void;
+	// sends everything unsent and settles when every write is answered or failed; true if it sent any
+	flush(retry: boolean): Promise<boolean>;
+	pending(): boolean;
 	state(): CountingState;
 };
 
@@ -489,19 +521,28 @@ export function createAccounting(deps: AccountingDeps): Accounting {
 		else feed({ kind: 'fail', ...base, at: deps.now() });
 	}
 
-	const run = (writes: CountWrite[]): Promise<void> => {
+	const run = (
+		writes: CountWrite[],
+		waitUntil: (promise: Promise<unknown>) => void = deps.waitUntil,
+		awaitAll = false
+	): Promise<void> => {
 		const waits: Promise<void>[] = [];
 		for (const write of writes) {
 			const sent = deliver(write);
-			if (write.sync) waits.push(sent);
-			else deps.waitUntil(sent);
+			if (write.sync || awaitAll) waits.push(sent);
+			else waitUntil(sent);
 		}
 		return Promise.all(waits).then(() => undefined);
 	};
 
 	return {
-		count: (view) => run(feed({ kind: 'view', at: deps.now(), ...view })),
+		count: (view, waitUntil) => run(feed({ kind: 'view', at: deps.now(), ...view }), waitUntil),
 		tick: () => void run(feed({ kind: 'tick', at: deps.now() })),
+		flush: (retry) => {
+			const writes = feed({ kind: 'flush', retry });
+			return run(writes, undefined, true).then(() => writes.length > 0);
+		},
+		pending: () => hasUnsent(state),
 		state: () => state
 	};
 }

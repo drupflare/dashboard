@@ -1,4 +1,5 @@
 import {
+	blockAtViewsOf,
 	checkLease,
 	needsRenewal,
 	type Lease,
@@ -86,6 +87,23 @@ export async function afterRenewal(
 		serving: 'availability-grace',
 		renew: false
 	};
+}
+
+// over-budget is an availability state, so the lease stays cached and admitted; this says whether
+// a visitor is turned away. The local threshold blocks at the acknowledged count, which is a
+// lower bound, so a site is never blocked a view early
+export function blockedByBudget(lease: Lease, acknowledgedViews: number | null): boolean {
+	if (lease.state === 'over-budget') return true;
+	const blockAt = blockAtViewsOf(lease.limits);
+	return blockAt !== null && acknowledgedViews !== null && acknowledgedViews >= blockAt;
+}
+
+// the smaller of the plan limit and the block threshold, so the hybrid writes through before either
+export function countingLimit(limits: Record<string, number>): number | null {
+	const plan = limits.viewsPerMonth;
+	const block = blockAtViewsOf(limits);
+	const known = [plan, block].filter((n): n is number => typeof n === 'number');
+	return known.length === 0 ? null : Math.min(...known);
 }
 
 export type CallLimits = { cpuMs?: number; subRequests?: number };

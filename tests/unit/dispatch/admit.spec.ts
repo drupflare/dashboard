@@ -7,7 +7,14 @@ import {
 	issueLease
 } from '@contracts/site-auth';
 import { describe, expect, it } from 'vitest';
-import { admit, afterRenewal, callLimits, type AdmitContext } from '../../../dispatch/src/admit';
+import {
+	admit,
+	afterRenewal,
+	blockedByBudget,
+	callLimits,
+	countingLimit,
+	type AdmitContext
+} from '../../../dispatch/src/admit';
 import { authorityState } from './fakes';
 
 const T0 = 1_790_000_000_000;
@@ -212,6 +219,51 @@ describe('afterRenewal', () => {
 			action: 'refuse',
 			code: 'wrong_epoch'
 		});
+	});
+});
+
+describe('over-budget', () => {
+	it('admits an over-budget lease like an availability state and renews it', async () => {
+		const { ctx, lease } = await setup({ state: 'over-budget' });
+		const decision = await admit(lease, ctx(T0 + 1000));
+		expect(decision).toMatchObject({ action: 'serve', serving: 'lease', renew: false });
+		const renewing = await admit(lease, ctx(lease.exp - 1000));
+		expect(renewing).toMatchObject({ action: 'serve', renew: true });
+	});
+
+	it('rides the availability grace, so a control plane outage does not lift the block by itself', async () => {
+		const { ctx, lease } = await setup({ state: 'over-budget' });
+		const late = lease.exp + DEFAULT_CLOCK_SKEW_MS + 1000;
+		const after = await afterRenewal({ kind: 'unreachable' }, lease, ctx(late));
+		expect(after).toMatchObject({ action: 'serve', serving: 'availability-grace' });
+		if (after.action === 'serve') expect(blockedByBudget(after.lease, null)).toBe(true);
+	});
+
+	it('turns visitors away on the state alone, whatever the count', async () => {
+		const { lease } = await setup({ state: 'over-budget' });
+		expect(blockedByBudget(lease, null)).toBe(true);
+		expect(blockedByBudget(lease, 0)).toBe(true);
+	});
+
+	it('blocks at the threshold and not a view before it', async () => {
+		const { lease } = await setup({ limits: { viewsPerMonth: 100, blockAtViews: 150 } });
+		expect(blockedByBudget(lease, null)).toBe(false);
+		expect(blockedByBudget(lease, 149)).toBe(false);
+		expect(blockedByBudget(lease, 150)).toBe(true);
+		expect(blockedByBudget(lease, 151)).toBe(true);
+	});
+
+	it('never blocks an active lease with no threshold, however far past the plan limit', async () => {
+		const { lease } = await setup({ limits: { viewsPerMonth: 100 } });
+		expect(blockedByBudget(lease, 1_000_000)).toBe(false);
+	});
+
+	it('hands the hybrid the smaller of the plan limit and the threshold', () => {
+		expect(countingLimit({})).toBeNull();
+		expect(countingLimit({ viewsPerMonth: 100 })).toBe(100);
+		expect(countingLimit({ blockAtViews: 80 })).toBe(80);
+		expect(countingLimit({ viewsPerMonth: 100, blockAtViews: 150 })).toBe(100);
+		expect(countingLimit({ viewsPerMonth: 100, blockAtViews: 60 })).toBe(60);
 	});
 });
 

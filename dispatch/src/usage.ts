@@ -1,6 +1,13 @@
 import type { CounterClient } from './counting';
 
-export type View = { siteId: string; host: string; status: number; serving: string };
+// served is false for a refusal that never reached the site; it is a request, never a view
+export type View = {
+	siteId: string;
+	host: string;
+	status: number;
+	serving: string;
+	served?: boolean;
+};
 
 type Dataset = {
 	writeDataPoint(point: { indexes: string[]; blobs: string[]; doubles: number[] }): void;
@@ -20,7 +27,7 @@ export function writeView(dataset: Dataset | undefined, view: View): void {
 		dataset?.writeDataPoint({
 			indexes: [view.siteId],
 			blobs: [view.host, view.serving],
-			doubles: [view.status]
+			doubles: [view.status, view.served === false ? 0 : 1]
 		});
 	} catch {
 		// dropped on purpose

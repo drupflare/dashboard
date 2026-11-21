@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { signApply } from '../../../dispatch/src/authority';
 import { serve, type ServeDeps, type SiteAuthClient } from '../../../dispatch/src/serve';
 import { createSpike, signSpike, type SpikeBody } from '../../../dispatch/src/spike';
+import { createViewCounter } from '../../../dispatch/src/view-counter';
 import { parseReadout } from '../../../scripts/spikes/counting/plan';
 import { authorityState, counterDouble, deferred, makeRig } from './fakes';
 
@@ -857,6 +858,254 @@ describe('stage routes', () => {
 		expect(response.status).toBe(200);
 		expect(await response.text()).toBe('tenant');
 		untouched(c);
+	});
+});
+
+// #endregion
+
+// #region the budget block and production counting
+
+async function budgeted(
+	opts: { state?: Parameters<typeof authorityState>[0]; batchSize?: number } = {}
+) {
+	const w = await world(opts.state);
+	const counter = counterDouble(w.rig.clock.now);
+	const reached: { path: string; authorization: string | null }[] = [];
+	const reply = { status: 200, type: HTML as string | null };
+	w.deps.counter = createViewCounter({
+		origin: 'origin12345678',
+		now: w.rig.clock.now,
+		sleep: () => new Promise<void>(() => undefined),
+		send: (write) => counter.stub(write.siteId).apply(write),
+		options: { batchSize: opts.batchSize ?? 1_000 },
+		timeoutMs: 30
+	});
+	w.deps.tenant = () => ({
+		fetch: async (request) => {
+			reached.push({
+				path: new URL(request.url).pathname,
+				authorization: request.headers.get('authorization')
+			});
+			return new Response('tenant', {
+				status: reply.status,
+				headers: reply.type === null ? {} : { 'content-type': reply.type }
+			});
+		}
+	});
+	const visit = (path = '/page', headers: Record<string, string> = {}) =>
+		serve(new Request(`https://${HOST}${path}`, { headers }), w.deps);
+	return { ...w, counter, reached, reply, visit };
+}
+
+const OVER = { state: 'over-budget' as const };
+
+describe('the budget block', () => {
+	it('refuses a visitor with a neutral 503 that says nothing about money', async () => {
+		const b = await budgeted({ state: OVER });
+		const response = await b.visit();
+		expect(response.status).toBe(503);
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		const body = await response.text();
+		expect(body).toContain('This site is temporarily unavailable.');
+		expect(body).not.toMatch(/bill|plan|budget|limit|upgrade|pay/i);
+		expect(b.reached).toHaveLength(0);
+	});
+
+	it('counts no view for a refusal and writes a metric that says it was not served', async () => {
+		const b = await budgeted({ state: OVER });
+		await b.visit();
+		await b.visit('/other');
+		await b.flush();
+		expect(b.counter.applies).toHaveLength(0);
+		expect(b.views).toEqual([
+			{
+				siteId: b.state.siteId,
+				host: HOST,
+				status: 503,
+				serving: 'over-budget',
+				served: false
+			},
+			{
+				siteId: b.state.siteId,
+				host: HOST,
+				status: 503,
+				serving: 'over-budget',
+				served: false
+			}
+		]);
+	});
+
+	it('keeps the lease cached, so a refusal costs no second call to the authority', async () => {
+		const b = await budgeted({ state: OVER });
+		await b.visit();
+		const calls = total(b.rig.calls);
+		for (let i = 0; i < 5; i++) expect((await b.visit()).status).toBe(503);
+		expect(total(b.rig.calls)).toBe(calls);
+		expect(b.deps.cache.size).toBe(1);
+	});
+
+	it('serves again from the renewal after the control plane lifts the block', async () => {
+		const b = await budgeted({ state: OVER });
+		expect((await b.visit()).status).toBe(503);
+		await b.rig.commit({ ...b.state, generation: 3, state: 'active' });
+		b.rig.clock.advance(DEFAULT_LEASE_MS * (2 / 3) + 1);
+		// the request that finds the lease due still holds the old one, and starts the renewal
+		expect((await b.visit()).status).toBe(503);
+		await b.flush();
+		expect((await b.visit()).status).toBe(200);
+		expect(b.reached).toHaveLength(1);
+	});
+
+	it('refuses again once the control plane raises the block back', async () => {
+		const b = await budgeted();
+		// not a page, so nothing is counted and nothing waits on a flush timer
+		b.reply.type = 'application/json';
+		expect((await b.visit()).status).toBe(200);
+		await b.rig.commit({ ...b.state, generation: 3, state: 'over-budget' });
+		b.rig.clock.advance(DEFAULT_LEASE_MS * (2 / 3) + 1);
+		await b.visit();
+		await b.flush();
+		expect((await b.visit()).status).toBe(503);
+	});
+
+	it('lets a request through that carries an owner credential for an owner route', async () => {
+		const b = await budgeted({ state: OVER });
+		const owner = { authorization: 'Bearer owner-token' };
+		for (const path of ['/export', '/restore', '/pitr', '/restore-parts', '/serve-stats']) {
+			const response = await b.visit(path, owner);
+			expect(response.status, path).toBe(200);
+		}
+		expect(b.reached.map((r) => r.path)).toEqual([
+			'/export',
+			'/restore',
+			'/pitr',
+			'/restore-parts',
+			'/serve-stats'
+		]);
+		expect(b.reached.every((r) => r.authorization === 'Bearer owner-token')).toBe(true);
+	});
+
+	it('still refuses an owner route with no credential, a visitor page with one, and a near miss', async () => {
+		const b = await budgeted({ state: OVER });
+		const owner = { authorization: 'Bearer owner-token' };
+		expect((await b.visit('/export')).status).toBe(503);
+		expect((await b.visit('/page', owner)).status).toBe(503);
+		expect((await b.visit('/export/', owner)).status).toBe(503);
+		expect((await b.visit('/Export', owner)).status).toBe(503);
+		expect((await b.visit('/export', { authorization: 'Basic abc' })).status).toBe(503);
+		expect((await b.visit('/export', { authorization: 'Bearer' })).status).toBe(503);
+		expect(b.reached).toHaveLength(0);
+	});
+
+	it('passes an owner request with a made-up token to the site, which refuses it there', async () => {
+		const b = await budgeted({ state: OVER });
+		const response = await b.visit('/export', { authorization: 'Bearer not-the-token' });
+		expect(response.status).toBe(200);
+		expect(b.reached).toEqual([{ path: '/export', authorization: 'Bearer not-the-token' }]);
+	});
+
+	it('blocks at exactly the threshold in hybrid and not a view before', async () => {
+		const b = await budgeted({
+			state: { limits: { cpuMs: 50, subRequests: 20, viewsPerMonth: 3, blockAtViews: 5 } }
+		});
+		// the plan limit of 3 makes views 3 and later write through, so the count is exact from there
+		const heard = [1, 1, 3, 4];
+		for (const [index, total] of heard.entries()) {
+			expect((await b.visit()).status, `view ${index + 1}`).toBe(200);
+			expect(b.deps.counter?.acknowledged(b.state.siteId, b.rig.clock.now())).toBe(total);
+		}
+		expect((await b.visit()).status).toBe(200);
+		expect(b.deps.counter?.acknowledged(b.state.siteId, b.rig.clock.now())).toBe(5);
+		expect((await b.visit()).status).toBe(503);
+		expect(b.reached).toHaveLength(5);
+	});
+
+	it('blocks a site whose threshold sits under its plan limit, at the threshold', async () => {
+		const b = await budgeted({
+			state: { limits: { cpuMs: 50, subRequests: 20, viewsPerMonth: 1000, blockAtViews: 2 } }
+		});
+		expect((await b.visit()).status).toBe(200);
+		expect((await b.visit()).status).toBe(200);
+		expect((await b.visit()).status).toBe(503);
+	});
+
+	it('never blocks a site with no threshold, however far it runs past its plan limit', async () => {
+		const b = await budgeted({
+			state: { limits: { cpuMs: 50, subRequests: 20, viewsPerMonth: 3 } }
+		});
+		for (let view = 0; view < 12; view++) expect((await b.visit()).status).toBe(200);
+		expect(b.reached).toHaveLength(12);
+	});
+
+	it('does not block on a count it has not heard, so a fresh isolate serves until its first answer', async () => {
+		const b = await budgeted({
+			state: { limits: { cpuMs: 50, subRequests: 20, blockAtViews: 0 } }
+		});
+		expect((await b.visit()).status).toBe(200);
+		expect((await b.visit()).status).toBe(503);
+	});
+});
+
+describe('production counting', () => {
+	it('counts each 2xx text/html response once and no other response', async () => {
+		const cases: [number, string | null, boolean][] = [
+			[200, HTML, true],
+			[201, 'text/html', true],
+			[204, null, false],
+			[301, HTML, false],
+			[404, HTML, false],
+			[500, HTML, false],
+			[200, 'application/json', false],
+			[200, null, false]
+		];
+		for (const [status, type, counted] of cases) {
+			const b = await budgeted();
+			b.reply.status = status;
+			b.reply.type = type;
+			await b.visit();
+			await b.flush();
+			const views = b.counter.applies.reduce((n, w) => n + w.issued, 0);
+			expect(views > 0, `${status} ${type}`).toBe(counted);
+		}
+	});
+
+	it('serves the same response when the counter fails or hangs', async () => {
+		const b = await budgeted({ batchSize: 1 });
+		for (const mode of ['fail', 'hang', 'ok'] as const) {
+			b.counter.mode.fail = mode === 'fail';
+			b.counter.mode.hang = mode === 'hang';
+			const response = await b.visit();
+			expect(response.status).toBe(200);
+			expect(await response.text()).toBe('tenant');
+		}
+		expect(b.counter.applies.length).toBeGreaterThan(0);
+	});
+
+	it('hands the counter the response facts and the smaller limit, through the interface', async () => {
+		const b = await budgeted({
+			state: { limits: { cpuMs: 50, subRequests: 20, viewsPerMonth: 100, blockAtViews: 60 } }
+		});
+		const count = vi.fn(async () => undefined);
+		b.deps.counter = { count, acknowledged: () => null };
+		await b.visit();
+		expect(count).toHaveBeenCalledWith(
+			{ siteId: b.state.siteId, status: 200, contentType: HTML, limit: 60 },
+			b.deps.waitUntil
+		);
+	});
+
+	it('leaves a site the stage spike has a mechanism for to the spike', async () => {
+		const c = await counting();
+		const count = vi.fn(async () => undefined);
+		c.deps.counter = { count, acknowledged: () => null };
+		c.choose('batched');
+		await c.get();
+		expect(count).not.toHaveBeenCalled();
+		const other = await counting();
+		const taken = vi.fn(async () => undefined);
+		other.deps.counter = { count: taken, acknowledged: () => null };
+		await other.get();
+		expect(taken).toHaveBeenCalledTimes(1);
 	});
 });
 

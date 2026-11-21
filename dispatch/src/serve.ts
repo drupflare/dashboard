@@ -2,7 +2,9 @@ import type { Lease, RenewalRequest } from '@contracts/site-auth';
 import {
 	admit,
 	afterRenewal,
+	blockedByBudget,
 	callLimits,
+	countingLimit,
 	type AdmitContext,
 	type CallLimits,
 	type Decision,
@@ -11,10 +13,13 @@ import {
 	type Served
 } from './admit';
 import { applyMessageSchema, type ApplyResult, type SiteAuthResult } from './authority';
+import { COUNTS_PATH, countsRoute, type CountsReader } from './control-counts';
 import { gate, type GateDeps } from './gate';
+import { isOwnerRequest } from './owner-routes';
 import { normalizeHost, resolveRoute, type Route } from './route';
 import { SPIKE_PREFIX, spikeRoute, type Spike } from './spike';
 import type { View } from './usage';
+import type { ViewCounter } from './view-counter';
 
 export type SiteAuthClient = {
 	lease(request: { siteId: string; epoch: number }): Promise<SiteAuthResult>;
@@ -37,6 +42,11 @@ export type ServeDeps = {
 	onView?(view: View): void;
 	// set only when the stage switch is on
 	spike?: Spike;
+	// production counting; a site the spike has a mechanism for is counted by the spike instead
+	counter?: ViewCounter;
+	// the control key and the per-site counter object, for the signed counts read
+	controlKey?: string;
+	counts?(siteId: string): CountsReader;
 	// without it a gated environment fails closed
 	gate?: GateDeps;
 	askTimeoutMs?: number;
@@ -68,6 +78,27 @@ function refusal(code: string): Response {
 	const headers: Record<string, string> = { 'cache-control': 'no-store' };
 	if (status === 503) headers['retry-after'] = '5';
 	return new Response(status === 404 ? 'Not found' : 'Unavailable', { status, headers });
+}
+
+// neutral on purpose: a visitor learns nothing about plans, billing or budgets
+const BUDGET_PAGE =
+	'<!doctype html><html lang="en"><meta charset="utf-8"><title>Unavailable</title><p>This site is temporarily unavailable.</p></html>';
+
+// a refusal is a request and never a view, so nothing is counted; the metric keeps it observable
+function budgetRefusal(host: string, siteId: string, deps: ServeDeps): Response {
+	const onView = deps.onView;
+	if (onView) {
+		const view = { siteId, host, status: 503, serving: 'over-budget', served: false };
+		deps.waitUntil(Promise.resolve().then(() => onView(view)));
+	}
+	return new Response(BUDGET_PAGE, {
+		status: 503,
+		headers: {
+			'content-type': 'text/html; charset=utf-8',
+			'cache-control': 'no-store',
+			'retry-after': '60'
+		}
+	});
 }
 
 function ask(call: () => Promise<SiteAuthResult>, timeoutMs: number): Promise<RenewalOutcome> {
@@ -140,21 +171,32 @@ async function forward(
 		deps.waitUntil(Promise.resolve().then(() => onView(view)));
 	}
 	const name = await chosen;
-	if (spike && name) {
-		await spike.count(name, {
-			siteId: route.siteId,
-			status: response.status,
-			contentType: response.headers.get('content-type'),
-			limit: lease.limits.viewsPerMonth ?? null
-		});
-	}
+	const view = {
+		siteId: route.siteId,
+		status: response.status,
+		contentType: response.headers.get('content-type'),
+		limit: countingLimit(lease.limits)
+	};
+	if (spike && name) await spike.count(name, view, deps.waitUntil);
+	else if (deps.counter) await deps.counter.count(view, deps.waitUntil);
 	return response;
 }
 
 async function control(request: Request, deps: ServeDeps): Promise<Response> {
-	if (new URL(request.url).pathname.startsWith(SPIKE_PREFIX)) {
+	const path = new URL(request.url).pathname;
+	if (path.startsWith(SPIKE_PREFIX)) {
 		const answer = deps.spike ? await spikeRoute(request, deps.spike, deps.now()) : null;
 		return answer ?? refusal('unknown_host');
+	}
+	if (path === COUNTS_PATH) {
+		if (deps.controlKey === undefined || deps.counts === undefined) {
+			return refusal('unknown_host');
+		}
+		return countsRoute(request, {
+			controlKey: deps.controlKey,
+			now: deps.now,
+			counter: deps.counts
+		});
 	}
 	if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
 	const text = await request.text();
@@ -200,9 +242,18 @@ export async function serve(request: Request, deps: ServeDeps): Promise<Response
 		graceMs: deps.graceMs
 	});
 	const client = () => deps.siteAuth(route.siteId);
-	const proceed = async (lease: Lease, serving: string) =>
-		(await gate(request, host, route, lease, deps.now(), deps.gate)) ??
-		forward(request, host, route, lease, serving, deps);
+	// the owner's own routes pass a block so export, restore and backups stay reachable; the site
+	// still checks the token, so a request with a made-up one reaches the site and is refused there
+	const proceed = async (lease: Lease, serving: string) => {
+		const seen = deps.counter?.acknowledged(route.siteId, deps.now()) ?? null;
+		if (blockedByBudget(lease, seen) && !isOwnerRequest(request)) {
+			return budgetRefusal(host, route.siteId, deps);
+		}
+		return (
+			(await gate(request, host, route, lease, deps.now(), deps.gate)) ??
+			forward(request, host, route, lease, serving, deps)
+		);
+	};
 	// the answer is checked and cached inside the shared promise, so a waiter that arrives after it
 	// settles finds the new lease instead of starting a second call
 	const refresh = async (

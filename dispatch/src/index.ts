@@ -1,9 +1,17 @@
 import type { Lease } from '@contracts/site-auth';
+import type { CountsReader } from './control-counts';
 import type { UsageCounter } from './counter';
 import { serve, type ServeDeps, type SiteAuthClient } from './serve';
 import type { SiteAuth } from './site-auth';
-import { allocatePastLimit, createSpike, type CounterStub, type Spike } from './spike';
+import {
+	allocatePastLimit,
+	createSpike,
+	randomOrigin,
+	type CounterStub,
+	type Spike
+} from './spike';
 import { counterFor, writeView } from './usage';
+import { createViewCounter, type ViewCounter } from './view-counter';
 
 export { UsageCounter } from './counter';
 export { Names } from './names';
@@ -29,6 +37,7 @@ const inflight: ServeDeps['inflight'] = new Map();
 const revoked = new Set<string>();
 const seenAssertions = new Set<string>();
 let spike: Spike | undefined;
+let viewCounter: ViewCounter | undefined;
 
 // built on first use in an isolate; only the stage config sets SPIKE_MODE
 function spikeFor(env: Env, ctx: ExecutionContext): Spike | undefined {
@@ -45,10 +54,24 @@ function spikeFor(env: Env, ctx: ExecutionContext): Spike | undefined {
 	return spike;
 }
 
+// one counting service per isolate; the spike's own mechanisms are separate and only the stage sets them
+function viewCounterFor(env: Env): ViewCounter {
+	viewCounter ??= createViewCounter({
+		origin: randomOrigin(),
+		now: Date.now,
+		sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+		send: (write) => counterFor(env.USAGE_COUNTER, write.siteId).apply(write)
+	});
+	return viewCounter;
+}
+
 export default {
 	fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		return serve(request, {
 			spike: spikeFor(env, ctx),
+			counter: viewCounterFor(env),
+			controlKey: env.CONTROL_PUBLIC_KEY,
+			counts: (siteId) => counterFor(env.USAGE_COUNTER, siteId) as unknown as CountsReader,
 			gate:
 				env.GATE_PUBLIC_KEY && env.GATE_ORIGIN
 					? {

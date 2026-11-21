@@ -722,6 +722,47 @@ describe('mechanism per site', () => {
 	});
 });
 
+describe('forced flush', () => {
+	const at = HOUR0 + 1000;
+	const feedViews = (name: MechanismName, count: number) => {
+		const counting = mechanism(name);
+		let state = counting.init('isolateone01');
+		for (let i = 0; i < count; i++) {
+			state = counting.step(state, {
+				kind: 'view',
+				siteId: SITE,
+				at,
+				status: 200,
+				contentType: HTML,
+				limit: null
+			}).state;
+		}
+		return { counting, state };
+	};
+
+	it('sends every unsent view with no due time reached', () => {
+		const { counting, state } = feedViews('batched', 7);
+		const out = counting.step(state, { kind: 'flush', retry: false });
+		expect(out.writes.map((w) => w.ranges)).toEqual([[{ from: 1, to: 7 }]]);
+		expect(counting.step(out.state, { kind: 'flush', retry: true }).writes).toEqual([]);
+	});
+
+	it('leaves a failed range for the call that saw it fail unless retry is asked for', () => {
+		const { counting, state } = feedViews('batched', 2);
+		const sent = counting.step(state, { kind: 'flush', retry: false });
+		const failed = counting.step(sent.state, {
+			kind: 'fail',
+			siteId: SITE,
+			hour: hourOf(at),
+			ranges: [{ from: 1, to: 2 }],
+			at
+		});
+		expect(counting.step(failed.state, { kind: 'flush', retry: false }).writes).toEqual([]);
+		const retried = counting.step(failed.state, { kind: 'flush', retry: true });
+		expect(retried.writes.map((w) => w.ranges)).toEqual([[{ from: 1, to: 2 }]]);
+	});
+});
+
 describe('createSpike', () => {
 	function make(options: Partial<CountingOptions> = {}) {
 		const clock = fakeClock(HOUR0 + 1000);
@@ -787,16 +828,17 @@ describe('createSpike', () => {
 		]);
 	});
 
-	it('keeps one timer for the isolate and flushes a small batch when it fires', async () => {
+	it('arms a timer for each counted view and sends the small batch once when the first fires', async () => {
 		const m = make();
 		for (let i = 0; i < 3; i++) await m.spike.count('batched', m.view());
 		expect(m.counter.applies).toHaveLength(0);
-		expect(m.bound).toHaveLength(1);
-		m.clock.advance(1001);
+		expect(m.bound).toHaveLength(3);
 		await m.wake();
 		expect(m.counter.applies.map((w) => w.ranges)).toEqual([[{ from: 1, to: 3 }]]);
 		await m.wake();
-		await m.bound[0];
+		await m.wake();
+		await Promise.all(m.bound);
+		expect(m.counter.applies).toHaveLength(1);
 		expect(m.gates).toHaveLength(0);
 	});
 
@@ -963,7 +1005,7 @@ describe('the Worker entry', () => {
 	}
 
 	it.each([undefined, '', '0', 'true', 'yes'])(
-		'with the switch at %j nothing counts, no mechanism is read and no spike route exists',
+		'with the switch at %j no mechanism is read, no spike route exists and production counting counts the view',
 		async (mode) => {
 			const w = await worker(mode, 'write-through');
 			const response = await w.call(new Request(`https://${HOST}/`));
@@ -977,8 +1019,8 @@ describe('the Worker entry', () => {
 				new Request(`https://${CONTROL}/__spike/evict`, { method: 'POST', body: '{}' })
 			);
 			expect(evict.status).toBe(404);
-			expect(w.touched).toEqual([]);
-			expect(w.counter.applies).toHaveLength(0);
+			expect(w.touched).toEqual([w.state.siteId]);
+			expect(w.counter.applies).toHaveLength(1);
 		}
 	);
 
@@ -997,10 +1039,11 @@ describe('the Worker entry', () => {
 		});
 	});
 
-	it("with the switch at '1' a site with no mechanism is served and not counted", async () => {
+	it("with the switch at '1' a site with no mechanism is counted by production counting", async () => {
 		const w = await worker('1');
 		expect((await w.call(new Request(`https://${HOST}/`))).status).toBe(200);
-		expect(w.counter.applies).toHaveLength(0);
+		expect(w.counter.applies).toHaveLength(1);
+		expect(w.counter.applies[0]?.sync).toBe(true);
 	});
 
 	it("with the switch at '1' an unsigned request is still refused", async () => {

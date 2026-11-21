@@ -2,6 +2,7 @@ import { DurableObject } from 'cloudflare:workers';
 import {
 	applyIn,
 	readHourIn,
+	readMonthIn,
 	type ApplyAnswer,
 	type CountedHour,
 	type CounterStats,
@@ -43,6 +44,10 @@ export class UsageCounter extends DurableObject {
 
 	read(hour: number): CountedHour | null {
 		return readHourIn(this.store(), this.ctx.id.name ?? '', hour);
+	}
+
+	month(month: string): number {
+		return readMonthIn(this.store(), month);
 	}
 
 	counts(): CounterStats {
