@@ -1,7 +1,7 @@
 import { mountSuspended } from '@nuxt/test-utils/runtime';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ApiKeysPage from '~/pages/org/api-keys.vue';
-import { claudeMcpAddCommand, type KeyView } from '~/shared/api-keys';
+import { ACTIVE_KEY_BOUND, claudeMcpAddCommand, type KeyView } from '~/shared/api-keys';
 import { useApiKeysStore } from '~/stores/api-keys';
 import { useOrgStore } from '~/stores/org';
 import { useSessionStore } from '~/stores/session';
@@ -81,6 +81,12 @@ describe('api keys page', () => {
 		expect(wrapper.findAll('button').some((button) => button.text() === 'Create a Key')).toBe(
 			true
 		);
+	});
+
+	it('states how many active keys the organisation can hold, read from the shared bound', async () => {
+		const wrapper = await mountPage();
+		await vi.waitFor(() => expect(wrapper.text()).toContain('No Keys Yet'));
+		expect(wrapper.text()).toContain(`up to ${ACTIVE_KEY_BOUND} active keys`);
 	});
 
 	it('lists each key with its prefix, last use, status and a revoke button on active keys only', async () => {

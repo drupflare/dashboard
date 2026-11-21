@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { claudeMcpAddCommand, KEY_SCOPE_COPY } from '~/shared/api-keys';
+import { ACTIVE_KEY_BOUND, claudeMcpAddCommand, KEY_SCOPE_COPY } from '~/shared/api-keys';
 import { isOrgRole, ORG_ROLE_ACTIONS } from '~/shared/permissions';
 import { useApiKeysStore } from '~/stores/api-keys';
 import { useOrgStore } from '~/stores/org';
@@ -75,6 +75,14 @@ function loadMore() {
 					@closed="reloadKeys()"
 				/>
 			</UiPageHeader>
+
+			<p
+				v-if="canRead"
+				class="text-sm text-muted"
+			>
+				This organization can hold up to {{ ACTIVE_KEY_BOUND }} active keys. Revoked and
+				expired keys do not count.
+			</p>
 
 			<UiErrorState
 				v-if="view === 'session-error'"

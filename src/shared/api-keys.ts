@@ -49,6 +49,10 @@ export function keyStateOf(key: Pick<KeyView, 'expiresAt' | 'revokedAt'>, now: n
 	return 'active';
 }
 
+// a technical bound that keeps one organisation's key table small, not a plan limit; the number is
+// a placeholder until a plan limit replaces it
+export const ACTIVE_KEY_BOUND = 100;
+
 export const KEY_RECENT_USE_MS = 24 * 60 * 60 * 1000;
 
 // a key that did work in the last day may be wired into something running, so revoking it asks twice
@@ -197,13 +201,16 @@ export const KEY_SCOPE_COPY: Record<string, { group: string; label: string }> = 
 	'policy.manage': { group: 'team', label: 'Manage Access Policies' },
 	'review.read': { group: 'team', label: 'See Access Reviews' },
 	'review.manage': { group: 'team', label: 'Manage Access Reviews' },
+	'review.decide': { group: 'team', label: 'Decide Access Review Items' },
 	'key.read': { group: 'team', label: 'See API Keys' },
 	'audit.read': { group: 'team', label: 'Read the Audit Log' },
 	'audit.export': { group: 'team', label: 'Export the Audit Log' },
+	'support-grant.read': { group: 'team', label: 'See Support Access' },
 	'notification.read': { group: 'team', label: 'See Notification Settings' },
 	'notification.manage': { group: 'team', label: 'Change Notification Settings' },
 	'billing.read': { group: 'billing', label: 'See Billing Details' },
 	'billing.manage': { group: 'billing', label: 'Change the Plan and Billing' },
+	'site.budget.manage': { group: 'billing', label: 'Read and Set a Site Spend Budget' },
 	'usage.read': { group: 'billing', label: 'See Usage' },
 	'cost-center.read': { group: 'billing', label: 'See Cost Centers' },
 	'cost-center.manage': { group: 'billing', label: 'Manage Cost Centers' },
@@ -221,9 +228,13 @@ export const KEY_SCOPE_COPY: Record<string, { group: string; label: string }> = 
 	'delegation.revoke': { group: 'agency', label: 'End Agency Access' },
 	'client.read': { group: 'agency', label: 'See Client Organizations' },
 	'client.manage': { group: 'agency', label: 'Manage Client Organizations' },
+	'site.client.manage': { group: 'agency', label: 'Group Sites Under Clients' },
 	'transfer.read': { group: 'agency', label: 'See Site Transfers' },
 	'pilot.read': { group: 'agency', label: 'See Pilot Workspaces' },
-	'pilot.manage': { group: 'agency', label: 'Manage Pilot Workspaces' }
+	'pilot.manage': { group: 'agency', label: 'Manage Pilot Workspaces' },
+	'contact.read': { group: 'team', label: 'See Organization Contacts' },
+	'contact.manage': { group: 'team', label: 'Manage Organization Contacts' },
+	'contact.test': { group: 'team', label: 'Send a Test Notification' }
 };
 
 export interface ScopeChoice {

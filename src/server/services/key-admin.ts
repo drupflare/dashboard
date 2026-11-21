@@ -1,5 +1,10 @@
 import type { CollegeDBClient } from '@earth-app/collegedb';
-import type { KeyCreateBody, KeyCreated, KeyView } from '../../shared/api-keys';
+import {
+	ACTIVE_KEY_BOUND,
+	type KeyCreateBody,
+	type KeyCreated,
+	type KeyView
+} from '../../shared/api-keys';
 import { ApiError } from '../../shared/errors';
 import { ACTIONS, type Action } from '../../shared/permissions';
 import { createApiKeyWithLookup, listLookupIds } from '../db/repos/api-key-lookup';
@@ -34,9 +39,7 @@ export function keyServices(): KeyServices {
 	return installed;
 }
 
-// a technical bound that keeps one organisation's key table small, not a plan limit; the number is
-// a placeholder until a plan limit replaces it
-export const ACTIVE_KEY_BOUND = 100;
+export { ACTIVE_KEY_BOUND };
 
 // site actions are checked against some site, and an organisation role holds them on every site
 const ANY_SITE = '*';
@@ -85,13 +88,32 @@ function toView(key: ApiKey, prefix: string | null): KeyView {
 	};
 }
 
+// a key for a service account is held to the account's owner and cannot outlive the account
+export interface ServiceHolder {
+	owner: { userId: string; principal: Principal; facts: Facts };
+	expiresAt: number;
+	link: (keyId: string) => Promise<void>;
+}
+
 export async function issueKey(
 	deps: KeyServices,
-	call: { orgId: string; userId: string; principal: Principal; facts: Facts; body: KeyCreateBody }
+	call: {
+		orgId: string;
+		userId: string;
+		principal: Principal;
+		facts: Facts;
+		body: KeyCreateBody;
+		service?: ServiceHolder;
+	}
 ): Promise<KeyCreated> {
+	const holder = call.service?.owner ?? {
+		userId: call.userId,
+		principal: call.principal,
+		facts: call.facts
+	};
 	const checked = validateIssue(
 		call.body.scopes,
-		issuerActions(call.principal, call.orgId, call.facts)
+		issuerActions(holder.principal, call.orgId, holder.facts)
 	);
 	if (!checked.ok) {
 		const status = checked.reason === 'exceeds_issuer' ? 'forbidden' : 'validation';
@@ -120,17 +142,28 @@ export async function issueKey(
 		name: call.body.name,
 		keyHash: generated.data.keyHash,
 		scopes: generated.data.scopes,
-		createdBy: call.userId,
-		expiresAt: generated.data.expiresAt,
+		createdBy: holder.userId,
+		expiresAt:
+			call.service === undefined
+				? generated.data.expiresAt
+				: Math.min(
+						generated.data.expiresAt ?? call.service.expiresAt,
+						call.service.expiresAt
+					),
 		lookupId: generated.data.lookupId
 	});
 	// a key with no audit row would be one nobody can account for, so it dies with the failed write
 	try {
+		await call.service?.link(key.id);
 		await deps.audit(call.orgId, {
 			actor: principalActor(call.principal),
 			action: 'key.issued',
 			target: key.id,
-			detail: { prefix: generated.data.displayPrefix, scopes: key.scopes }
+			detail: {
+				prefix: generated.data.displayPrefix,
+				scopes: key.scopes,
+				...(call.service === undefined ? {} : { owner: holder.userId })
+			}
 		});
 	} catch (error) {
 		await revokeApiKey(db, call.orgId, key.id, now);
@@ -143,7 +176,7 @@ export async function issueKey(
 
 // #region read and revoke
 
-async function viewsOf(
+export async function viewsOf(
 	deps: KeyServices,
 	orgId: string,
 	keys: readonly ApiKey[]
