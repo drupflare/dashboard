@@ -6,7 +6,9 @@ type: written
 draft: true
 ---
 
-Drupflare publishes its API as an OpenAPI description. A gateway called MyMCP reads that description and turns each operation into a tool, so an AI client can list your sites or read an entitlement without custom code. The client connects with an API key, and the key limits what it can do.
+This page shows you how to let an AI client read your sites through the API. It is for admins who set up tools.
+
+Drupflare publishes its API as an OpenAPI description (a standard file that lists the API's endpoints). A gateway called MyMCP reads that description and turns each operation into a tool. That lets an AI client list your sites or read an entitlement (a feature or limit your plan includes) without custom code. The client connects with an API key, and the key limits what it can do.
 
 ## Get a key
 
@@ -50,7 +52,7 @@ Combine them with `&`, and keep the URL in single quotes so the shell doesn't re
 
 ## What a key can never do
 
-A key can't perform anything that needs you at the keyboard. That covers session-only actions, such as managing your account and security settings, connecting a repository, pairing a node, opening the billing portal and creating or revoking keys. It also covers actions that ask for a fresh confirmation, such as deleting an organization, adopting or importing a site, running a cutover and managing a custom domain. Admin actions count as session-only. The client sees these tools, and the dashboard refuses them. The permissions reference lists every action.
+A key can't perform anything that needs you at the keyboard. That covers session-only actions, such as managing your account and security settings, connecting a repository, pairing a node, opening the billing portal and creating or revoking keys. It also covers actions that ask for a fresh confirmation, such as deleting an organization, adopting or importing a site, running a [cutover](/docs/start/glossary) and managing a custom domain. Admin actions count as session-only. The client sees these tools, and the dashboard refuses them. The permissions reference lists every action.
 
 ## Keep the key safe
 
