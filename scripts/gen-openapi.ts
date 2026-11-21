@@ -35,7 +35,7 @@ const FORMAT = {
 
 // #region route files
 
-const UNVERSIONED_FILES = ['health.get.ts', 'index.get.ts', 'openapi.json.get.ts'];
+const UNVERSIONED_FILES = ['health.get.ts', 'index.get.ts', 'openapi.json.get.ts', '[...].ts'];
 const UNVERSIONED_DIRS = ['hooks'];
 
 export function isAllowListed(rel: string): boolean {
@@ -118,7 +118,8 @@ function jsonSchema(schema: z.ZodType, io: 'input' | 'output' = 'input'): Record
 	const { $schema: _dialect, ...body } = z.toJSONSchema(schema, {
 		io,
 		cycles: 'throw',
-		reused: 'inline'
+		reused: 'inline',
+		unrepresentable: 'any'
 	}) as Record<string, unknown>;
 	return body;
 }
