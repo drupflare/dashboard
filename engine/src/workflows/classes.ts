@@ -19,6 +19,7 @@ import {
 	buildRollbackDeps,
 	buildRolloutDeps,
 	buildTemplateBuildDeps,
+	buildTransferDeps,
 	selfManagedDeps,
 	type EngineEnv
 } from '../env';
@@ -49,6 +50,7 @@ import { runNodeSiteCreate, type NodeRunner, type NodeSiteCreateInput } from './
 import { runReleaseRing, type ReleaseRingInput, type RingRunner } from './release-ring';
 import type { CopyInput } from './restored-copy';
 import { runSiteAdopt, type SiteAdoptInput } from './site-adopt';
+import { runSiteAuthState, type SiteAuthStateInput } from './site-auth-state';
 import { runSiteCleanup, type SiteCleanupInput } from './site-cleanup';
 import { runSiteCreate, type SiteCreateInput } from './site-create';
 import {
@@ -61,6 +63,7 @@ import { runSiteImport, type SiteImportInput } from './site-import';
 import { runSitePitr, type SitePitrInput } from './site-pitr';
 import { runSiteRepair, type SiteRepairInput } from './site-repair';
 import { runSiteRollback, type SiteRollbackInput } from './site-rollback';
+import { runSiteTransfer, type SiteTransferInput } from './site-transfer';
 import { runSiteUpgrade, type SiteUpgradeInput } from './site-upgrade';
 import { runTemplateBuild, type TemplateBuildInput } from './template-build';
 import { runThemeDefault, type ThemeDefaultInput } from './theme-default';
@@ -440,6 +443,15 @@ export class SiteCleanup extends WorkflowEntrypoint<EngineEnv, SiteCleanupInput>
 	}
 }
 
+export class SiteAuthState extends WorkflowEntrypoint<EngineEnv, SiteAuthStateInput> {
+	async run(
+		event: Readonly<WorkflowEvent<SiteAuthStateInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runSiteAuthState(runnerOf(step), await buildDeps(this.env), event.payload);
+	}
+}
+
 export class SitePurge extends WorkflowEntrypoint<EngineEnv, SitePurgeInput> {
 	async run(
 		event: Readonly<WorkflowEvent<SitePurgeInput>>,
@@ -509,6 +521,19 @@ export class TemplateBuild extends WorkflowEntrypoint<EngineEnv, TemplateBuildIn
 		return runTemplateBuild(
 			runnerOf(step, TEMPLATE_STEP_CONFIG),
 			buildTemplateBuildDeps(this.env),
+			event.payload
+		);
+	}
+}
+
+export class SiteTransfer extends WorkflowEntrypoint<EngineEnv, SiteTransferInput> {
+	async run(
+		event: Readonly<WorkflowEvent<SiteTransferInput>>,
+		step: WorkflowStep
+	): Promise<Outcome> {
+		return runSiteTransfer(
+			runnerOf(step, BACKUP_STEP_CONFIG),
+			await buildTransferDeps(this.env),
 			event.payload
 		);
 	}

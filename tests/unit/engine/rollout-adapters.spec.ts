@@ -45,6 +45,20 @@ describe('the rollout row', () => {
 		expect(await store.stopRequested('op_none')).toBe(false);
 	});
 
+	it('reads the platform promotion switch as a stop for a running rollout', async () => {
+		const { world, store } = await row();
+		expect(await store.stopRequested('op_1')).toBe(false);
+		world.sqlite
+			.prepare(
+				`INSERT INTO platform_flags (key, value, set_by, set_at)
+				 VALUES ('promotion.stopped', 'true', 'user:admin', 1)`
+			)
+			.run();
+		expect(await store.stopRequested('op_1')).toBe(true);
+		world.sqlite.prepare(`UPDATE platform_flags SET value = 'false'`).run();
+		expect(await store.stopRequested('op_1')).toBe(false);
+	});
+
 	it('saves and loads the state, progress and times, and leaves the stop flag alone', async () => {
 		const { world, store } = await row();
 		world.sqlite.prepare(`UPDATE release_rollouts SET stop_requested = 1`).run();

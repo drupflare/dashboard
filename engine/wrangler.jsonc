@@ -14,7 +14,13 @@
 			{ "name": "SITE_LEASE", "class_name": "SiteLease" },
 			{ "name": "SITE_AUTH", "class_name": "SiteAuth", "script_name": "drupflare-dispatch" },
 			{ "name": "NAMES", "class_name": "Names", "script_name": "drupflare-dispatch" },
-			{ "name": "NODE_SESSION", "class_name": "NodeSession" }
+			{
+				"name": "USAGE_COUNTER",
+				"class_name": "UsageCounter",
+				"script_name": "drupflare-dispatch"
+			},
+			{ "name": "NODE_SESSION", "class_name": "NodeSession" },
+			{ "name": "API_BUDGET", "class_name": "ApiBudget" }
 		]
 	},
 	"workflows": [
@@ -23,6 +29,7 @@
 		{ "name": "site-delete", "binding": "SITE_DELETE", "class_name": "SiteDelete" },
 		{ "name": "site-purge", "binding": "SITE_PURGE", "class_name": "SitePurge" },
 		{ "name": "site-cleanup", "binding": "SITE_CLEANUP", "class_name": "SiteCleanup" },
+		{ "name": "site-auth-state", "binding": "SITE_AUTH_STATE", "class_name": "SiteAuthState" },
 		{ "name": "site-adopt", "binding": "SITE_ADOPT", "class_name": "SiteAdopt" },
 		{ "name": "site-repair", "binding": "SITE_REPAIR", "class_name": "SiteRepair" },
 		{ "name": "backup-create", "binding": "BACKUP_CREATE", "class_name": "BackupCreate" },
@@ -55,11 +62,13 @@
 		},
 		{ "name": "site-rollback", "binding": "SITE_ROLLBACK", "class_name": "SiteRollback" },
 		{ "name": "release-ring", "binding": "RELEASE_RING", "class_name": "ReleaseRing" },
-		{ "name": "template-build", "binding": "TEMPLATE_BUILD", "class_name": "TemplateBuild" }
+		{ "name": "template-build", "binding": "TEMPLATE_BUILD", "class_name": "TemplateBuild" },
+		{ "name": "site-transfer", "binding": "SITE_TRANSFER", "class_name": "SiteTransfer" }
 	],
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },
-		{ "tag": "v2", "new_sqlite_classes": ["NodeSession"] }
+		{ "tag": "v2", "new_sqlite_classes": ["NodeSession"] },
+		{ "tag": "v4", "new_sqlite_classes": ["ApiBudget"] }
 	],
 	"vars": {
 		"DISPATCH_NAMESPACE": "drupflare-prod",
@@ -93,8 +102,14 @@
 						"class_name": "Names",
 						"script_name": "drupflare-dispatch-stage"
 					},
+					{
+						"name": "USAGE_COUNTER",
+						"class_name": "UsageCounter",
+						"script_name": "drupflare-dispatch-stage"
+					},
 					{ "name": "NODE_SESSION", "class_name": "NodeSession" },
-					{ "name": "JOB_RUNNER", "class_name": "JobRunner" }
+					{ "name": "JOB_RUNNER", "class_name": "JobRunner" },
+					{ "name": "API_BUDGET", "class_name": "ApiBudget" }
 				]
 			},
 			"workflows": [
@@ -118,6 +133,11 @@
 					"name": "site-cleanup-stage",
 					"binding": "SITE_CLEANUP",
 					"class_name": "SiteCleanup"
+				},
+				{
+					"name": "site-auth-state-stage",
+					"binding": "SITE_AUTH_STATE",
+					"class_name": "SiteAuthState"
 				},
 				{
 					"name": "site-adopt-stage",
@@ -227,6 +247,11 @@
 					"name": "template-build-stage",
 					"binding": "TEMPLATE_BUILD",
 					"class_name": "TemplateBuild"
+				},
+				{
+					"name": "site-transfer-stage",
+					"binding": "SITE_TRANSFER",
+					"class_name": "SiteTransfer"
 				}
 			],
 			"containers": [
@@ -244,7 +269,8 @@
 			"migrations": [
 				{ "tag": "v1", "new_sqlite_classes": ["SiteLease"] },
 				{ "tag": "v2", "new_sqlite_classes": ["NodeSession"] },
-				{ "tag": "v3", "new_sqlite_classes": ["JobRunner"] }
+				{ "tag": "v3", "new_sqlite_classes": ["JobRunner"] },
+				{ "tag": "v4", "new_sqlite_classes": ["ApiBudget"] }
 			],
 			"vars": {
 				"DISPATCH_NAMESPACE": "drupflare-stage",

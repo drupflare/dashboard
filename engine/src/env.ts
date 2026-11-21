@@ -1,5 +1,7 @@
 import { fromBase64Url, signingKeyFromSeed } from '@contracts/common';
 import { dispatch, Resources, SESSION_MARGIN_MS, SESSION_TTL_MS } from '@drupflare/workforce';
+import type { UsageCounter } from '../../dispatch/src/counter';
+import { createCollegeDB } from '../../src/server/db/collegedb';
 import { DEFAULT_REPAIR_BUDGET } from '../../src/server/domain/incidents';
 import { dohResolver } from '../../src/server/integrations/dns-resolver';
 import { dohResolve } from '../../src/server/integrations/url-guard';
@@ -45,12 +47,14 @@ import {
 } from './adapters/self-managed';
 import { settingsWorkerOf } from './adapters/settings';
 import { backupWorkerOf, siteOf } from './adapters/site';
+import { shardDbOf, siteMovesOf } from './adapters/site-moves';
 import { createSqlConverter } from './adapters/sql-converter';
 import { createSshSurvey } from './adapters/ssh-survey';
 import { D1StrataStore } from './adapters/strata';
 import { D1TemplateStore, jobRunnerOf } from './adapters/templates';
 import { workforceCloudflare } from './adapters/workforce';
 import { writeMarkWorkerOf } from './adapters/write-mark';
+import { apiBudgetPort, governedFetch, type ApiBudgetStub } from './api-governor';
 import { readConfig } from './config';
 import { D1NodeStore } from './node-store';
 import { D1OperationStore } from './operations/store';
@@ -95,6 +99,7 @@ import type { NodeSiteCreateInput } from './workflows/node-site-create';
 import type { ReleaseRingInput } from './workflows/release-ring';
 import type { CopyInput } from './workflows/restored-copy';
 import type { SiteAdoptInput } from './workflows/site-adopt';
+import type { SiteAuthStateInput } from './workflows/site-auth-state';
 import type { SiteCleanupInput } from './workflows/site-cleanup';
 import type { SiteCreateInput } from './workflows/site-create';
 import type { SiteDeleteInput, SitePurgeInput } from './workflows/site-delete';
@@ -102,6 +107,7 @@ import type { SiteImportInput } from './workflows/site-import';
 import type { SitePitrInput } from './workflows/site-pitr';
 import type { SiteRepairInput } from './workflows/site-repair';
 import type { SiteRollbackInput } from './workflows/site-rollback';
+import type { SiteTransferInput, TransferDeps } from './workflows/site-transfer';
 import type { SiteUpgradeInput } from './workflows/site-upgrade';
 import type { TemplateBuildInput } from './workflows/template-build';
 import type { ThemeDefaultInput } from './workflows/theme-default';
@@ -115,11 +121,14 @@ export interface EngineEnv {
 	SITE_AUTH: DurableObjectNamespace;
 	NAMES: DurableObjectNamespace;
 	NODE_SESSION: DurableObjectNamespace;
+	API_BUDGET: DurableObjectNamespace;
+	USAGE_COUNTER: DurableObjectNamespace<UsageCounter>;
 	SITE_CREATE: Workflow<SiteCreateInput>;
 	SITE_UPGRADE: Workflow<SiteUpgradeInput>;
 	SITE_DELETE: Workflow<SiteDeleteInput>;
 	SITE_PURGE: Workflow<SitePurgeInput>;
 	SITE_CLEANUP: Workflow<SiteCleanupInput>;
+	SITE_AUTH_STATE: Workflow<SiteAuthStateInput>;
 	SITE_ADOPT: Workflow<SiteAdoptInput>;
 	SITE_REPAIR: Workflow<SiteRepairInput>;
 	SITE_ROLLBACK: Workflow<SiteRollbackInput>;
@@ -145,6 +154,7 @@ export interface EngineEnv {
 	DOMAIN_ATTACH: Workflow<DomainAttachInput>;
 	NODE_SITE_CREATE: Workflow<NodeSiteCreateInput>;
 	TEMPLATE_BUILD: Workflow<TemplateBuildInput>;
+	SITE_TRANSFER: Workflow<SiteTransferInput>;
 	// bound on the stage deployment only; without it a template build records that it cannot run
 	JOB_RUNNER?: DurableObjectNamespace;
 	RELEASES_URL: string;
@@ -157,6 +167,10 @@ export interface EngineEnv {
 	CUSTOM_HOSTNAME_TARGET?: string;
 	CONTROL_SEED: string;
 	START_SECRET: string;
+	// the dashboard signs budget writes and counts reads with these, one secret per message type;
+	// an unset one falls back to START_SECRET
+	BUDGET_SECRET?: string;
+	COUNTS_SECRET?: string;
 	FLEET_SEED: string;
 	DISPATCH_NAMESPACE: string;
 	LEASE_TTL_MS: string | number;
@@ -232,6 +246,15 @@ export async function buildConfigDeps(env: EngineEnv): Promise<ConfigDeps> {
 		...(await buildBackupDeps(env)),
 		settings: settingsWorkerOf(fetch, Number(env.SITE_TIMEOUT_MS)),
 		changes: new D1ConfigLedger(env.DB)
+	};
+}
+
+// the rows of two organisations may sit in two databases, so the move goes through the same shard
+// router the dashboard uses; this needs KV to be the dashboard's namespace and every DB_n bound
+export async function buildTransferDeps(env: EngineEnv): Promise<TransferDeps> {
+	return {
+		...(await buildDeps(env)),
+		moves: siteMovesOf(shardDbOf(createCollegeDB(env as never)))
 	};
 }
 
@@ -401,10 +424,14 @@ export async function buildCutoverDeps(env: EngineEnv): Promise<CutoverDeps> {
 }
 
 export async function buildDeps(env: EngineEnv): Promise<EngineDeps> {
+	const budget = stub<ApiBudgetStub>(env.API_BUDGET, env.CF_ACCOUNT_ID);
 	const plane = dispatch({
 		accountId: env.CF_ACCOUNT_ID,
 		token: env.CF_API_TOKEN,
-		namespace: env.DISPATCH_NAMESPACE
+		namespace: env.DISPATCH_NAMESPACE,
+		fetch: governedFetch((input, init) => fetch(input, init), apiBudgetPort(budget), {
+			retryOnce: false
+		})
 	});
 	const { privateKey } = await signingKeyFromSeed(fromBase64Url(env.CONTROL_SEED));
 	return {

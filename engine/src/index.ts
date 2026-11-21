@@ -1,3 +1,5 @@
+import { handleBatch, isBatchPath } from './batch';
+import { buildBatchDeps } from './batch-env';
 import { isBoxArchivePath, serveBoxArchive } from './box-archive';
 import { buildDeps, type EngineEnv } from './env';
 import { handleLink, linkNodeId } from './node-link';
@@ -5,6 +7,7 @@ import { D1NodeStore } from './node-store';
 import { handleStart } from './start';
 import { sweepAndLog } from './sweep';
 
+export { ApiBudget } from './api-budget';
 export { JobRunner } from './containers/job-runner';
 export { NodeSession } from './node-session';
 export { SiteLease } from './site-lease';
@@ -28,6 +31,7 @@ export {
 	NodeSiteCreate,
 	ReleaseRing,
 	SiteAdopt,
+	SiteAuthState,
 	SiteCleanup,
 	SiteCreate,
 	SiteDelete,
@@ -36,6 +40,7 @@ export {
 	SitePurge,
 	SiteRepair,
 	SiteRollback,
+	SiteTransfer,
 	SiteUpgrade,
 	TemplateBuild,
 	ThemeDefault
@@ -45,6 +50,9 @@ export default {
 	fetch: (request, env) => {
 		const url = new URL(request.url);
 		if (isBoxArchivePath(url)) return serveBoxArchive(request, env.BLOB);
+		if (isBatchPath(url.pathname)) {
+			return buildBatchDeps(env).then((deps) => handleBatch(request, deps));
+		}
 		return linkNodeId(url) !== null
 			? handleLink(request, {
 					nodes: new D1NodeStore(env.DB),
@@ -61,6 +69,7 @@ export default {
 						'site-delete': env.SITE_DELETE,
 						'site-purge': env.SITE_PURGE,
 						'site-cleanup': env.SITE_CLEANUP,
+						'site-auth-state': env.SITE_AUTH_STATE,
 						'site-adopt': env.SITE_ADOPT,
 						'site-repair': env.SITE_REPAIR,
 						'backup-create': env.BACKUP_CREATE,
@@ -85,7 +94,8 @@ export default {
 						'node-site-create': env.NODE_SITE_CREATE,
 						'site-rollback': env.SITE_ROLLBACK,
 						'release-ring': env.RELEASE_RING,
-						'template-build': env.TEMPLATE_BUILD
+						'template-build': env.TEMPLATE_BUILD,
+						'site-transfer': env.SITE_TRANSFER
 					}
 				});
 	},

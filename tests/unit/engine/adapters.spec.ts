@@ -9,10 +9,11 @@ import {
 import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { generateSigningKey } from '../../../contracts/src/common';
+import { decideRenewal } from '../../../contracts/src/site-auth';
 import { scriptName } from '../../../contracts/src/sites';
 import { resolveRoute } from '../../../dispatch/src/route';
 import { RateLimitedError } from '../../../engine/src/account-usage';
-import { authorityOf, AuthorityStale } from '../../../engine/src/adapters/authority';
+import { authorityOf, AuthorityStale, bumpEpoch } from '../../../engine/src/adapters/authority';
 import { hostsOf, hostValue } from '../../../engine/src/adapters/hosts';
 import { leasesOf } from '../../../engine/src/adapters/leases';
 import { namesOf } from '../../../engine/src/adapters/names';
@@ -553,6 +554,48 @@ describe('the authority adapter', () => {
 		clock += 5_000;
 		await authority.apply(state);
 		expect(sent.map((message) => message.iat)).toEqual([1_790_000_000_000, 1_790_000_005_000]);
+	});
+
+	it('bumps the epoch and the generation through the apply path, and the old epoch is refused', async () => {
+		const sent: { epoch: number; generation: number }[] = [];
+		const control = await generateSigningKey();
+		const current = { siteId: SITE, epoch: 4, generation: 9, state: 'active' } as never;
+		const authority = authorityOf({
+			siteAuth: () => ({
+				read: async () => current,
+				apply: async (message) => {
+					const sentState = message as { epoch: number; generation: number };
+					sent.push(sentState);
+					return { ok: true, value: { applied: true, generation: sentState.generation } };
+				}
+			}),
+			hosts: hostsOf(hostsKv().kv),
+			controlKey: control.privateKey,
+			now: () => 1_790_000_000_000
+		});
+		expect(await bumpEpoch(authority, SITE)).toEqual({ epoch: 5, generation: 10 });
+		expect(sent).toEqual([expect.objectContaining({ epoch: 5, generation: 10 })]);
+		expect(
+			decideRenewal(
+				{ siteId: SITE, epoch: 4 } as never,
+				{ siteId: SITE, epoch: 5, state: 'active' } as never
+			)
+		).toEqual({ ok: false, code: 'wrong_epoch' });
+	});
+
+	it('refuses to bump a site that has no authority record', async () => {
+		const authority = authorityOf({
+			siteAuth: () => ({
+				read: async () => null,
+				apply: async () => ({ ok: false, code: 'unknown' })
+			}),
+			hosts: hostsOf(hostsKv().kv),
+			controlKey: (await generateSigningKey()).privateKey,
+			now: () => 1
+		});
+		const refused = await bumpEpoch(authority, SITE).catch((error) => error);
+		expect(refused).toBeInstanceOf(PermanentError);
+		expect(refused.code).toBe('no_authority');
 	});
 });
 

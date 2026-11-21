@@ -51,6 +51,8 @@ const ENGINE_SET_AT_DEPLOY = [
 	'CF_API_TOKEN',
 	'CONTROL_SEED',
 	'START_SECRET',
+	'BUDGET_SECRET',
+	'COUNTS_SECRET',
 	'FLEET_SEED',
 	'CUSTOM_HOSTNAME_ZONE_ID',
 	'CUSTOM_HOSTNAME_TARGET',
@@ -216,7 +218,8 @@ describe('the engine and the dispatch unit agree', () => {
 			);
 			expect(remote.map((binding) => binding.name).sort(), env).toEqual([
 				'NAMES',
-				'SITE_AUTH'
+				'SITE_AUTH',
+				'USAGE_COUNTER'
 			]);
 			for (const binding of remote) {
 				expect(binding.script_name, env).toBe(target.name ?? load('dispatch').name);

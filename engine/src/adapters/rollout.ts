@@ -80,7 +80,12 @@ export class D1RolloutStore implements RolloutStore {
 			.prepare('SELECT stop_requested FROM release_rollouts WHERE id = ?')
 			.bind(id)
 			.first<{ stop_requested: number }>();
-		return row?.stop_requested === 1;
+		if (row?.stop_requested === 1) return true;
+		// the platform switch halts a running rollout at its next ring
+		const flag = await this.db
+			.prepare("SELECT value FROM platform_flags WHERE key = 'promotion.stopped'")
+			.first<{ value: string }>();
+		return flag?.value === 'true';
 	}
 
 	// a site is in a promotion from the moment its ring starts until the rollout ends
