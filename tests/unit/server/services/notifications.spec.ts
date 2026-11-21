@@ -49,10 +49,11 @@ describe('categories', () => {
 			'invitation',
 			'security-event',
 			'payment-failure',
-			'mandatory-notice'
+			'mandatory-notice',
+			'budget-limit'
 		]);
 		expect(OPTIONAL_CATEGORIES).toEqual(['ops', 'billing-info', 'reports', 'digest']);
-		expect(NOTIFICATION_CATEGORIES).toHaveLength(9);
+		expect(NOTIFICATION_CATEGORIES).toHaveLength(10);
 	});
 
 	it('has no promotional, announcement or referral category', () => {
@@ -95,16 +96,22 @@ describe('shouldSend', () => {
 	it('sends essential mail whatever the preferences say', () => {
 		for (const category of ESSENTIAL_CATEGORIES) {
 			for (const prefs of prefsSets) {
-				expect(shouldSend(category, prefs)).toBe(true);
+				expect(shouldSend(category, prefs, false)).toBe(true);
+				expect(shouldSend(category, prefs, true)).toBe(true);
 			}
 		}
 	});
 
 	it('sends optional mail only after an opt-in', () => {
-		expect(shouldSend('ops', {})).toBe(false);
-		expect(shouldSend('ops', { ops: false })).toBe(false);
-		expect(shouldSend('ops', { ops: true })).toBe(true);
-		expect(shouldSend('billing-info', { ops: true })).toBe(false);
+		expect(shouldSend('ops', {}, false)).toBe(false);
+		expect(shouldSend('ops', { ops: false }, false)).toBe(false);
+		expect(shouldSend('ops', { ops: true }, false)).toBe(true);
+		expect(shouldSend('billing-info', { ops: true }, false)).toBe(false);
+	});
+
+	it('stops optional mail while notifications are paused, opt-in or not', () => {
+		expect(shouldSend('ops', { ops: true }, true)).toBe(false);
+		expect(shouldSend('digest', { digest: true }, true)).toBe(false);
 	});
 });
 

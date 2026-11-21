@@ -5,7 +5,8 @@ export const ESSENTIAL_CATEGORIES = [
 	'invitation',
 	'security-event',
 	'payment-failure',
-	'mandatory-notice'
+	'mandatory-notice',
+	'budget-limit'
 ] as const;
 
 export const OPTIONAL_CATEGORIES = ['ops', 'billing-info', 'reports', 'digest'] as const;

@@ -20,9 +20,14 @@ export function isEssential(category: NotificationCategory): category is Essenti
 
 export type NotificationPrefs = Partial<Record<NotificationCategory, boolean>>;
 
-export function shouldSend(category: NotificationCategory, prefs: NotificationPrefs): boolean {
+// notificationsPaused is the platform switch; it stops optional mail only, never essential mail
+export function shouldSend(
+	category: NotificationCategory,
+	prefs: NotificationPrefs,
+	notificationsPaused: boolean
+): boolean {
 	if (isEssential(category)) return true;
-	return prefs[category] === true;
+	return !notificationsPaused && prefs[category] === true;
 }
 
 // #endregion
